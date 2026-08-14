@@ -193,8 +193,8 @@ npm run test        # node tests/simulate.mjs — 8 个行为场景
 打一个与 `package.json` 版本一致的 `v<version>` tag, 即可触发发布流水线:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 CI(`.github/workflows/publish.yml`)会依次:

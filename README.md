@@ -195,8 +195,8 @@ While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` e
 Tagging `v<version>` (matching `package.json`) triggers the publish workflow:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 The CI (`.github/workflows/publish.yml`) then:

@@ -115,7 +115,17 @@ async function writeOutputs(result, isClient) {
     if (file.path.endsWith(".map")) {
       writeFileSync(join(root, "lib/client.js.map"), file.text);
     } else if (isClient) {
-      writeFileSync(join(root, "lib/client.js"), wrap(file.text));
+      // esbuild inlines the source map as a data URI when write:false; extract
+      // it into a real lib/client.js.map (served by the host at
+      // /plugins/<id>/client.js.map and attached to GitHub releases) and point
+      // the bundle at it.
+      let body = file.text;
+      const mapComment = /\/\/# sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)\s*$/.exec(body);
+      if (mapComment) {
+        writeFileSync(join(root, "lib/client.js.map"), Buffer.from(mapComment[1], "base64").toString("utf8"));
+        body = body.slice(0, mapComment.index) + "//# sourceMappingURL=client.js.map";
+      }
+      writeFileSync(join(root, "lib/client.js"), wrap(body));
     } else {
       writeFileSync(join(root, "lib/index.js"), file.text);
     }
