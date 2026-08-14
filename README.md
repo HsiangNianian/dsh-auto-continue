@@ -146,36 +146,6 @@ Everything is configurable from the GUI — no file or console edits needed. Ope
 
 ---
 
-## Tech Stack & Structure
-
-| Layer | Choice |
-| --- | --- |
-| Platform | DSH Web GUI client plugin (browser half + host half registering the settings namespace) |
-| Language | TypeScript |
-| Build | esbuild (browser bundle + node half) + tsc declarations |
-| Runtime deps | Browser bundle: `react` (platform seed) + `createSnapshotStore` (module table); host half: `schemastery` + `dsh-settings` (resolved from the dsh installation) |
-
-```
-dsh-auto-continue/
-├── package.json            # plugin manifest (dsh.client / dsh.bundle)
-├── cordis.patch.yml        # profile patch layer: registers the plugin row
-├── build.mjs               # esbuild build (browser bundle + node half)
-├── tsconfig.json / tsconfig.build.json
-├── src/
-│   ├── index.ts            # host half: registers the auto-continue settings namespace
-│   └── client/
-│       ├── index.ts        # browser half entry: engine + settings card wiring
-│       ├── engine.ts       # the auto-continue engine (reads the settings scope)
-│       ├── settings-card.tsx / settings-form.ts / locales.ts / styles.ts
-│       └──                 # settings card UI (staged form, zh/en copy, theme styles)
-├── tests/simulate.mjs      # headless behavioral tests (mock API + settings scope)
-├── lib/                    # build output (committed, ready to link)
-├── docs/                   # banner artwork (en + zh)
-└── README.md / README.zh.md / LICENSE
-```
-
----
-
 ## Development
 
 ```bash
@@ -189,35 +159,7 @@ While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` e
 
 ---
 
-
-## Publishing
-
-Tagging `v<version>` (matching `package.json`) triggers the publish workflow:
-
-```bash
-git tag v0.2.1
-git push origin v0.2.1
-```
-
-The CI (`.github/workflows/publish.yml`) then:
-
-1. Verifies the tag matches `package.json` version
-2. Installs dependencies, builds (`npm run build`) and runs the test suite
-3. Publishes the package to npm (`dsh-client-auto-continue`)
-4. Creates a GitHub Release with the packed tarball and built artifacts
-   (`lib/client.js`, `lib/client.js.map`, `lib/index.js`) attached
-
-The workflow requires the `NPM_TOKEN` repository secret (an npm automation
-token with publish scope):
-
-```bash
-gh secret set NPM_TOKEN --repo HsiangNianian/dsh-auto-continue
-```
-
----
-
 ## Links
-
 
 - **Repository**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)
 - **DeepSeek Harness**: [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)

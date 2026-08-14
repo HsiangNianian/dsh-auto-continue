@@ -144,36 +144,6 @@ dsh web
 
 ---
 
-## 技术栈与结构
-
-| 分层 | 选型 |
-| --- | --- |
-| 平台 | DSH Web GUI 客户端插件(浏览器半区 + 注册设置命名空间的宿主半区) |
-| 语言 | TypeScript |
-| 构建 | esbuild(浏览器包 + 宿主半区)+ tsc 声明文件 |
-| 运行时依赖 | 浏览器包: `react`(平台种子)+ `createSnapshotStore`(模块表); 宿主半区: `schemastery` + `dsh-settings`(由 dsh 安装解析) |
-
-```
-dsh-auto-continue/
-├── package.json            # 插件清单(dsh.client / dsh.bundle)
-├── cordis.patch.yml        # profile 补丁层: 注册插件行
-├── build.mjs               # esbuild 构建(浏览器包 + 宿主半区)
-├── tsconfig.json / tsconfig.build.json
-├── src/
-│   ├── index.ts            # host 半区: 注册 auto-continue 设置命名空间
-│   └── client/
-│       ├── index.ts        # browser 半区入口: 引擎 + 设置卡片接线
-│       ├── engine.ts       # 自动续跑引擎(读取设置作用域)
-│       ├── settings-card.tsx / settings-form.ts / locales.ts / styles.ts
-│       └──                 # 设置卡片 UI(暂存表单、中英文案、主题样式)
-├── tests/simulate.mjs      # 无头行为测试(模拟 API + 设置作用域)
-├── lib/                    # 构建产物(已提交, 可直接链接)
-├── docs/                   # banner 图(英文 + 中文)
-└── README.md / README.zh.md / LICENSE
-```
-
----
-
 ## 开发
 
 ```bash
@@ -187,34 +157,7 @@ npm run test        # node tests/simulate.mjs — 8 个行为场景
 
 ---
 
-
-## 发布
-
-打一个与 `package.json` 版本一致的 `v<version>` tag, 即可触发发布流水线:
-
-```bash
-git tag v0.2.1
-git push origin v0.2.1
-```
-
-CI(`.github/workflows/publish.yml`)会依次:
-
-1. 校验 tag 与 `package.json` 版本一致
-2. 安装依赖、构建(`npm run build`)并跑测试套件
-3. 发布到 npm(`dsh-client-auto-continue`)
-4. 创建 GitHub Release, 附带打包好的 tarball 与构建产物
-   (`lib/client.js`、`lib/client.js.map`、`lib/index.js`)
-
-流水线依赖仓库的 `NPM_TOKEN` secret(带 publish 权限的 npm automation token):
-
-```bash
-gh secret set NPM_TOKEN --repo HsiangNianian/dsh-auto-continue
-```
-
----
-
 ## 链接
-
 
 - **仓库**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)
 - **DeepSeek Harness**: [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
