@@ -32,6 +32,15 @@
 
 For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh web`): whenever a request in the web GUI gets interrupted by a **non-human cause**, the plugin simulates the user typing **「继续」** and sends it, so the agent keeps working without manual intervention. The message enters the session log exactly like a manual prompt — the model sees it, and the interrupted work resumes.
 
+![demo](docs/demo.svg)
+
+**Smart recovery** (all configurable):
+
+- **Error classification** — transient failures (network / timeout / 5xx…) are auto-resumed; permanent ones (auth, balance, unknown model, context overflow) are **skipped** and notified, because retrying them never helps
+- **Adaptive backoff** — consecutive failures wait longer each time (e.g. 20s → 40s → 80s), instead of hammering a broken upstream
+- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)")
+- **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error
+
 It watches the live event streams and reacts to:
 
 | Event | Meaning |
@@ -147,6 +156,12 @@ Everything is configurable from the GUI — no file or console edits needed. Ope
 | Reconnect scan delay (ms) | `5000` | Delay before scanning after a reconnect |
 | Reconnect backoff (ms) | `3000` | SSE reconnect backoff |
 | Verbose logs | `on` | `[auto-continue]` console logs |
+| Classify errors | `on` | Auto-resume transient failures only; auth / balance / model errors are skipped and notified |
+| Backoff factor | `2` | Cooldown multiplier per consecutive failure (2 = 20s → 40s → 80s…) |
+| Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
+| Browser notifications | `off` | Notify when auto-continue fires, gives up, or hits a permanent error |
+
+`continueText` accepts the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure) and `{turn}` — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`.
 
 ---
 

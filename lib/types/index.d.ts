@@ -29,6 +29,14 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     reconnectBackoffMs: z<number, number>;
     /** Log `[auto-continue]` lines to the browser console. */
     verbose: z<boolean, boolean>;
+    /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
+    classify: z<boolean, boolean>;
+    /** Cooldown multiplier per consecutive failure (adaptive backoff). */
+    backoffFactor: z<number, number>;
+    /** Cap on the effective backoff interval (ms). */
+    backoffMaxMs: z<number, number>;
+    /** Show browser notifications for auto-continue events. */
+    notify: z<boolean, boolean>;
 }>, Schemastery.ObjectT<{
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
@@ -50,6 +58,14 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     reconnectBackoffMs: z<number, number>;
     /** Log `[auto-continue]` lines to the browser console. */
     verbose: z<boolean, boolean>;
+    /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
+    classify: z<boolean, boolean>;
+    /** Cooldown multiplier per consecutive failure (adaptive backoff). */
+    backoffFactor: z<number, number>;
+    /** Cap on the effective backoff interval (ms). */
+    backoffMaxMs: z<number, number>;
+    /** Show browser notifications for auto-continue events. */
+    notify: z<boolean, boolean>;
 }>>;
 /**
  * Plugin body: register the settings namespace when a settings provider is

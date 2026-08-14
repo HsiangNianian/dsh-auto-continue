@@ -27,6 +27,14 @@ export declare const zh: {
     'field.reconnectBackoffMsHint': string;
     'field.verbose': string;
     'field.verboseHint': string;
+    'field.classify': string;
+    'field.classifyHint': string;
+    'field.backoffFactor': string;
+    'field.backoffFactorHint': string;
+    'field.backoffMaxMs': string;
+    'field.backoffMaxMsHint': string;
+    'field.notify': string;
+    'field.notifyHint': string;
     'chrome.collapse': string;
     'chrome.expand': string;
     'chrome.unsaved': string;

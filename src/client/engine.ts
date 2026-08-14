@@ -42,6 +42,14 @@ export interface AutoContinueSettings {
   reconnectBackoffMs?: number;
   /** Log `[auto-continue]` lines to the browser console. */
   verbose?: boolean;
+  /** Classify failures: auto-continue transient errors only; permanent ones (auth/balance/model) are skipped and notified. */
+  classify?: boolean;
+  /** Cooldown multiplier per consecutive failure (adaptive backoff). */
+  backoffFactor?: number;
+  /** Cap on the effective backoff interval (ms). */
+  backoffMaxMs?: number;
+  /** Show browser notifications for auto-continue events. */
+  notify?: boolean;
 }
 
 /** Fully resolved configuration (built-in defaults + user overrides). */
@@ -59,6 +67,10 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   reconnectScanDelayMs: 5000,
   reconnectBackoffMs: 3000,
   verbose: true,
+  classify: true,
+  backoffFactor: 2,
+  backoffMaxMs: 300000,
+  notify: false,
 };
 
 function numberOr(value: unknown, fallback: number): number {
@@ -87,6 +99,10 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     reconnectScanDelayMs: numberOr(value.reconnectScanDelayMs, DEFAULT_CONFIG.reconnectScanDelayMs),
     reconnectBackoffMs: numberOr(value.reconnectBackoffMs, DEFAULT_CONFIG.reconnectBackoffMs),
     verbose: booleanOr(value.verbose, DEFAULT_CONFIG.verbose),
+    classify: booleanOr(value.classify, DEFAULT_CONFIG.classify),
+    backoffFactor: Math.max(1, numberOr(value.backoffFactor, DEFAULT_CONFIG.backoffFactor)),
+    backoffMaxMs: numberOr(value.backoffMaxMs, DEFAULT_CONFIG.backoffMaxMs),
+    notify: booleanOr(value.notify, DEFAULT_CONFIG.notify),
   };
 }
 
@@ -95,6 +111,84 @@ type NonHumanReason = 'error' | 'interrupted' | 'max-tokens';
 
 function isNonHumanReason(kind: string): kind is NonHumanReason {
   return kind === 'error' || kind === 'interrupted' || kind === 'max-tokens';
+}
+
+/** 一次回合失败的机器可读事实(turn/end error 的 LlmFailure 载荷)。 */
+export interface FailureFacts {
+  /** 稳定机器路由码(如 UPSTREAM、RATE_LIMIT_EXCEEDED、INVALID_API_KEY)。 */
+  code: string;
+  /** 人类可读的失败描述。 */
+  message: string;
+  /** 供应商 HTTP 状态码(可用时)。 */
+  status?: number;
+}
+
+/**
+ * 错误分类: 该失败是否值得自动继续。
+ * 永久性失败(认证/余额/模型不存在/上下文超限等)重试也不会成功, 应跳过并通知用户;
+ * 其余(网络、超时、5xx、429 等)视为临时性失败, 允许自动恢复。
+ */
+export function isTransientFailure(failure: FailureFacts): boolean {
+  const haystack = `${failure.code} ${failure.message}`.toLowerCase();
+  const status = failure.status;
+  if (status !== undefined && (status === 401 || status === 403)) return false;
+  const permanent =
+    /auth|unauthor|forbidden|credential|api[_-]?key|permission/i.test(haystack) ||
+    /insufficient.*(balance|quota)|billing|payment|quota.*exceeded.*(?!retry)/i.test(haystack) ||
+    /model.*not[_-]?found|unknown[_-]?model|model[_-]?not[_-]?found|not.*support.*model/i.test(haystack) ||
+    /context.*(length|limit|overflow|exceed)|token.*limit|max.*context/i.test(haystack) ||
+    /invalid[_-]?request|bad[_-]?request/i.test(haystack);
+  return !permanent;
+}
+
+/** 浏览器通知(不可用时静默跳过)。 */
+function notify(title: string, body: string): void {
+  try {
+    const N = (globalThis as { Notification?: unknown }).Notification as
+      | (new (t: string, o: { body: string }) => unknown)
+      | undefined;
+    if (typeof N === 'undefined') return;
+    const permission = (N as unknown as { permission?: string }).permission;
+    if (permission === 'granted') {
+      new N(title, { body });
+    } else if (permission === 'default') {
+      // 首次使用时请求一次权限, 用户拒绝后不再打扰。
+      void (N as unknown as { requestPermission?: () => Promise<string> }).requestPermission?.()
+        .then((result) => {
+          if (result === 'granted') new N(title, { body });
+        })
+        .catch(() => {});
+    }
+  } catch {
+    /* 通知失败不影响核心逻辑 */
+  }
+}
+
+/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn})。 */
+export function fillTemplate(
+  template: string,
+  facts: FailureFacts | undefined,
+  tool: string | undefined,
+  turn: number | undefined,
+): string {
+  return template
+    .replace(/\{code\}/g, facts?.code ?? '')
+    .replace(/\{message\}/g, facts?.message ?? '')
+    .replace(/\{status\}/g, facts?.status !== undefined ? String(facts.status) : '')
+    .replace(/\{tool\}/g, tool ?? '')
+    .replace(/\{turn\}/g, turn !== undefined ? String(turn) : '');
+}
+
+/** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
+export function effectiveCooldown(
+  consecutive: number,
+  base: number,
+  factor: number,
+  max: number,
+): number {
+  // consecutive = 已连续自动继续的次数; 第 1 次后开始按 factor 递增
+  const multiplier = Math.pow(factor, consecutive);
+  return Math.min(Math.max(base, base * multiplier), Math.max(base, max));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -169,6 +263,12 @@ interface SessionState {
   queued: number;
   /** 子代理会话(host/session-added 带 parentSessionId)。 */
   subagent: boolean;
+  /** 最近一次回合失败的事实(用于分类与模板填充)。 */
+  lastFailure: FailureFacts | undefined;
+  /** 失败前最后一次工具调用的名称(模板 {tool})。 */
+  lastTool: string | undefined;
+  /** 失败回合的编号(模板 {turn})。 */
+  lastTurn: number | undefined;
 }
 
 const freshState = (): SessionState => ({
@@ -180,6 +280,9 @@ const freshState = (): SessionState => ({
   running: undefined,
   queued: 0,
   subagent: false,
+  lastFailure: undefined,
+  lastTool: undefined,
+  lastTurn: undefined,
 });
 
 /** 判定一条 user/message 是否是我们自己自动发送的回显。 */
@@ -317,6 +420,10 @@ export class AutoContinueRunner {
   private onMuxFrame(frame: MuxFrame): void {
     switch (frame.type) {
       case 'session/event':
+        if (frame.event.type === 'tool/call') {
+          const name = frame.event.data.name;
+          if (typeof name === 'string') this.state(frame.sessionId).lastTool = name;
+        }
         this.onSessionEvent(frame.sessionId, frame.event);
         break;
       case 'session/queue':
@@ -345,11 +452,22 @@ export class AutoContinueRunner {
         if (reason.kind === 'completed') {
           // 成功回合: 恢复健康状态
           state.consecutive = 0;
+          state.lastFailure = undefined;
         } else if (reason.kind === 'aborted') {
           // 用户主动停止: 不自动继续, 视为用户介入
           state.consecutive = 0;
         } else if (reason.kind === 'blocked') {
           // 策略拒绝: 不自动继续
+        } else if (reason.kind === 'error') {
+          // 记录失败事实(分类与模板填充用), 然后按类型处理
+          const error = reason.error;
+          state.lastFailure = {
+            code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
+            message: typeof error.message === 'string' ? error.message : String(error),
+            ...(typeof error.status === 'number' ? { status: error.status } : {}),
+          };
+          state.lastTurn = event.data.turn;
+          this.onTurnFailure(sessionId, 'turn/end:error', state.lastFailure);
         } else if (isNonHumanReason(reason.kind)) {
           this.schedule(sessionId, `turn/end:${reason.kind}`);
         }
@@ -395,12 +513,37 @@ export class AutoContinueRunner {
 
   // ---------- 调度 ----------
 
+  /** 回合失败入口: 先做错误分类, 永久性失败跳过并通知, 临时性失败走正常调度。 */
+  private onTurnFailure(sessionId: SessionId, reason: string, failure: FailureFacts): void {
+    const config = this.getConfig();
+    if (config.classify && !isTransientFailure(failure)) {
+      const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
+      this.log(`跳过 ${sessionId}(${reason}): 永久性失败 ${summary} — ${failure.message}`);
+      if (config.notify) {
+        notify('dsh-auto-continue: 未自动继续', `${sessionId}: 永久性错误 ${summary}，需要人工处理`);
+      }
+      return;
+    }
+    this.schedule(sessionId, reason);
+  }
+
+  /** 本会话当前生效的冷却间隔(自适应退避)。 */
+  private cooldownFor(state: SessionState): number {
+    const config = this.getConfig();
+    return effectiveCooldown(
+      state.consecutive,
+      config.cooldownMs,
+      config.backoffFactor,
+      config.backoffMaxMs,
+    );
+  }
+
   private schedule(sessionId: SessionId, reason: string): void {
     const state = this.state(sessionId);
     const config = this.getConfig();
     if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
     if (state.pendingTimer !== undefined) return; // 已有待发送
-    if (Date.now() - state.lastAttemptAt < config.cooldownMs) return; // 冷却期(含失败尝试)
+    if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return; // 冷却期(含失败尝试, 自适应退避)
     if (state.consecutive >= config.maxConsecutive) {
       this.log(
         `跳过 ${sessionId}(${reason}): 已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`,
@@ -446,8 +589,8 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}: 已有排队消息`);
       return;
     }
-    // 跨标签页冷却
-    if (Date.now() - readLastSend(sessionId) < config.cooldownMs) {
+    // 跨标签页冷却(自适应退避)
+    if (Date.now() - readLastSend(sessionId) < this.cooldownFor(state)) {
       this.log(`跳过 ${sessionId}: 其他标签页刚发送过`);
       return;
     }
@@ -455,7 +598,8 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}: 其他标签页正在发送`);
       return;
     }
-    const text = config.continueText;
+    // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn} 占位符
+    const text = fillTemplate(config.continueText, state.lastFailure, state.lastTool, state.lastTurn);
     const zone = clientTimeZone();
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
     try {
@@ -472,6 +616,15 @@ export class AutoContinueRunner {
         state.lastSentText = text;
         writeLastSend(sessionId, now);
         this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
+        if (config.notify) {
+          notify('dsh-auto-continue: 已自动继续', `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`);
+        }
+        if (state.consecutive >= config.maxConsecutive) {
+          this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
+          if (config.notify) {
+            notify('dsh-auto-continue: 已停止自动继续', `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`);
+          }
+        }
       } else {
         this.log(
           `发送失败 ${sessionId}: ${response.result.error.code} ${response.result.error.message}`,
@@ -550,7 +703,7 @@ export class AutoContinueRunner {
       const state = this.state(summary.sessionId);
       if (state.pendingTimer !== undefined) continue;
       if (state.consecutive >= config.maxConsecutive) continue;
-      if (now - state.lastAttemptAt < config.cooldownMs) continue;
+      if (now - state.lastAttemptAt < this.cooldownFor(state)) continue;
       let events;
       try {
         const page = await this.api.sessions.history({

@@ -39,6 +39,10 @@ export interface AutoContinueSettingsCardState extends CardShell {
   reconnectScanDelayMs: CardFieldState;
   reconnectBackoffMs: CardFieldState;
   verbose: CardFieldState;
+  classify: CardFieldState;
+  backoffFactor: CardFieldState;
+  backoffMaxMs: CardFieldState;
+  notify: CardFieldState;
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -69,6 +73,10 @@ export class AutoContinueSettingsCardController {
       numberField('reconnectScanDelayMs', 0),
       numberField('reconnectBackoffMs', 0),
       booleanField('verbose'),
+      booleanField('classify'),
+      numberField('backoffFactor', 1),
+      numberField('backoffMaxMs', 0),
+      booleanField('notify'),
     ]);
     this.store = this.form.bind(() => this.projection(), createSnapshotStore);
   }
@@ -86,6 +94,10 @@ export class AutoContinueSettingsCardController {
       reconnectScanDelayMs: this.form.field('reconnectScanDelayMs'),
       reconnectBackoffMs: this.form.field('reconnectBackoffMs'),
       verbose: this.form.field('verbose'),
+      classify: this.form.field('classify'),
+      backoffFactor: this.form.field('backoffFactor'),
+      backoffMaxMs: this.form.field('backoffMaxMs'),
+      notify: this.form.field('notify'),
     };
   }
 
@@ -359,6 +371,44 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.verbose}
         onEdit={(text) => props.edit('verbose', text)}
         onReset={() => props.resetField('verbose')}
+      />
+      <BooleanField
+        id="auto-continue-classify"
+        label={t('field.classify')}
+        hint={t('field.classifyHint')}
+        {...shared}
+        {...state.classify}
+        onEdit={(text) => props.edit('classify', text)}
+        onReset={() => props.resetField('classify')}
+      />
+      <ValueField
+        id="auto-continue-backoff-factor"
+        label={t('field.backoffFactor')}
+        hint={t('field.backoffFactorHint')}
+        numeric
+        {...shared}
+        {...state.backoffFactor}
+        onEdit={(text) => props.edit('backoffFactor', text)}
+        onReset={() => props.resetField('backoffFactor')}
+      />
+      <ValueField
+        id="auto-continue-backoff-max"
+        label={t('field.backoffMaxMs')}
+        hint={t('field.backoffMaxMsHint')}
+        numeric
+        {...shared}
+        {...state.backoffMaxMs}
+        onEdit={(text) => props.edit('backoffMaxMs', text)}
+        onReset={() => props.resetField('backoffMaxMs')}
+      />
+      <BooleanField
+        id="auto-continue-notify"
+        label={t('field.notify')}
+        hint={t('field.notifyHint')}
+        {...shared}
+        {...state.notify}
+        onEdit={(text) => props.edit('notify', text)}
+        onReset={() => props.resetField('notify')}
       />
     </SettingsCard>
   );

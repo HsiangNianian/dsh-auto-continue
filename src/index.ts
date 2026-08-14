@@ -34,6 +34,14 @@ export const AutoContinueSchema = z.object({
   reconnectBackoffMs: z.natural().default(3000),
   /** Log `[auto-continue]` lines to the browser console. */
   verbose: z.boolean().default(true),
+  /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
+  classify: z.boolean().default(true),
+  /** Cooldown multiplier per consecutive failure (adaptive backoff). */
+  backoffFactor: z.natural().min(1).default(2),
+  /** Cap on the effective backoff interval (ms). */
+  backoffMaxMs: z.natural().default(300000),
+  /** Show browser notifications for auto-continue events. */
+  notify: z.boolean().default(false),
 });
 
 /**

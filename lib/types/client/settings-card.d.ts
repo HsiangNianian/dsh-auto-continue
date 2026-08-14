@@ -14,6 +14,10 @@ export interface AutoContinueSettingsCardState extends CardShell {
     reconnectScanDelayMs: CardFieldState;
     reconnectBackoffMs: CardFieldState;
     verbose: CardFieldState;
+    classify: CardFieldState;
+    backoffFactor: CardFieldState;
+    backoffMaxMs: CardFieldState;
+    notify: CardFieldState;
 }
 /** The registration-side face the card's slot entry injects. */
 export interface AutoContinueSettingsCardFace extends CardActions {

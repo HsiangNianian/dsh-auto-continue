@@ -31,6 +31,16 @@ globalThis.window = {
 };
 globalThis.localStorage = fakeLocalStorage;
 
+// 通知桩: 测试可替换实现并检查调用
+const notificationCalls = [];
+globalThis.Notification = class {
+  static permission = 'granted';
+  static requestPermission = async () => 'granted';
+  constructor(title, options) {
+    notificationCalls.push({ title, body: options?.body ?? '' });
+  }
+};
+
 // ---------- 假 require: 浏览器包只 require 平台种子与运行时 store ----------
 const reactStub = { useState: (init) => [init, () => {}] };
 const jsxStub = { jsx: () => null, jsxs: () => null, Fragment: Symbol('fragment') };
@@ -318,6 +328,86 @@ function startPlugin(api, overrides = {}) {
   await sleep(600);
   check('已发送', api.prompts.length === 1);
   check('文本为「请继续」', api.prompts[0]?.content?.[0]?.text === '请继续');
+  await sleep(50);
+}
+
+// ---------- 测试 9: 错误分类 — 永久性错误不自动继续 ----------
+{
+  console.log('测试 9: 永久性错误(HTTP 401)→ 不发送, 触发通知');
+  const api = new FakeApi();
+  api.addSession('s1');
+  notificationCalls.length = 0;
+  startPlugin(api, { notify: true });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, {
+    kind: 'error',
+    error: { code: 'INVALID_API_KEY', message: 'invalid api key', status: 401 },
+  }));
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  check('已发通知', notificationCalls.length === 1);
+  check('通知标题正确', notificationCalls[0]?.title === 'dsh-auto-continue: 未自动继续');
+  await sleep(50);
+}
+
+// ---------- 测试 10: 错误分类 — 临时性错误仍自动继续 ----------
+{
+  console.log('测试 10: 临时性错误(network)→ 照常自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api);
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, {
+    kind: 'error',
+    error: { code: 'UPSTREAM', message: 'upstream network error' },
+  }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 11: 自适应退避 — 连续失败时冷却递增 ----------
+{
+  console.log('测试 11: 自适应退避(2 次失败后间隔 200→400ms)');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, {
+    graceMs: 100,
+    cooldownMs: 200,
+    backoffFactor: 2,
+    backoffMaxMs: 5000,
+    maxConsecutive: 5,
+    scanOnBoot: false,
+  });
+  await sleep(50);
+  const t0 = Date.now();
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(320); // send1 已在 ~t0+100 发出(consecutive=1), 此刻距 send1 约 220ms > 基础 200ms 但 < 退避 400ms
+  check('退避期内未再次调度', api.prompts.length === 1);
+  await sleep(400); // 距 send1 已 > 400ms, err2 可调度
+  api.pushMux(turnEnd('s1', 2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(300); // grace 100 + 余量 → send2
+  check('退避后已发送第 2 次', api.prompts.length === 2);
+  void t0;
+  await sleep(50);
+}
+
+// ---------- 测试 12: continueText 模板占位符 ----------
+{
+  console.log('测试 12: 模板占位符 {code} 与 {tool} 填充');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { continueText: '继续({tool}: {code})' });
+  await sleep(50);
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: { type: 'tool/call', seq: 5, time: Date.now(), data: { name: 'bash', callId: 'c1', arguments: '{}' } },
+  });
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check('模板已填充', api.prompts[0]?.content?.[0]?.text === '继续(bash: UPSTREAM)');
   await sleep(50);
 }
 
