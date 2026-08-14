@@ -163,6 +163,12 @@ While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` e
 
 ---
 
+## Activity
+
+[![HsiangNianian/dsh-auto-continue GitStock K-Line Chart](https://gitstock.org/HsiangNianian/dsh-auto-continue/stock.svg)](https://gitstock.org/HsiangNianian/dsh-auto-continue)
+
+---
+
 ## Links
 
 - **Repository**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)

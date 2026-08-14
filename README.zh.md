@@ -160,6 +160,12 @@ npm run test        # node tests/simulate.mjs — 8 个行为场景
 
 ---
 
+## 活跃度
+
+[![HsiangNianian/dsh-auto-continue GitStock K-Line Chart](https://gitstock.org/HsiangNianian/dsh-auto-continue/stock.svg)](https://gitstock.org/HsiangNianian/dsh-auto-continue)
+
+---
+
 ## 链接
 
 - **仓库**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)
