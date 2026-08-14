@@ -1,0 +1,15 @@
+# Pre-commit configuration (pre-commit.ci runs these on every push).
+# Hooks are the standard pre-commit-hooks set: syntax validation and
+# whitespace hygiene — no formatters, so nothing fights the project style.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: mixed-line-ending
