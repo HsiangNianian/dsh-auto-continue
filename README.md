@@ -12,9 +12,10 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/dsh-client-auto-continue"><img src="https://img.shields.io/npm/v/dsh-client-auto-continue?logo=npm&label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/dsh-client-auto-continue"><img src="https://img.shields.io/npm/dm/dsh-client-auto-continue?label=downloads" alt="npm downloads"></a>
   <a href="https://github.com/HsiangNianian/dsh-auto-continue/stargazers"><img src="https://img.shields.io/github/stars/HsiangNianian/dsh-auto-continue?logo=github&label=Stars" alt="GitHub stars"></a>
   <a href="https://github.com/HsiangNianian/dsh-auto-continue/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-65a30d?style=flat" alt="MIT license"></a>
-  <a href="https://github.com/HsiangNianian/dsh-auto-continue"><img src="https://img.shields.io/badge/install-dsh__plugin__add-0a0a0a?style=flat" alt="Install with dsh plugin add"></a>
   <br>
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=fff" alt="TypeScript">
   <img src="https://img.shields.io/badge/esbuild-FFCF00?style=flat&logo=esbuild&logoColor=000" alt="esbuild">
@@ -58,7 +59,9 @@ All knobs live in the plugin's settings card — see [Configuration](#configurat
 
 DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, restart `dsh web`, done.
 
-### From npm (when published)
+### From npm (recommended)
+
+Published as [`dsh-client-auto-continue`](https://www.npmjs.com/package/dsh-client-auto-continue):
 
 ```bash
 dsh plugin --profile web add dsh-client-auto-continue
@@ -192,8 +195,8 @@ While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` e
 Tagging `v<version>` (matching `package.json`) triggers the publish workflow:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The CI (`.github/workflows/publish.yml`) then:
