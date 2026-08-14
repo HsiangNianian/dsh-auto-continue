@@ -100,15 +100,19 @@ dsh web
 
 > **Known DSH limitation (0.1.0-rc.6):** the web plugin-configuration section only
 > exposes settings namespaces on a hardcoded allowlist in the installed
-> `@deepseek-ai/dsh-host-apiproxy` bundle. To make the settings card appear, run
-> the idempotent vendor patch once (re-run it after reinstalling dsh):
+> `@deepseek-ai/dsh-host-apiproxy` bundle. Until upstream moves exposure into
+> `settings.register()`, one idempotent vendor patch is required for the
+> settings card to appear (re-run it after reinstalling dsh):
 >
 > ```sh
-> node scripts/patch-expose.mjs
+> node node_modules/dsh-client-auto-continue/scripts/patch-expose.mjs
 > dsh web
 > ```
 >
-> The auto-continue engine itself works without this patch — it only gates the
+> The patch script ships inside the npm package (no repo clone needed) and
+> covers every reachable dsh installation: the profile-linked copy, a global
+> `npm i -g @deepseek-ai/dsh` install, and the invoking directory's own. The
+> auto-continue engine itself works without this patch — it only gates the
 > GUI settings card.
 
 ### Verify & uninstall

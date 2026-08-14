@@ -99,15 +99,18 @@ dsh web
 > 从手动安装切换到 `dsh plugin add` 时, 请先删掉手动加的 `insert` 条目——包自带的 bundle patch 会注册插件行, 重复注册会冲突。
 
 > **已知 DSH 限制(0.1.0-rc.6):** webui 的插件配置区只暴露已安装
-> `@deepseek-ai/dsh-host-apiproxy` 包中硬编码白名单里的设置命名空间。要让设置卡片
-> 显示出来, 需要执行一次幂等的供应商补丁(重新安装 dsh 后重跑一次即可):
+> `@deepseek-ai/dsh-host-apiproxy` 包中硬编码白名单里的设置命名空间。在官方把暴露
+> 逻辑移入 `settings.register()` 之前, 要让设置卡片显示出来, 需要执行一次幂等的
+> 供应商补丁(重新安装 dsh 后重跑一次即可):
 >
 > ```sh
-> node scripts/patch-expose.mjs
+> node node_modules/dsh-client-auto-continue/scripts/patch-expose.mjs
 > dsh web
 > ```
 >
-> 自动续跑引擎本身不依赖这个补丁——它只影响 GUI 设置卡片是否可见。
+> 补丁脚本随 npm 包一起发布(无需克隆仓库), 并覆盖所有可达的 dsh 安装: profile
+> 链接副本、全局 `npm i -g @deepseek-ai/dsh` 安装、以及当前目录的安装。自动续跑
+> 引擎本身不依赖这个补丁——它只影响 GUI 设置卡片是否可见。
 
 ### 验证与卸载
 
