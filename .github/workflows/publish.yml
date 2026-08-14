@@ -1,0 +1,69 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify tag matches package version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "Publishing dsh-client-auto-continue@$version from $GITHUB_REF_NAME"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Pack tarball
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release with artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
+            notes=$(git log --oneline --no-decorate "$(git describe --tags --abbrev=0 HEAD^)..HEAD")
+          else
+            notes=$(git log --oneline --no-decorate -10)
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            dist/*.tgz \
+            lib/client.js \
+            lib/client.js.map \
+            lib/index.js \
+            --title "dsh-auto-continue v$version" \
+            --notes "$notes"

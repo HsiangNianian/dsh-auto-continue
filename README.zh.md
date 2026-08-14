@@ -184,7 +184,34 @@ npm run test        # node tests/simulate.mjs — 8 个行为场景
 
 ---
 
+
+## 发布
+
+打一个与 `package.json` 版本一致的 `v<version>` tag, 即可触发发布流水线:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+CI(`.github/workflows/publish.yml`)会依次:
+
+1. 校验 tag 与 `package.json` 版本一致
+2. 安装依赖、构建(`npm run build`)并跑测试套件
+3. 发布到 npm(`dsh-client-auto-continue`)
+4. 创建 GitHub Release, 附带打包好的 tarball 与构建产物
+   (`lib/client.js`、`lib/client.js.map`、`lib/index.js`)
+
+流水线依赖仓库的 `NPM_TOKEN` secret(带 publish 权限的 npm automation token):
+
+```bash
+gh secret set NPM_TOKEN --repo HsiangNianian/dsh-auto-continue
+```
+
+---
+
 ## 链接
+
 
 - **仓库**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)
 - **DeepSeek Harness**: [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
