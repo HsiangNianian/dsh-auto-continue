@@ -1,21 +1,22 @@
 /**
- * 无头模拟测试: 用假 window/localStorage + 假 api 加载打包后的 lib/client.js,
- * 验证自动「继续」插件的核心行为:
- *   1. turn/end error → 宽限期后自动发送「继续」
+ * 无头模拟测试: 用假 window/localStorage + 假 ctx(连接/设置作用域/插槽/语言包)
+ * 加载打包后的 lib/client.js, 验证自动「继续」插件的核心行为:
+ *   1. turn/end error → 宽限期后自动发送配置的文本
  *   2. 宽限期内 turn/start → 取消
  *   3. aborted → 不发送
  *   4. 会话运行中 → 不发送
  *   5. 启动扫描: 历史里最近回合为 interrupted → 自动继续
  *   6. 连续次数上限 → 停止
  *   7. 太久远的中断 → 扫描不处理
- * 运行: node test/simulate.mjs
+ *   8. 设置作用域中的 continueText 覆盖生效
+ * 运行: node tests/simulate.mjs
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const bundle = readFileSync(join(root, "../lib/client.js"), "utf8");
+const bundle = readFileSync(join(root, '../lib/client.js'), 'utf8');
 
 // ---------- 假浏览器环境 ----------
 const storage = new Map();
@@ -30,18 +31,32 @@ globalThis.window = {
 };
 globalThis.localStorage = fakeLocalStorage;
 
-new Function("require", bundle)(() => {
-  throw new Error("bundle 不应有运行时 require");
-});
-if (!handoff) throw new Error("未捕获 __ModuleLoader__.load");
-const exports = handoff.factory(() => {
-  throw new Error("no require");
-});
-if (exports.inject[0] !== "connection") throw new Error("inject 错误: " + exports.inject);
+// ---------- 假 require: 浏览器包只 require 平台种子与运行时 store ----------
+const reactStub = { useState: (init) => [init, () => {}] };
+const jsxStub = { jsx: () => null, jsxs: () => null, Fragment: Symbol('fragment') };
+const runtimeStub = {
+  createSnapshotStore: (init) => {
+    let state = init;
+    return {
+      getSnapshot: () => state,
+      subscribe: () => () => {},
+      set: (next) => { state = next; },
+      update: () => {},
+    };
+  },
+};
+const stubRequire = (spec) => {
+  if (spec === 'react') return reactStub;
+  if (spec === 'react/jsx-runtime') return jsxStub;
+  if (spec === '@deepseek-ai/dsh-client-runtime/client') return runtimeStub;
+  throw new Error(`unexpected require: ${spec}`);
+};
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+new Function('require', bundle)(stubRequire);
+if (!handoff) throw new Error('未捕获 __ModuleLoader__.load');
+const exports = handoff.factory(stubRequire);
 
-// ---------- 假 api ----------
+// ---------- 假 api 与假 ctx ----------
 class FakeApi {
   constructor() {
     this.prompts = [];
@@ -54,12 +69,7 @@ class FakeApi {
   }
 
   addSession(id, { running = false, parentSessionId = undefined, events = [] } = {}) {
-    this.sessionRows.push({
-      sessionId: id,
-      running,
-      parentSessionId,
-      updatedAt: Date.now(),
-    });
+    this.sessionRows.push({ sessionId: id, running, parentSessionId, updatedAt: Date.now() });
     if (events.length) this.historyBySession.set(id, events);
   }
 
@@ -71,7 +81,7 @@ class FakeApi {
         await sleep(5);
         continue;
       }
-      yield { rpcId: "r", payload: frame };
+      yield { rpcId: 'r', payload: frame };
     }
   }
 
@@ -109,15 +119,49 @@ class FakeApi {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 假设置作用域: 引擎从 getSnapshot().value 读配置。 */
+function makeScope(value) {
+  return {
+    getSnapshot: () => ({
+      status: 'ready',
+      value,
+      base: undefined,
+      user: value,
+      revision: 1,
+      writable: true,
+      mode: 'host',
+    }),
+    subscribe: () => () => {},
+    set: async () => {},
+    unset: async () => {},
+  };
+}
+
+/** 假客户端根上下文: 提供 connection / settingsScope / locale / slots。 */
+function makeCtx(api, scopeValue) {
+  return {
+    connection: { api },
+    settingsScope: { bind: () => makeScope(scopeValue) },
+    locale: { register: () => {}, bind: () => (key) => key },
+    slots: {
+      inject: () => {},
+      register: () => () => {},
+    },
+    effect: () => () => {},
+  };
+}
+
 const turnEnd = (sessionId, turn, reason) => ({
-  type: "session/event",
+  type: 'session/event',
   sessionId,
-  event: { type: "turn/end", seq: turn * 10, time: Date.now(), data: { turn, reason } },
+  event: { type: 'turn/end', seq: turn * 10, time: Date.now(), data: { turn, reason } },
 });
 const turnStart = (sessionId, turn) => ({
-  type: "session/event",
+  type: 'session/event',
   sessionId,
-  event: { type: "turn/start", seq: turn * 10, time: Date.now(), data: { turn } },
+  event: { type: 'turn/start', seq: turn * 10, time: Date.now(), data: { turn } },
 });
 
 let failures = 0;
@@ -130,139 +174,152 @@ function check(name, cond) {
   }
 }
 
-/** 每个测试独立: 清空 localStorage 并用快速参数重新 apply。 */
+/** 每个测试独立: 清空 localStorage, 用快速参数设置作用域, 重新 apply。 */
 const FAST = { graceMs: 200, cooldownMs: 300, maxConsecutive: 3, scanOnBoot: true, verbose: false };
-function startPlugin(api) {
+function startPlugin(api, overrides = {}) {
   storage.clear();
-  localStorage.setItem("dsh-auto-continue.config", JSON.stringify(FAST));
-  exports.apply({ connection: { api } });
+  exports.apply(makeCtx(api, { ...FAST, ...overrides }));
 }
 
 // ---------- 测试 1: turn/end error → 自动发送 ----------
 {
-  console.log("测试 1: turn/end error → 宽限期后自动发送「继续」");
+  console.log('测试 1: turn/end error → 宽限期后自动发送');
   const api = new FakeApi();
-  api.addSession("s1");
+  api.addSession('s1');
   startPlugin(api);
   await sleep(50);
-  api.pushMux(turnEnd("s1", 1, { kind: "error", error: { code: "X", message: "boom" } }));
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'X', message: 'boom' } }));
   await sleep(100); // grace 200ms, 还没到
-  check("宽限期内未发送", api.prompts.length === 0);
+  check('宽限期内未发送', api.prompts.length === 0);
   await sleep(500);
-  check("宽限期后已发送", api.prompts.length === 1);
-  check("发送文本为「继续」", api.prompts[0]?.content?.[0]?.text === "继续");
-  check("mode 为 queue", api.prompts[0]?.mode === "queue");
-  check("目标会话 s1", api.prompts[0]?.sessionId === "s1");
+  check('宽限期后已发送', api.prompts.length === 1);
+  check('发送文本为「继续」', api.prompts[0]?.content?.[0]?.text === '继续');
+  check('mode 为 queue', api.prompts[0]?.mode === 'queue');
+  check('目标会话 s1', api.prompts[0]?.sessionId === 's1');
   await sleep(50);
 }
 
 // ---------- 测试 2: 宽限期内 turn/start → 取消 ----------
 {
-  console.log("测试 2: 宽限期内宿主自行开启新回合 → 取消");
+  console.log('测试 2: 宽限期内宿主自行开启新回合 → 取消');
   const api = new FakeApi();
-  api.addSession("s1");
+  api.addSession('s1');
   startPlugin(api);
   await sleep(50);
-  api.pushMux(turnEnd("s1", 1, { kind: "error", error: { code: "X", message: "boom" } }));
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'X', message: 'boom' } }));
   await sleep(100);
-  api.pushMux(turnStart("s1", 2));
+  api.pushMux(turnStart('s1', 2));
   await sleep(600);
-  check("未发送", api.prompts.length === 0);
+  check('未发送', api.prompts.length === 0);
   await sleep(50);
 }
 
 // ---------- 测试 3: aborted → 不发送 ----------
 {
-  console.log("测试 3: 用户停止(aborted)→ 不发送");
+  console.log('测试 3: 用户停止(aborted)→ 不发送');
   const api = new FakeApi();
-  api.addSession("s1");
+  api.addSession('s1');
   startPlugin(api);
   await sleep(50);
-  api.pushMux(turnEnd("s1", 1, { kind: "aborted", reason: { kind: "human" } }));
+  api.pushMux(turnEnd('s1', 1, { kind: 'aborted', reason: { kind: 'human' } }));
   await sleep(600);
-  check("未发送", api.prompts.length === 0);
+  check('未发送', api.prompts.length === 0);
   await sleep(50);
 }
 
 // ---------- 测试 4: 会话运行中 → 不发送 ----------
 {
-  console.log("测试 4: 会话运行中(host 帧)→ 不发送");
+  console.log('测试 4: 会话运行中(host 帧)→ 不发送');
   const api = new FakeApi();
-  api.addSession("s1", { running: true });
+  api.addSession('s1', { running: true });
   startPlugin(api);
   await sleep(50);
-  api.pushHost({ type: "host/session-status", sessionId: "s1", running: true });
-  api.pushMux(turnEnd("s1", 1, { kind: "error", error: { code: "X", message: "boom" } }));
+  api.pushHost({ type: 'host/session-status', sessionId: 's1', running: true });
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'X', message: 'boom' } }));
   await sleep(600);
-  check("未发送", api.prompts.length === 0);
+  check('未发送', api.prompts.length === 0);
   await sleep(50);
 }
 
 // ---------- 测试 5: 启动扫描 interrupted ----------
 {
-  console.log("测试 5: 启动扫描发现最近 interrupted 回合 → 自动继续");
+  console.log('测试 5: 启动扫描发现最近 interrupted 回合 → 自动继续');
   const api = new FakeApi();
   const now = Date.now();
-  api.addSession("s1", {
+  api.addSession('s1', {
     running: false,
     events: [
       {
         event: {
-          type: "turn/end",
+          type: 'turn/end',
           seq: 2,
           time: now - 60_000,
-          data: { turn: 1, reason: { kind: "interrupted" } },
+          data: { turn: 1, reason: { kind: 'interrupted' } },
         },
       },
     ],
   });
   startPlugin(api);
   await sleep(1000); // boot 扫描 + grace
-  check("已发送", api.prompts.length === 1);
-  check("文本为「继续」", api.prompts[0]?.content?.[0]?.text === "继续");
+  check('已发送', api.prompts.length === 1);
+  check('文本为「继续」', api.prompts[0]?.content?.[0]?.text === '继续');
   await sleep(50);
 }
 
 // ---------- 测试 6: 连续次数上限 ----------
 {
-  console.log("测试 6: 连续自动继续达到上限后停止");
+  console.log('测试 6: 连续自动继续达到上限后停止');
   const api = new FakeApi();
-  api.addSession("s1");
+  api.addSession('s1');
   startPlugin(api);
   await sleep(50);
   for (let i = 1; i <= 4; i += 1) {
-    api.pushMux(turnEnd("s1", i, { kind: "error", error: { code: "X", message: "boom" } }));
+    api.pushMux(turnEnd('s1', i, { kind: 'error', error: { code: 'X', message: 'boom' } }));
     await sleep(500); // grace 200 + 余量, 触发发送
-    api.pushMux(turnStart("s1", i + 1));
+    api.pushMux(turnStart('s1', i + 1));
     await sleep(450); // 超过 cooldown 300ms
   }
-  check("只发送了 3 次(默认上限)", api.prompts.length === 3);
+  check('只发送了 3 次(默认上限)', api.prompts.length === 3);
   await sleep(50);
 }
 
 // ---------- 测试 7: 旧的 error → 扫描不处理 ----------
 {
-  console.log("测试 7: 太久远的中断 → 扫描不处理");
+  console.log('测试 7: 太久远的中断 → 扫描不处理');
   const api = new FakeApi();
   const now = Date.now();
-  api.addSession("s1", {
+  api.addSession('s1', {
     running: false,
     events: [
       {
         event: {
-          type: "turn/end",
+          type: 'turn/end',
           seq: 2,
           time: now - 60 * 60 * 1000, // 1 小时前
-          data: { turn: 1, reason: { kind: "error", error: { code: "X", message: "old" } } },
+          data: { turn: 1, reason: { kind: 'error', error: { code: 'X', message: 'old' } } },
         },
       },
     ],
   });
   startPlugin(api);
   await sleep(1000);
-  check("未发送", api.prompts.length === 0);
+  check('未发送', api.prompts.length === 0);
   await sleep(50);
 }
 
-console.log(failures === 0 ? "\n全部通过 ✅" : `\n${failures} 项失败 ❌`);
+// ---------- 测试 8: 设置作用域覆盖 continueText ----------
+{
+  console.log('测试 8: 设置中的 continueText 覆盖生效');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { continueText: '请继续' });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'X', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check('文本为「请继续」', api.prompts[0]?.content?.[0]?.text === '请继续');
+  await sleep(50);
+}
+
+console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌`);
 process.exit(failures === 0 ? 0 : 1);

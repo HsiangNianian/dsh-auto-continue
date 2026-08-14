@@ -18,7 +18,7 @@
   <br>
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=fff" alt="TypeScript">
   <img src="https://img.shields.io/badge/esbuild-FFCF00?style=flat&logo=esbuild&logoColor=000" alt="esbuild">
-  <img src="https://img.shields.io/badge/zero__runtime__deps-16a34a?style=flat" alt="Zero runtime dependencies">
+  <img src="https://img.shields.io/badge/GUI--configurable-0ea5e9?style=flat" alt="GUI configurable">
 </p>
 
 <p align="center">
@@ -40,30 +40,17 @@ It watches the live event streams and reacts to:
 | `turn/end` → `max-tokens` | Output token ceiling reached |
 | `host/agent-error` | Agent failure with no turn position |
 
-**Never auto-continues:** user-aborted turns (`aborted`) or policy rejections (`blocked`); sessions the host already resumed itself; running sessions or sessions with queued messages; subagent sessions; anything inside the cooldown / consecutive-cap windows (below).
+**Never auto-continues:** user-aborted turns (`aborted`) or policy rejections (`blocked`); sessions the host already resumed itself; running sessions or sessions with queued messages; subagent sessions; anything inside the cooldown / consecutive-cap windows (configurable in the settings card, below).
 
 ---
 
 ## How It Works
 
-The plugin opens two extra SSE streams in the browser — `events.mux` (session events) and `events.host` (host events). The host supports multiple consumers, so this never interferes with the built-in runtime. On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then calls `sessions.prompt` in `queue` mode with 「继续」.
+The plugin opens two extra SSE streams in the browser — `events.mux` (session events) and `events.host` (host events). The host supports multiple consumers, so this never interferes with the built-in runtime. On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then calls `sessions.prompt` in `queue` mode with the configured text.
 
-On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the last 15 minutes**, with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed).
+On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed).
 
-**Safety guards (defaults):**
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| `continueText` | `"继续"` | Text to send |
-| `graceMs` | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
-| `cooldownMs` | `20000` | Min interval between auto-continues per session (failed attempts count too) |
-| `maxConsecutive` | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
-| `scanOnBoot` | `true` | Scan recently interrupted sessions on load / reconnect |
-| `scanLimit` | `8` | Max sessions scanned (running / subagent sessions excluded) |
-| `freshMs` | `900000` (15 min) | Scan only considers interruptions inside this window |
-| `reconnectScanDelayMs` | `5000` | Delay before scanning after a reconnect |
-| `reconnectBackoffMs` | `3000` | SSE reconnect backoff |
-| `verbose` | `true` | `[auto-continue]` console logs |
+All knobs live in the plugin's settings card — see [Configuration](#configuration).
 
 ---
 
@@ -108,6 +95,19 @@ dsh web
 
 > Switching from a manual install to `dsh plugin add`? Remove the manual `insert` entry first — the bundle patch registers the row and a duplicate would conflict.
 
+> **Known DSH limitation (0.1.0-rc.6):** the web plugin-configuration section only
+> exposes settings namespaces on a hardcoded allowlist in the installed
+> `@deepseek-ai/dsh-host-apiproxy` bundle. To make the settings card appear, run
+> the idempotent vendor patch once (re-run it after reinstalling dsh):
+>
+> ```sh
+> node scripts/patch-expose.mjs
+> dsh web
+> ```
+>
+> The auto-continue engine itself works without this patch — it only gates the
+> GUI settings card.
+
 ### Verify & uninstall
 
 ```bash
@@ -126,23 +126,20 @@ dsh web
 
 ## Configuration
 
-Override any setting via `localStorage` (refresh the page afterwards):
+Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugin configuration** and find the **Auto continue** card. Changes are staged and written on **Save**, apply immediately, and persist in `~/.dsh/settings.yaml`.
 
-```js
-localStorage["dsh-auto-continue.config"] = JSON.stringify({
-  continueText: "请继续",
-  graceMs: 5000,
-  cooldownMs: 30000,
-  maxConsecutive: 5,
-  verbose: true
-});
-```
-
-Remove the key to restore defaults:
-
-```js
-localStorage.removeItem("dsh-auto-continue.config");
-```
+| Field | Default | Description |
+| --- | --- | --- |
+| Continue text | `继续` | Text automatically sent after an interruption |
+| Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
+| Cooldown (ms) | `20000` | Min interval between auto-continues per session (failed attempts count too) |
+| Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
+| Scan on load / reconnect | `on` | Scan recently interrupted sessions on load / reconnect |
+| Scan limit | `8` | Max sessions scanned (running / subagent sessions excluded) |
+| Scan window (ms) | `900000` | Scan only considers interruptions inside this window |
+| Reconnect scan delay (ms) | `5000` | Delay before scanning after a reconnect |
+| Reconnect backoff (ms) | `3000` | SSE reconnect backoff |
+| Verbose logs | `on` | `[auto-continue]` console logs |
 
 ---
 
@@ -150,10 +147,10 @@ localStorage.removeItem("dsh-auto-continue.config");
 
 | Layer | Choice |
 | --- | --- |
-| Platform | DSH Web GUI client plugin (browser half + no-op host half) |
+| Platform | DSH Web GUI client plugin (browser half + host half registering the settings namespace) |
 | Language | TypeScript |
 | Build | esbuild (browser bundle + node half) + tsc declarations |
-| Runtime deps | **Zero** — all `@deepseek-ai/*` imports are type-only and erased at build |
+| Runtime deps | Browser bundle: `react` (platform seed) + `createSnapshotStore` (module table); host half: `schemastery` + `dsh-settings` (resolved from the dsh installation) |
 
 ```
 dsh-auto-continue/
@@ -162,11 +159,15 @@ dsh-auto-continue/
 ├── build.mjs               # esbuild build (browser bundle + node half)
 ├── tsconfig.json / tsconfig.build.json
 ├── src/
-│   ├── index.ts            # host half entry (no server-side behavior)
-│   └── client/index.ts     # browser half: the auto-continue engine
-├── tests/simulate.mjs      # headless behavioral tests (mock API)
+│   ├── index.ts            # host half: registers the auto-continue settings namespace
+│   └── client/
+│       ├── index.ts        # browser half entry: engine + settings card wiring
+│       ├── engine.ts       # the auto-continue engine (reads the settings scope)
+│       ├── settings-card.tsx / settings-form.ts / locales.ts / styles.ts
+│       └──                 # settings card UI (staged form, zh/en copy, theme styles)
+├── tests/simulate.mjs      # headless behavioral tests (mock API + settings scope)
 ├── lib/                    # build output (committed, ready to link)
-├── docs/                   # banner artwork
+├── docs/                   # banner artwork (en + zh)
 └── README.md / README.zh.md / LICENSE
 ```
 
@@ -178,7 +179,7 @@ dsh-auto-continue/
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 7 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 8 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

@@ -30,7 +30,11 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-connection"
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
       ]
     }
   },
@@ -45,7 +49,8 @@
     "dsh-plugin",
     "deepseek-harness",
     "plugin",
-    "web-ui"
+    "web-ui",
+    "auto-continue"
   ],
   "repository": {
     "type": "git",
@@ -56,5 +61,10 @@
     "esbuild": "^0.25.0",
     "typescript": "~5.8.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
 }

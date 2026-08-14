@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
-    <img src="docs/banner.svg" alt="dsh-auto-continue" width="720">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/banner-zh-dark.svg">
+    <img src="docs/banner-zh.svg" alt="dsh-auto-continue" width="720">
   </picture>
 </p>
 
@@ -18,7 +18,7 @@
   <br>
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=fff" alt="TypeScript">
   <img src="https://img.shields.io/badge/esbuild-FFCF00?style=flat&logo=esbuild&logoColor=000" alt="esbuild">
-  <img src="https://img.shields.io/badge/zero__runtime__deps-16a34a?style=flat" alt="零运行时依赖">
+  <img src="https://img.shields.io/badge/zero__runtime__deps-16a34a?style=flat" alt="GUI 可配置">
 </p>
 
 <p align="center">
@@ -40,30 +40,17 @@
 | `turn/end` → `max-tokens` | 达到输出 token 上限 |
 | `host/agent-error` | 无回合位置的 Agent 失败 |
 
-**绝不自动继续:** 用户主动停止(`aborted`)或策略拒绝(`blocked`); 宿主已自行恢复的会话; 正在运行或已有排队消息的会话; 子代理会话; 处于冷却期 / 连续次数上限内的会话(见下)。
+**绝不自动继续:** 用户主动停止(`aborted`)或策略拒绝(`blocked`); 宿主已自行恢复的会话; 正在运行或已有排队消息的会话; 子代理会话; 处于冷却期 / 连续次数上限内的会话(可在设置卡片中调整, 见下)。
 
 ---
 
 ## 工作原理
 
-插件在浏览器里额外打开两条 SSE 流——`events.mux`(会话事件)与 `events.host`(宿主事件)。宿主支持多消费者, 与内置运行时互不干扰。检测到中断后先等待一个**宽限期**(默认 3 秒)——若宿主自行开启了新回合(`turn/start`), 自动继续即取消——然后以 `queue` 模式调用 `sessions.prompt` 发送「继续」。
+插件在浏览器里额外打开两条 SSE 流——`events.mux`(会话事件)与 `events.host`(宿主事件)。宿主支持多消费者, 与内置运行时互不干扰。检测到中断后先等待一个**宽限期**(默认 3 秒)——若宿主自行开启了新回合(`turn/start`), 自动继续即取消——然后以 `queue` 模式调用 `sessions.prompt` 发送配置的文本。
 
-页面启动 / 重连时, 插件还会扫描最近更新的会话: 若某个会话的最后一个回合在**最近 15 分钟内**以非人为原因结束, 且之后没有新的 `turn/start` 或用户消息, 也会被自动续跑(例如浏览器关闭期间宿主崩溃的情况)。
+页面启动 / 重连时, 插件还会扫描最近更新的会话: 若某个会话的最后一个回合在**扫描时间窗**(默认 15 分钟)内以非人为原因结束, 且之后没有新的 `turn/start` 或用户消息, 也会被自动续跑(例如浏览器关闭期间宿主崩溃的情况)。
 
-**安全护栏(默认值):**
-
-| 参数 | 默认 | 说明 |
-| --- | --- | --- |
-| `continueText` | `"继续"` | 自动发送的文本 |
-| `graceMs` | `3000` | 中断后等待的宽限期; 期间宿主自行恢复则取消 |
-| `cooldownMs` | `20000` | 同一会话两次自动「继续」的最小间隔(失败尝试也计入) |
-| `maxConsecutive` | `3` | 同一会话连续自动「继续」上限; 之后停止, 直到用户手动介入或出现成功回合 |
-| `scanOnBoot` | `true` | 页面启动 / 重连时扫描最近中断的会话 |
-| `scanLimit` | `8` | 扫描最多检查的会话数(不含运行中 / 子代理会话) |
-| `freshMs` | `900000`(15 分钟) | 扫描只处理该时间窗内的中断 |
-| `reconnectScanDelayMs` | `5000` | 重连后等待宿主恢复再扫描 |
-| `reconnectBackoffMs` | `3000` | SSE 流断开后的重连退避 |
-| `verbose` | `true` | 控制台输出 `[auto-continue]` 日志 |
+所有参数都在插件的设置卡片中调整——见 [配置](#配置)。
 
 ---
 
@@ -108,6 +95,17 @@ dsh web
 
 > 从手动安装切换到 `dsh plugin add` 时, 请先删掉手动加的 `insert` 条目——包自带的 bundle patch 会注册插件行, 重复注册会冲突。
 
+> **已知 DSH 限制(0.1.0-rc.6):** webui 的插件配置区只暴露已安装
+> `@deepseek-ai/dsh-host-apiproxy` 包中硬编码白名单里的设置命名空间。要让设置卡片
+> 显示出来, 需要执行一次幂等的供应商补丁(重新安装 dsh 后重跑一次即可):
+>
+> ```sh
+> node scripts/patch-expose.mjs
+> dsh web
+> ```
+>
+> 自动续跑引擎本身不依赖这个补丁——它只影响 GUI 设置卡片是否可见。
+
 ### 验证与卸载
 
 ```bash
@@ -126,23 +124,20 @@ dsh web
 
 ## 配置
 
-通过 `localStorage` 覆盖任意设置(刷新页面生效):
+所有参数都可以在 GUI 里配置——无需改文件或控制台。打开 **设置 → 插件配置**, 找到 **自动继续** 卡片。修改后点 **保存** 生效, 立即应用, 并持久化到 `~/.dsh/settings.yaml`。
 
-```js
-localStorage["dsh-auto-continue.config"] = JSON.stringify({
-  continueText: "请继续",
-  graceMs: 5000,
-  cooldownMs: 30000,
-  maxConsecutive: 5,
-  verbose: true
-});
-```
-
-删除该键即恢复默认:
-
-```js
-localStorage.removeItem("dsh-auto-continue.config");
-```
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| 继续文本 | `继续` | 中断后自动发送的消息内容 |
+| 宽限期 (ms) | `3000` | 中断后等待的时长; 期间宿主自行恢复则取消 |
+| 冷却时间 (ms) | `20000` | 同一会话两次自动「继续」的最小间隔(失败尝试也计入) |
+| 最大连续次数 | `3` | 同一会话连续自动「继续」上限; 超过后停止, 直到用户介入或成功回合 |
+| 启动/重连扫描 | 开 | 页面启动 / 重连时扫描最近中断的会话 |
+| 扫描会话数 | `8` | 扫描最多检查的会话数(不含运行中 / 子代理会话) |
+| 扫描时间窗 (ms) | `900000` | 扫描只处理该时间窗内的中断 |
+| 重连扫描延迟 (ms) | `5000` | 重连后等待宿主恢复再扫描 |
+| 重连退避 (ms) | `3000` | SSE 流断开后的重连间隔 |
+| 详细日志 | 开 | 控制台输出 `[auto-continue]` 日志 |
 
 ---
 
@@ -150,10 +145,10 @@ localStorage.removeItem("dsh-auto-continue.config");
 
 | 分层 | 选型 |
 | --- | --- |
-| 平台 | DSH Web GUI 客户端插件(浏览器半区 + 空宿主半区) |
+| 平台 | DSH Web GUI 客户端插件(浏览器半区 + 注册设置命名空间的宿主半区) |
 | 语言 | TypeScript |
 | 构建 | esbuild(浏览器包 + 宿主半区)+ tsc 声明文件 |
-| 运行时依赖 | **零**——所有 `@deepseek-ai/*` 导入均为纯类型导入, 构建时被擦除 |
+| 运行时依赖 | 浏览器包: `react`(平台种子)+ `createSnapshotStore`(模块表); 宿主半区: `schemastery` + `dsh-settings`(由 dsh 安装解析) |
 
 ```
 dsh-auto-continue/
@@ -162,11 +157,15 @@ dsh-auto-continue/
 ├── build.mjs               # esbuild 构建(浏览器包 + 宿主半区)
 ├── tsconfig.json / tsconfig.build.json
 ├── src/
-│   ├── index.ts            # host 半区入口(无宿主侧行为)
-│   └── client/index.ts     # browser 半区: 自动续跑引擎
-├── tests/simulate.mjs      # 无头行为测试(模拟 API)
+│   ├── index.ts            # host 半区: 注册 auto-continue 设置命名空间
+│   └── client/
+│       ├── index.ts        # browser 半区入口: 引擎 + 设置卡片接线
+│       ├── engine.ts       # 自动续跑引擎(读取设置作用域)
+│       ├── settings-card.tsx / settings-form.ts / locales.ts / styles.ts
+│       └──                 # 设置卡片 UI(暂存表单、中英文案、主题样式)
+├── tests/simulate.mjs      # 无头行为测试(模拟 API + 设置作用域)
 ├── lib/                    # 构建产物(已提交, 可直接链接)
-├── docs/                   # banner 图
+├── docs/                   # banner 图(英文 + 中文)
 └── README.md / README.zh.md / LICENSE
 ```
 
@@ -178,7 +177,7 @@ dsh-auto-continue/
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # 监听变更自动重建; 宿主 HMR 免刷新热重载
-npm run test        # node tests/simulate.mjs — 7 个行为场景
+npm run test        # node tests/simulate.mjs — 8 个行为场景
 ```
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。

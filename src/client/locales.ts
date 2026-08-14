@@ -1,0 +1,88 @@
+/**
+ * `auto-continue` namespace dictionaries: copy for the plugin settings card
+ * registered into the `settings.plugin.item` seat of the plugin-configuration
+ * section. Includes the card-chrome keys the card component reads.
+ */
+
+/** 简体中文词典(键集的事实来源)。 */
+export const zh = {
+  'card.title': '自动继续',
+  'card.description': '请求因网络等原因(非人为)中断后, 自动发送「继续」续跑。',
+  'field.continueText': '继续文本',
+  'field.continueTextHint': '中断后自动发送的消息内容。',
+  'field.graceMs': '宽限期 (ms)',
+  'field.graceMsHint': '检测到中断后等待的时长; 期间宿主自行恢复则取消。',
+  'field.cooldownMs': '冷却时间 (ms)',
+  'field.cooldownMsHint': '同一会话两次自动「继续」的最小间隔, 失败尝试也计入。',
+  'field.maxConsecutive': '最大连续次数',
+  'field.maxConsecutiveHint': '同一会话连续自动「继续」的上限; 超过后停止, 直到用户手动介入或出现成功回合。',
+  'field.scanOnBoot': '启动/重连扫描',
+  'field.scanOnBootHint': '页面启动或重连时扫描最近中断的会话并自动续跑(如浏览器关闭期间宿主崩溃)。',
+  'field.scanLimit': '扫描会话数',
+  'field.scanLimitHint': '最多检查多少个最近更新的会话(不含运行中与子代理会话)。',
+  'field.freshMs': '扫描时间窗 (ms)',
+  'field.freshMsHint': '扫描只处理该时间窗内的中断。',
+  'field.reconnectScanDelayMs': '重连扫描延迟 (ms)',
+  'field.reconnectScanDelayMsHint': '重连后等待宿主完成恢复再扫描。',
+  'field.reconnectBackoffMs': '重连退避 (ms)',
+  'field.reconnectBackoffMsHint': '事件流断开后的重连间隔。',
+  'field.verbose': '详细日志',
+  'field.verboseHint': '在浏览器控制台输出 [auto-continue] 日志。',
+  'chrome.collapse': '收起设置',
+  'chrome.expand': '展开设置',
+  'chrome.unsaved': '未保存',
+  'chrome.readOnly': '当前部署的设置只读。',
+  'chrome.saveFailed': '部署未接受这些值, 已保留供你修改。',
+  'chrome.discard': '放弃',
+  'chrome.saving': '保存中…',
+  'chrome.save': '保存',
+  'chrome.overridden': '已覆盖',
+  'chrome.reset': '恢复默认',
+  'chrome.invalidNumber': '请输入数字, 留空则使用默认值。',
+  'chrome.inherit': '继承',
+  'chrome.on': '开',
+  'chrome.off': '关',
+} satisfies Record<string, string>;
+
+/** 本插件的键联合。 */
+export type SettingsCardKey = keyof typeof zh;
+
+/** English dictionary, checked complete against the zh key set. */
+export const en: Record<SettingsCardKey, string> = {
+  'card.title': 'Auto continue',
+  'card.description': 'When a request is interrupted by a non-human cause, automatically send 「继续」 to resume.',
+  'field.continueText': 'Continue text',
+  'field.continueTextHint': 'Message automatically sent after an interruption.',
+  'field.graceMs': 'Grace period (ms)',
+  'field.graceMsHint': 'Wait after an interruption; cancelled if the host recovers on its own.',
+  'field.cooldownMs': 'Cooldown (ms)',
+  'field.cooldownMsHint': 'Minimum interval between auto-continues per session; failed attempts count too.',
+  'field.maxConsecutive': 'Max consecutive',
+  'field.maxConsecutiveHint': 'Max consecutive auto-continues per session; stops until a user intervenes or a turn completes.',
+  'field.scanOnBoot': 'Scan on load / reconnect',
+  'field.scanOnBootHint': 'Scan recently interrupted sessions on page load or reconnect (e.g. the host crashed while the browser was closed).',
+  'field.scanLimit': 'Scan limit',
+  'field.scanLimitHint': 'How many most-recently-updated sessions to check (running / subagent sessions excluded).',
+  'field.freshMs': 'Scan window (ms)',
+  'field.freshMsHint': 'Only interruptions inside this window are considered.',
+  'field.reconnectScanDelayMs': 'Reconnect scan delay (ms)',
+  'field.reconnectScanDelayMsHint': 'Wait for the host to finish recovering before scanning after a reconnect.',
+  'field.reconnectBackoffMs': 'Reconnect backoff (ms)',
+  'field.reconnectBackoffMsHint': 'Interval between event-stream reconnect attempts.',
+  'field.verbose': 'Verbose logs',
+  'field.verboseHint': 'Log [auto-continue] lines to the browser console.',
+  'chrome.collapse': 'Hide settings',
+  'chrome.expand': 'Show settings',
+  'chrome.unsaved': 'Unsaved',
+  'chrome.readOnly': 'This deployment stores settings read-only.',
+  'chrome.saveFailed': 'The deployment did not accept these values; they were left for you to correct.',
+  'chrome.discard': 'Discard',
+  'chrome.saving': 'Saving…',
+  'chrome.save': 'Save',
+  'chrome.overridden': 'Overridden',
+  'chrome.reset': 'Reset to default',
+  'chrome.invalidNumber': 'Enter a number, or leave blank to use the default.',
+  'chrome.inherit': 'Inherit',
+  'chrome.on': 'On',
+  'chrome.off': 'Off',
+};

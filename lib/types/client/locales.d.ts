@@ -1,0 +1,48 @@
+/**
+ * `auto-continue` namespace dictionaries: copy for the plugin settings card
+ * registered into the `settings.plugin.item` seat of the plugin-configuration
+ * section. Includes the card-chrome keys the card component reads.
+ */
+/** 简体中文词典(键集的事实来源)。 */
+export declare const zh: {
+    'card.title': string;
+    'card.description': string;
+    'field.continueText': string;
+    'field.continueTextHint': string;
+    'field.graceMs': string;
+    'field.graceMsHint': string;
+    'field.cooldownMs': string;
+    'field.cooldownMsHint': string;
+    'field.maxConsecutive': string;
+    'field.maxConsecutiveHint': string;
+    'field.scanOnBoot': string;
+    'field.scanOnBootHint': string;
+    'field.scanLimit': string;
+    'field.scanLimitHint': string;
+    'field.freshMs': string;
+    'field.freshMsHint': string;
+    'field.reconnectScanDelayMs': string;
+    'field.reconnectScanDelayMsHint': string;
+    'field.reconnectBackoffMs': string;
+    'field.reconnectBackoffMsHint': string;
+    'field.verbose': string;
+    'field.verboseHint': string;
+    'chrome.collapse': string;
+    'chrome.expand': string;
+    'chrome.unsaved': string;
+    'chrome.readOnly': string;
+    'chrome.saveFailed': string;
+    'chrome.discard': string;
+    'chrome.saving': string;
+    'chrome.save': string;
+    'chrome.overridden': string;
+    'chrome.reset': string;
+    'chrome.invalidNumber': string;
+    'chrome.inherit': string;
+    'chrome.on': string;
+    'chrome.off': string;
+};
+/** 本插件的键联合。 */
+export type SettingsCardKey = keyof typeof zh;
+/** English dictionary, checked complete against the zh key set. */
+export declare const en: Record<SettingsCardKey, string>;

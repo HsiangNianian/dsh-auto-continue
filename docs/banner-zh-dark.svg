@@ -13,13 +13,13 @@
   <rect width="1200" height="260" fill="url(#bg)"/>
   <!-- accent bar -->
   <rect x="0" y="252" width="1200" height="8" fill="url(#bar)"/>
-  <!-- Continue chip -->
-  <rect x="76" y="70" width="148" height="116" rx="26" fill="#f8fafc"/>
-  <text x="150" y="136" font-size="34" font-weight="700" fill="#0f172a" text-anchor="middle">Continue</text>
+  <!-- 继续 chip -->
+  <rect x="76" y="70" width="116" height="116" rx="26" fill="#f8fafc"/>
+  <text x="134" y="150" font-size="58" font-weight="700" fill="#0f172a" text-anchor="middle">继续</text>
   <!-- title -->
-  <text x="268" y="122" font-size="54" font-weight="800" fill="#f8fafc">dsh-auto-continue</text>
+  <text x="236" y="122" font-size="54" font-weight="800" fill="#f8fafc">dsh-auto-continue</text>
   <!-- subtitle -->
-  <text x="270" y="164" font-size="26" fill="#94a3b8">DSH Web UI plugin — auto-continue interrupted requests</text>
+  <text x="238" y="164" font-size="26" fill="#94a3b8">DSH Web UI plugin — auto-continue interrupted requests</text>
   <!-- caption -->
-  <text x="270" y="202" font-size="21" fill="#7dd3fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">turn/end · error | interrupted | max-tokens  →  prompt(&quot;Continue&quot;)</text>
+  <text x="238" y="202" font-size="21" fill="#7dd3fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">turn/end · error | interrupted | max-tokens  →  prompt(&quot;继续&quot;)</text>
 </svg>
