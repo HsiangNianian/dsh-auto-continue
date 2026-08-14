@@ -36,10 +36,10 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 
 **Smart recovery** (all configurable):
 
-- **Error classification** — transient failures (network / timeout / 5xx…) are auto-resumed; permanent ones (auth, balance, unknown model, context overflow) are **skipped** and notified, because retrying them never helps
-- **Adaptive backoff** — consecutive failures wait longer each time (e.g. 20s → 40s → 80s), instead of hammering a broken upstream
+- **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Turn classification off to resume everything
+- **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)")
-- **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error
+- **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error; the browser asks for permission on first use, and nothing is shown again after a denial
 
 It watches the live event streams and reacts to:
 
@@ -59,6 +59,8 @@ It watches the live event streams and reacts to:
 The plugin opens two extra SSE streams in the browser — `events.mux` (session events) and `events.host` (host events). The host supports multiple consumers, so this never interferes with the built-in runtime. On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then calls `sessions.prompt` in `queue` mode with the configured text.
 
 On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed).
+
+With the page open in several tabs, a localStorage mutex plus a shared per-session cooldown stamp guarantee exactly one tab sends — no duplicated 「继续」.
 
 All knobs live in the plugin's settings card — see [Configuration](#configuration).
 
@@ -142,7 +144,16 @@ dsh web
 
 ## Configuration
 
-Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugin configuration** and find the **Auto continue** card. Changes are staged and written on **Save**, apply immediately, and persist in `~/.dsh/settings.yaml`.
+Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugin configuration** and find the **Auto continue** card.
+
+**How the card works:**
+
+- Edits are **staged** — nothing reaches the disk until you hit **Save**; an unsaved badge marks the card while drafts are pending, and **Discard** drops them
+- A field you changed shows an **Overridden** badge with a per-field **Reset to default** button that restores the built-in value
+- Boolean fields are **tri-state**: *Inherit* (use the default) / *On* / *Off*
+- Invalid drafts (non-numbers, values below the minimum) block the save with a hint
+- In a read-only deployment the card shows the stored values but disables every control
+- Changes apply immediately after Save and persist in `~/.dsh/settings.yaml` (uninstalling the plugin leaves the section behind — harmless, delete it by hand if you like)
 
 | Field | Default | Description |
 | --- | --- | --- |
@@ -162,6 +173,17 @@ Everything is configurable from the GUI — no file or console edits needed. Ope
 | Browser notifications | `off` | Notify when auto-continue fires, gives up, or hits a permanent error |
 
 `continueText` accepts the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure) and `{turn}` — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`.
+
+---
+
+## Privacy & permissions
+
+The plugin is browser-only and touches **no files, credentials, or network beyond the dsh host**:
+
+- It opens the same two read-only event streams the web UI already uses (no extra server, no third-party endpoints)
+- The only write it ever performs is `sessions.prompt` — the same call the Send button makes — with the text you configured
+- Browser storage is limited to small `localStorage` keys for cross-tab coordination
+- Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
 
 ---
 
