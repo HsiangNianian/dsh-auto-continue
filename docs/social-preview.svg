@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="55%" stop-color="#0c2336"/>
+      <stop offset="100%" stop-color="#101a30"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#818cf8" stop-opacity="0.16"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1280" height="300" fill="url(#glow)"/>
+  <!-- Continue chip -->
+  <rect x="88" y="120" width="250" height="180" rx="40" fill="url(#chip)"/>
+  <text x="213" y="226" font-size="64" font-weight="800" fill="#0f172a" text-anchor="middle">Continue</text>
+  <!-- title -->
+  <text x="400" y="200" font-size="76" font-weight="800" fill="#f8fafc">dsh-auto-continue</text>
+  <!-- subtitle -->
+  <text x="402" y="258" font-size="32" fill="#94a3b8">DSH Web UI plugin — auto-continue interrupted requests</text>
+  <!-- caption -->
+  <text x="402" y="316" font-size="24" fill="#7dd3fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">turn/end · error | interrupted | max-tokens  →  prompt(&quot;Continue&quot;)</text>
+  <!-- feature pills -->
+  <rect x="402" y="368" width="250" height="56" rx="28" fill="#1e293b" stroke="#334155"/>
+  <text x="527" y="403" font-size="22" fill="#e2e8f0" text-anchor="middle">auto-resume on failure</text>
+  <rect x="668" y="368" width="264" height="56" rx="28" fill="#1e293b" stroke="#334155"/>
+  <text x="800" y="403" font-size="22" fill="#e2e8f0" text-anchor="middle">GUI-configurable settings</text>
+  <rect x="948" y="368" width="240" height="56" rx="28" fill="#1e293b" stroke="#334155"/>
+  <text x="1068" y="403" font-size="22" fill="#e2e8f0" text-anchor="middle">dsh plugin add</text>
+  <!-- repo line -->
+  <text x="402" y="500" font-size="26" fill="#64748b">github.com/HsiangNianian/dsh-auto-continue</text>
+  <!-- accent bar -->
+  <rect x="0" y="628" width="1280" height="12" fill="url(#bar)"/>
+</svg>
