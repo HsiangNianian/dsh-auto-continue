@@ -80,6 +80,17 @@ dsh plugin --profile web add dsh-client-auto-continue
 dsh web
 ```
 
+### 直接从 GitHub 安装(无需克隆)
+
+直接从仓库默认分支安装——构建产物已提交入库, 无需本地克隆或构建:
+
+```bash
+dsh plugin --profile web add github:HsiangNianian/dsh-auto-continue
+dsh web
+```
+
+> 该方式跟踪 `main` 分支而不是发布 tag——适合尝鲜最新改动, 稳定性首选上面的 npm 方式。切换安装来源只需重新执行 `dsh plugin --profile web add <其他来源>`, profile 依赖会被就地替换。
+
 ### 从本仓库安装
 
 需要 Node.js ≥ 18。

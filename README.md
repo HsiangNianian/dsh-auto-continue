@@ -80,6 +80,17 @@ dsh plugin --profile web add dsh-client-auto-continue
 dsh web
 ```
 
+### Directly from GitHub (no clone needed)
+
+Installs straight from the repository's default branch — built artifacts are committed, so no local clone or build step:
+
+```bash
+dsh plugin --profile web add github:HsiangNianian/dsh-auto-continue
+dsh web
+```
+
+> This tracks the `main` branch rather than released tags — great for trying the latest changes, while the npm method above is the stable choice. Switching between install sources is just re-running `dsh plugin --profile web add <other-spec>`; the profile dependency is replaced in place.
+
 ### From this repository
 
 Requires Node.js ≥ 18.
