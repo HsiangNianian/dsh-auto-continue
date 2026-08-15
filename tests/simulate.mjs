@@ -424,5 +424,33 @@ function startPlugin(api, overrides = {}) {
   await sleep(50);
 }
 
+// ---------- 测试 14: host/agent-error 序列化错误(用户停止的连带效应)→ 不自动继续 ----------
+{
+  console.log('测试 14: agent-error 序列化失败 → 不自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  notificationCalls.length = 0;
+  startPlugin(api, { notify: true });
+  await sleep(50);
+  api.pushHost({ type: 'host/agent-error', sessionId: 's1', message: 'session event "turn/end" carries non-JSON-serializable data' });
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  check('已发通知', notificationCalls.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 15: host/agent-error 网络类错误 → 照常自动继续 ----------
+{
+  console.log('测试 15: agent-error 网络错误 → 照常自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api);
+  await sleep(50);
+  api.pushHost({ type: 'host/agent-error', sessionId: 's1', message: 'network connection refused' });
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  await sleep(50);
+}
+
 console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌`);
 process.exit(failures === 0 ? 0 : 1);

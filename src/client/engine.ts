@@ -146,6 +146,15 @@ export function isTransientFailure(failure: FailureFacts): boolean {
   return !permanent;
 }
 
+/**
+ * host/agent-error 消息分类: 仅明确属于网络/传输类的临时错误才自动继续。
+ * 其余(序列化失败、配置/宿主内部错误等)视为永久性——重试无益, 且用户停止导致的
+ * 序列化失败(如 Windows 下 abort 的 DOMException reason)绝不能自动续跑。
+ */
+export function isTransientAgentError(message: string): boolean {
+  return /network|timeout|timed ?out|econn|etimedout|socket|5\d\d|\b429\b|upstream|temporar/i.test(message);
+}
+
 /** 浏览器通知(不可用时静默跳过)。 */
 function notify(title: string, body: string): void {
   try {
@@ -510,6 +519,15 @@ export class AutoContinueRunner {
       case 'host/agent-error':
         if (this.state(frame.sessionId).subagent) break;
         this.log(`host/agent-error(${frame.sessionId}): ${frame.message}`);
+        if (this.getConfig().classify && !isTransientAgentError(frame.message)) {
+          // 永久性 agent 错误(序列化失败/配置错误等): 跳过并通知, 避免把用户停止等
+          // 场景误判为可恢复中断后自动续跑。
+          this.log(`跳过 ${frame.sessionId}: 永久性 agent 错误 — ${frame.message}`);
+          if (this.getConfig().notify) {
+            notify('dsh-auto-continue: 未自动继续', `${frame.sessionId}: 永久性 agent 错误 ${frame.message.slice(0, 120)}`);
+          }
+          break;
+        }
         this.schedule(frame.sessionId, 'host/agent-error');
         break;
       case 'host/session-removed':

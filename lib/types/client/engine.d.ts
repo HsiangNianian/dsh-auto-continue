@@ -63,6 +63,12 @@ export interface FailureFacts {
  * 其余(网络、超时、5xx、429 等)视为临时性失败, 允许自动恢复。
  */
 export declare function isTransientFailure(failure: FailureFacts): boolean;
+/**
+ * host/agent-error 消息分类: 仅明确属于网络/传输类的临时错误才自动继续。
+ * 其余(序列化失败、配置/宿主内部错误等)视为永久性——重试无益, 且用户停止导致的
+ * 序列化失败(如 Windows 下 abort 的 DOMException reason)绝不能自动续跑。
+ */
+export declare function isTransientAgentError(message: string): boolean;
 /** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn})。 */
 export declare function fillTemplate(template: string, facts: FailureFacts | undefined, tool: string | undefined, turn: number | undefined): string;
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
