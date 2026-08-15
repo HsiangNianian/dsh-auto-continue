@@ -161,7 +161,7 @@ dsh web
 
 ## Configuration
 
-Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Auto continue** — the plugin's own section, placed right after **Agent presets**.
+Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugins** and find the **dsh-client-auto-continue** configuration card, right where every other plugin's config lives.
 
 **Or skip the GUI and edit the config file directly** — the engine reads the plugin's section from `~/.dsh/settings.yaml` (one shared file for every plugin's sections), so this works in any install, patched or not. The file is watched and re-read automatically, so changes apply live; restart `dsh web` if a page that was already open doesn't pick them up. Fields you leave out fall back to the defaults in the table below:
 

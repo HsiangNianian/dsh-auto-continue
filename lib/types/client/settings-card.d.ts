@@ -41,10 +41,10 @@ export declare class AutoContinueSettingsCardController {
      */
     inject(): AutoContinueSettingsCardFace;
 }
-/** Props the renderer binds for the auto-continue settings section (renders the card). */
-export type AutoContinueSettingsCardProps = PropsRuntime<'settings.section'> & PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
+/** Props the renderer binds for the auto-continue plugin-configuration card. */
+export type AutoContinueSettingsCardProps = PropsRuntime<'settings.plugin.item'> & PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
 /**
- * Render the auto-continue settings section: the settings card with all fields.
+ * Render the auto-continue card.
  * @param props - locale copy, the card snapshot, and its form actions.
  * @returns the card.
  */
