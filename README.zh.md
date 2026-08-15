@@ -186,10 +186,6 @@ auto-continue:
 
 **卡片操作说明:**
 
-![设置 → 插件](docs/screenshots/05-plugins-view.png)
-
-![卡片字段](docs/screenshots/06-card-fields.png)
-
 ![统计与暂停会话](docs/screenshots/07-card-panels.png)
 
 - 修改是**暂存式**的——点「保存」之前不会写入磁盘; 有待保存草稿时卡片显示「未保存」徽章, 「放弃」可丢弃草稿
