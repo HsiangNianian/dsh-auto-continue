@@ -24,6 +24,8 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
 export interface AutoContinueSettings {
   /** Text automatically sent after an interruption. */
   continueText?: string;
+  /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
+  continueTextMaxTokens?: string;
   /** Grace period after an interruption before auto-sending (ms). */
   graceMs?: number;
   /** Minimum interval between two auto-continues per session (ms). */
@@ -50,6 +52,8 @@ export interface AutoContinueSettings {
   backoffMaxMs?: number;
   /** Show browser notifications for auto-continue events. */
   notify?: boolean;
+  /** Globally pause auto-continue: no live or scan send, queued pending sends cancelled. */
+  paused?: boolean;
 }
 
 /** Fully resolved configuration (built-in defaults + user overrides). */
@@ -58,6 +62,7 @@ export type AutoContinueConfig = Required<AutoContinueSettings>;
 /** Built-in defaults — must match the host schema defaults in src/index.ts. */
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   continueText: '继续',
+  continueTextMaxTokens: '继续',
   graceMs: 3000,
   cooldownMs: 20000,
   maxConsecutive: 3,
@@ -71,6 +76,7 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   backoffFactor: 2,
   backoffMaxMs: 300000,
   notify: false,
+  paused: false,
 };
 
 function numberOr(value: unknown, fallback: number): number {
@@ -88,8 +94,13 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     typeof value.continueText === 'string' && value.continueText.trim() !== ''
       ? value.continueText
       : DEFAULT_CONFIG.continueText;
+  const maxTokensText =
+    typeof value.continueTextMaxTokens === 'string' && value.continueTextMaxTokens.trim() !== ''
+      ? value.continueTextMaxTokens
+      : DEFAULT_CONFIG.continueTextMaxTokens;
   return {
     continueText: text,
+    continueTextMaxTokens: maxTokensText,
     graceMs: numberOr(value.graceMs, DEFAULT_CONFIG.graceMs),
     cooldownMs: numberOr(value.cooldownMs, DEFAULT_CONFIG.cooldownMs),
     maxConsecutive: Math.max(1, numberOr(value.maxConsecutive, DEFAULT_CONFIG.maxConsecutive)),
@@ -103,6 +114,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     backoffFactor: Math.max(1, numberOr(value.backoffFactor, DEFAULT_CONFIG.backoffFactor)),
     backoffMaxMs: numberOr(value.backoffMaxMs, DEFAULT_CONFIG.backoffMaxMs),
     notify: booleanOr(value.notify, DEFAULT_CONFIG.notify),
+    paused: booleanOr(value.paused, DEFAULT_CONFIG.paused),
   };
 }
 
@@ -155,21 +167,57 @@ export function isTransientAgentError(message: string): boolean {
   return /network|timeout|timed ?out|econn|etimedout|socket|5\d\d|\b429\b|upstream|temporar/i.test(message);
 }
 
-/** 浏览器通知(不可用时静默跳过)。 */
-function notify(title: string, body: string): void {
+/** 通知上的一个操作按钮(action 标识 + 显示文案)。 */
+export interface NotifyAction {
+  /** 稳定动作标识, 点击时经 onAction 回调传出。 */
+  action: string;
+  /** 按钮显示文案。 */
+  title: string;
+}
+
+/** 通知的可选行为: 操作按钮列表与点击回调。 */
+export interface NotifyOptions {
+  actions?: NotifyAction[];
+  onAction?: (action: string) => void;
+}
+
+/** 浏览器通知(不可用时静默跳过); 点击通知聚焦窗口, 操作按钮走 onAction。 */
+function notify(title: string, body: string, options?: NotifyOptions): void {
   try {
     const N = (globalThis as { Notification?: unknown }).Notification as
-      | (new (t: string, o: { body: string }) => unknown)
+      | (new (t: string, o: { body: string; actions?: NotifyAction[] }) => unknown)
       | undefined;
     if (typeof N === 'undefined') return;
     const permission = (N as unknown as { permission?: string }).permission;
+    const create = (): void => {
+      const instance = new N(title, {
+        body,
+        ...(options?.actions !== undefined && options.actions.length > 0
+          ? { actions: options.actions }
+          : {}),
+      });
+      const target = instance as {
+        onclick?: (() => void) | null;
+        onaction?: ((event: { action: string }) => void) | null;
+      };
+      target.onclick = () => {
+        try {
+          (globalThis as { focus?: () => void }).focus?.();
+        } catch {
+          /* ignore */
+        }
+      };
+      if (options?.onAction !== undefined) {
+        target.onaction = (event) => options.onAction?.(event.action);
+      }
+    };
     if (permission === 'granted') {
-      new N(title, { body });
+      create();
     } else if (permission === 'default') {
       // 首次使用时请求一次权限, 用户拒绝后不再打扰。
       void (N as unknown as { requestPermission?: () => Promise<string> }).requestPermission?.()
         .then((result) => {
-          if (result === 'granted') new N(title, { body });
+          if (result === 'granted') create();
         })
         .catch(() => {});
     }
@@ -178,19 +226,42 @@ function notify(title: string, body: string): void {
   }
 }
 
-/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn})。 */
-export function fillTemplate(
-  template: string,
-  facts: FailureFacts | undefined,
-  tool: string | undefined,
-  turn: number | undefined,
-): string {
+/** 把毫秒格式化为人类可读的经过时长(如 65s → 1m5s)。 */
+function formatElapsed(ms: number | undefined): string {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${s % 60 > 0 ? `${s % 60}s` : ''}`;
+}
+
+/** 模板填充所需的上下文(全部可选, 缺失的占位符填为空串)。 */
+export interface TemplateContext {
+  /** 失败事实(错误码/消息/HTTP 状态), 对应 {code}/{message}/{status}。 */
+  facts?: FailureFacts;
+  /** 失败前最后一次工具调用的名称, 对应 {tool}。 */
+  tool?: string;
+  /** 失败回合的编号, 对应 {turn}。 */
+  turn?: number;
+  /** 连续失败次数(含本次), 对应 {errorCount}。 */
+  errorCount?: number;
+  /** 会话标题(来自 session.list 投影, 可用时), 对应 {sessionTitle}。 */
+  sessionTitle?: string;
+  /** 自失败发生以来的毫秒数, 对应 {elapsed}。 */
+  elapsedMs?: number;
+}
+
+/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed})。 */
+export function fillTemplate(template: string, ctx: TemplateContext): string {
   return template
-    .replace(/\{code\}/g, facts?.code ?? '')
-    .replace(/\{message\}/g, facts?.message ?? '')
-    .replace(/\{status\}/g, facts?.status !== undefined ? String(facts.status) : '')
-    .replace(/\{tool\}/g, tool ?? '')
-    .replace(/\{turn\}/g, turn !== undefined ? String(turn) : '');
+    .replace(/\{code\}/g, ctx.facts?.code ?? '')
+    .replace(/\{message\}/g, ctx.facts?.message ?? '')
+    .replace(/\{status\}/g, ctx.facts?.status !== undefined ? String(ctx.facts.status) : '')
+    .replace(/\{tool\}/g, ctx.tool ?? '')
+    .replace(/\{turn\}/g, ctx.turn !== undefined ? String(ctx.turn) : '')
+    .replace(/\{errorCount\}/g, ctx.errorCount !== undefined ? String(ctx.errorCount) : '')
+    .replace(/\{sessionTitle\}/g, ctx.sessionTitle ?? '')
+    .replace(/\{elapsed\}/g, formatElapsed(ctx.elapsedMs));
 }
 
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
@@ -259,6 +330,147 @@ function writeLastSend(sessionId: SessionId, at: number): void {
   }
 }
 
+// ---------- 会话级暂停(仅浏览器本地, 跨标签页共享) ----------
+
+const pauseKey = (sessionId: SessionId) => `${lockPrefix}pause:${sessionId}`;
+
+/** 暂停某会话: 到 `until` 之前, 引擎不会为该会话自动继续(通知按钮等调用)。 */
+export function pauseSession(sessionId: SessionId, ms: number): void {
+  try {
+    localStorage.setItem(pauseKey(sessionId), String(Date.now() + ms));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 解除某会话的暂停。 */
+export function unpauseSession(sessionId: SessionId): void {
+  try {
+    localStorage.removeItem(pauseKey(sessionId));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 会话暂停的截止时间戳; 0 表示未暂停。 */
+export function sessionPauseUntil(sessionId: SessionId): number {
+  try {
+    return Number(localStorage.getItem(pauseKey(sessionId)) ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 当前生效(未过期)的暂停会话列表; 顺带清理过期条目。 */
+export function pausedSessions(): { sessionId: SessionId; until: number }[] {
+  const out: { sessionId: SessionId; until: number }[] = [];
+  const now = Date.now();
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(`${lockPrefix}pause:`)) continue;
+      const sessionId = key.slice(lockPrefix.length + 'pause:'.length) as SessionId;
+      const until = Number(localStorage.getItem(key) ?? 0) || 0;
+      if (until > now) out.push({ sessionId, until });
+      else localStorage.removeItem(key);
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+// ---------- 统计(仅浏览器本地; 按本地日期分桶, 最多保留 90 天) ----------
+
+/** 一天的自动继续统计。 */
+export interface DayStats {
+  /** 本地日期 YYYY-MM-DD。 */
+  date: string;
+  /** 自动发送次数。 */
+  sent: number;
+  /** 因永久性错误跳过的次数。 */
+  skipped: number;
+  /** 发送后回合成功完成(恢复成功)的次数。 */
+  recovered: number;
+  /** 发送后再次失败的次数。 */
+  failed: number;
+  /** 达到连续上限而停止的次数(按停止事件计)。 */
+  gaveUp: number;
+  /** 按错误码计数的失败分布。 */
+  byCode: Record<string, number>;
+}
+
+const statsKey = `${lockPrefix}stats`;
+const STATS_MAX_DAYS = 90;
+
+function todayKey(): string {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+function readStats(): DayStats[] {
+  try {
+    const raw = localStorage.getItem(statsKey);
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is DayStats =>
+        typeof item === 'object' && item !== null && typeof item.date === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeStats(list: DayStats[]): void {
+  try {
+    localStorage.setItem(statsKey, JSON.stringify(list));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 累加今日统计(引擎内部记账)。 */
+function bumpStat(delta: {
+  sent?: number;
+  skipped?: number;
+  recovered?: number;
+  failed?: number;
+  gaveUp?: number;
+  code?: string;
+}): void {
+  const list = readStats();
+  let day = list.find((item) => item.date === todayKey());
+  if (day === undefined) {
+    day = { date: todayKey(), sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, byCode: {} };
+    list.unshift(day);
+  }
+  if (delta.sent !== undefined) day.sent += delta.sent;
+  if (delta.skipped !== undefined) day.skipped += delta.skipped;
+  if (delta.recovered !== undefined) day.recovered += delta.recovered;
+  if (delta.failed !== undefined) day.failed += delta.failed;
+  if (delta.gaveUp !== undefined) day.gaveUp += delta.gaveUp;
+  if (delta.code !== undefined) day.byCode[delta.code] = (day.byCode[delta.code] ?? 0) + 1;
+  writeStats(list.slice(0, STATS_MAX_DAYS));
+}
+
+/** 今日统计(设置卡片展示用)。 */
+export function readTodayStats(): DayStats {
+  const today = todayKey();
+  const found = readStats().find((item) => item.date === today);
+  return (
+    found ?? { date: today, sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, byCode: {} }
+  );
+}
+
+/** 清零今日统计。 */
+export function resetTodayStats(): void {
+  writeStats(readStats().filter((item) => item.date !== todayKey()));
+}
+
 /** 每会话运行时状态。 */
 interface SessionState {
   /** 连续自动「继续」次数; 成功回合或用户手动介入后归零。 */
@@ -279,10 +491,14 @@ interface SessionState {
   subagent: boolean;
   /** 最近一次回合失败的事实(用于分类与模板填充)。 */
   lastFailure: FailureFacts | undefined;
+  /** 最近一次失败的发生时间(模板 {elapsed} 与恢复统计用)。 */
+  lastFailureAt: number;
   /** 失败前最后一次工具调用的名称(模板 {tool})。 */
   lastTool: string | undefined;
   /** 失败回合的编号(模板 {turn})。 */
   lastTurn: number | undefined;
+  /** 我们最近一次自动发送的时间戳; 0 = 没有待确认的恢复。 */
+  pendingRecoveryAt: number;
 }
 
 const freshState = (): SessionState => ({
@@ -295,9 +511,14 @@ const freshState = (): SessionState => ({
   queued: 0,
   subagent: false,
   lastFailure: undefined,
+  lastFailureAt: 0,
   lastTool: undefined,
   lastTurn: undefined,
+  pendingRecoveryAt: 0,
 });
+
+/** 自动发送后, 在该窗口内出现的回合结束才计入恢复统计。 */
+const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 
 /** 判定一条 user/message 是否是我们自己自动发送的回显。 */
 function isOurEcho(state: SessionState, event: SessionEvent): boolean {
@@ -464,12 +685,14 @@ export class AutoContinueRunner {
         this.cancelPending(sessionId, '收到新的 turn/end');
         const reason = event.data.reason;
         if (reason.kind === 'completed') {
-          // 成功回合: 恢复健康状态
+          // 成功回合: 恢复健康状态, 并确认上一次自动发送的效果
           state.consecutive = 0;
           state.lastFailure = undefined;
+          this.noteRecovery(sessionId, 'completed');
         } else if (reason.kind === 'aborted') {
           // 用户主动停止: 不自动继续, 视为用户介入
           state.consecutive = 0;
+          state.pendingRecoveryAt = 0;
         } else if (reason.kind === 'blocked') {
           // 策略拒绝: 不自动继续
         } else if (reason.kind === 'interrupted') {
@@ -477,6 +700,7 @@ export class AutoContinueRunner {
           // 用户手动停止在 DSH 中标记为 aborted, 不走到这里。实时流里出现
           // interrupted 视为异常中断, 不自动继续——宿主崩溃孤儿回合由扫描恢复。
           state.consecutive = 0;
+          state.pendingRecoveryAt = 0;
         } else if (reason.kind === 'error') {
           // 记录失败事实(分类与模板填充用), 然后按类型处理
           const error = reason.error;
@@ -486,8 +710,12 @@ export class AutoContinueRunner {
             ...(typeof error.status === 'number' ? { status: error.status } : {}),
           };
           state.lastTurn = event.data.turn;
+          state.lastFailureAt = Date.now();
+          this.noteRecovery(sessionId, 'error');
           this.onTurnFailure(sessionId, 'turn/end:error', state.lastFailure);
         } else if (reason.kind === 'max-tokens') {
+          state.lastFailureAt = Date.now();
+          this.noteRecovery(sessionId, 'error');
           this.schedule(sessionId, 'turn/end:max-tokens');
         }
         break;
@@ -523,8 +751,13 @@ export class AutoContinueRunner {
           // 永久性 agent 错误(序列化失败/配置错误等): 跳过并通知, 避免把用户停止等
           // 场景误判为可恢复中断后自动续跑。
           this.log(`跳过 ${frame.sessionId}: 永久性 agent 错误 — ${frame.message}`);
+          bumpStat({ skipped: 1 });
           if (this.getConfig().notify) {
-            notify('dsh-auto-continue: 未自动继续', `${frame.sessionId}: 永久性 agent 错误 ${frame.message.slice(0, 120)}`);
+            notify(
+              'dsh-auto-continue: 未自动继续',
+              `${frame.sessionId}: 永久性 agent 错误 ${frame.message.slice(0, 120)}`,
+              this.notifyOptions(frame.sessionId),
+            );
           }
           break;
         }
@@ -547,12 +780,64 @@ export class AutoContinueRunner {
     if (config.classify && !isTransientFailure(failure)) {
       const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
       this.log(`跳过 ${sessionId}(${reason}): 永久性失败 ${summary} — ${failure.message}`);
+      bumpStat({ skipped: 1, code: failure.code });
       if (config.notify) {
-        notify('dsh-auto-continue: 未自动继续', `${sessionId}: 永久性错误 ${summary}，需要人工处理`);
+        notify(
+          'dsh-auto-continue: 未自动继续',
+          `${sessionId}: 永久性错误 ${summary}，需要人工处理`,
+          this.notifyOptions(sessionId),
+        );
       }
       return;
     }
     this.schedule(sessionId, reason);
+  }
+
+  /** 通知操作按钮与回调(「立即续跑」/「暂停该会话 1 小时」)。 */
+  private notifyOptions(sessionId: SessionId): NotifyOptions {
+    return {
+      actions: [
+        { action: 'resume', title: '立即续跑' },
+        { action: 'pause1h', title: '暂停该会话 1 小时' },
+      ],
+      onAction: (action) => this.onNotifyAction(sessionId, action),
+    };
+  }
+
+  private onNotifyAction(sessionId: SessionId, action: string): void {
+    if (action === 'resume') {
+      this.log(`通知按钮: 立即续跑 ${sessionId}`);
+      void this.resumeNow(sessionId);
+    } else if (action === 'pause1h') {
+      this.log(`通知按钮: 暂停 ${sessionId} 1 小时`);
+      pauseSession(sessionId, 60 * 60 * 1000);
+      this.cancelPending(sessionId, '通知按钮暂停该会话');
+    }
+  }
+
+  /** 恢复结果记账: 自动发送后窗口内的回合结束, 判定恢复成功或失败。 */
+  private noteRecovery(sessionId: SessionId, outcome: 'completed' | 'error'): void {
+    const state = this.state(sessionId);
+    if (state.pendingRecoveryAt === 0) return;
+    if (Date.now() - state.pendingRecoveryAt > RECOVERY_WINDOW_MS) {
+      state.pendingRecoveryAt = 0; // 窗口过期, 不再归属这次发送
+      return;
+    }
+    state.pendingRecoveryAt = 0;
+    bumpStat(outcome === 'completed' ? { recovered: 1 } : { failed: 1 });
+    this.log(`恢复结果(${sessionId}): ${outcome === 'completed' ? '成功' : '失败'}`);
+  }
+
+  /** 立即为该会话发送一次自动继续(无视冷却与连续上限; 由通知按钮触发)。 */
+  async resumeNow(sessionId: SessionId): Promise<void> {
+    if (this.disposed) return;
+    const state = this.state(sessionId);
+    if (state.subagent) return;
+    if (state.pendingTimer !== undefined) {
+      clearTimeout(state.pendingTimer);
+      state.pendingTimer = undefined;
+    }
+    await this.fire(sessionId, 'manual:notification', true);
   }
 
   /** 本会话当前生效的冷却间隔(自适应退避)。 */
@@ -570,6 +855,14 @@ export class AutoContinueRunner {
     const state = this.state(sessionId);
     const config = this.getConfig();
     if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
+    if (config.paused) {
+      this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
+      return;
+    }
+    if (Date.now() < sessionPauseUntil(sessionId)) {
+      this.log(`跳过 ${sessionId}(${reason}): 会话暂停中`);
+      return;
+    }
     if (state.pendingTimer !== undefined) return; // 已有待发送
     if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return; // 冷却期(含失败尝试, 自适应退避)
     if (state.consecutive >= config.maxConsecutive) {
@@ -585,8 +878,9 @@ export class AutoContinueRunner {
       void this.fire(sessionId, reason);
     }, config.graceMs);
     state.pendingTimer = timer;
+    const template = reason.includes('max-tokens') ? config.continueTextMaxTokens : config.continueText;
     this.log(
-      `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${config.continueText}」`,
+      `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${template}」`,
     );
   }
 
@@ -598,7 +892,7 @@ export class AutoContinueRunner {
     this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
-  private async fire(sessionId: SessionId, reason: string): Promise<void> {
+  private async fire(sessionId: SessionId, reason: string, force = false): Promise<void> {
     if (this.disposed) return;
     const state = this.state(sessionId);
     const config = this.getConfig();
@@ -617,8 +911,8 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}: 已有排队消息`);
       return;
     }
-    // 跨标签页冷却(自适应退避)
-    if (Date.now() - readLastSend(sessionId) < this.cooldownFor(state)) {
+    // 跨标签页冷却(自适应退避); 通知按钮的强制续跑不受冷却约束
+    if (!force && Date.now() - readLastSend(sessionId) < this.cooldownFor(state)) {
       this.log(`跳过 ${sessionId}: 其他标签页刚发送过`);
       return;
     }
@@ -626,8 +920,24 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}: 其他标签页正在发送`);
       return;
     }
-    // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn} 占位符
-    const text = fillTemplate(config.continueText, state.lastFailure, state.lastTool, state.lastTurn);
+    // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
+    const template = reason.includes('max-tokens') ? config.continueTextMaxTokens : config.continueText;
+    let sessionTitle: string | undefined;
+    if (template.includes('{sessionTitle}')) {
+      sessionTitle = this.titles.get(sessionId);
+      if (sessionTitle === undefined) {
+        const info = await this.fetchSessionInfo(sessionId);
+        sessionTitle = info?.title;
+      }
+    }
+    const text = fillTemplate(template, {
+      facts: state.lastFailure,
+      tool: state.lastTool,
+      turn: state.lastTurn,
+      errorCount: state.consecutive + 1,
+      sessionTitle,
+      elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
+    });
     const zone = clientTimeZone();
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
     try {
@@ -642,15 +952,26 @@ export class AutoContinueRunner {
         state.consecutive += 1;
         state.lastAutoAt = now;
         state.lastSentText = text;
+        state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
         writeLastSend(sessionId, now);
+        bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
         this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
         if (config.notify) {
-          notify('dsh-auto-continue: 已自动继续', `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`);
+          notify(
+            'dsh-auto-continue: 已自动继续',
+            `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`,
+            this.notifyOptions(sessionId),
+          );
         }
         if (state.consecutive >= config.maxConsecutive) {
+          bumpStat({ gaveUp: 1 });
           this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
           if (config.notify) {
-            notify('dsh-auto-continue: 已停止自动继续', `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`);
+            notify(
+              'dsh-auto-continue: 已停止自动继续',
+              `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`,
+              this.notifyOptions(sessionId),
+            );
           }
         }
       } else {
@@ -665,17 +986,32 @@ export class AutoContinueRunner {
     }
   }
 
-  private async runningViaList(sessionId: SessionId): Promise<boolean | undefined> {
+  /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */
+  private readonly titles = new Map<SessionId, string>();
+
+  /** 查一次 session.list, 顺带缓存该会话的标题。 */
+  private async fetchSessionInfo(
+    sessionId: SessionId,
+  ): Promise<{ running: boolean | undefined; title: string | undefined } | undefined> {
     try {
       const response = await this.api.sessions.list({});
       if (!response.result.ok) return undefined;
       const item = response.result.value.items.find(
         (summary: SessionSummary) => summary.sessionId === sessionId,
       );
-      return item === undefined ? undefined : item.running;
+      if (item === undefined) return undefined;
+      // `title` 投影由 @deepseek-ai/dsh-session-title 声明; 此处用局部断言避免引入额外依赖。
+      const title = (item.projections?.values as { title?: string | null } | undefined)?.title;
+      if (typeof title === 'string' && title !== '') this.titles.set(sessionId, title);
+      return { running: item.running, title: typeof title === 'string' ? title : undefined };
     } catch {
       return undefined;
     }
+  }
+
+  private async runningViaList(sessionId: SessionId): Promise<boolean | undefined> {
+    const info = await this.fetchSessionInfo(sessionId);
+    return info?.running;
   }
 
   // ---------- 启动/重连扫描 ----------
@@ -719,9 +1055,14 @@ export class AutoContinueRunner {
    */
   private async scanInterrupted(): Promise<boolean> {
     const config = this.getConfig();
+    if (config.paused) return true; // 全局暂停: 不做任何扫描
     const response = await this.api.sessions.list({});
     if (!response.result.ok) return false;
     const items = response.result.value.items;
+    for (const summary of items) {
+      const title = (summary.projections?.values as { title?: string | null } | undefined)?.title;
+      if (typeof title === 'string' && title !== '') this.titles.set(summary.sessionId, title);
+    }
     const candidates = items
       .filter((summary) => !summary.running && summary.parentSessionId === undefined)
       .slice(0, config.scanLimit);
@@ -732,6 +1073,7 @@ export class AutoContinueRunner {
       if (state.pendingTimer !== undefined) continue;
       if (state.consecutive >= config.maxConsecutive) continue;
       if (now - state.lastAttemptAt < this.cooldownFor(state)) continue;
+      if (now < sessionPauseUntil(summary.sessionId)) continue; // 会话暂停中
       let events;
       try {
         const page = await this.api.sessions.history({

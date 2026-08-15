@@ -132,6 +132,32 @@ const css = `
 .dshAcSelect:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 .dshAcInvalid { color: var(--dsw-alias-label-error); margin: 0; font-size: 12px; line-height: 1.5; }
 .dshAcHint { color: var(--dsw-alias-label-tertiary); margin: 0; font-size: 12px; line-height: 1.5; }
+.dshAcPanel { border-top: 1px solid var(--dsw-alias-border-l2); flex-direction: column; gap: 8px; padding: 12px 0; display: flex; }
+.dshAcPanelHead { align-items: center; gap: 8px; display: flex; }
+.dshAcPanelTitle { color: var(--dsw-alias-label-primary); flex: 1; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.dshAcStats { gap: 4px 16px; margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); display: grid; }
+.dshAcStats > div { justify-content: space-between; gap: 8px; display: flex; }
+.dshAcStats dt { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.5; }
+.dshAcStats dd { color: var(--dsw-alias-label-primary); margin: 0; font-size: 12px; font-weight: 600; line-height: 1.5; }
+.dshAcCodes { flex-wrap: wrap; align-items: center; gap: 6px; display: flex; }
+.dshAcCode {
+  white-space: nowrap;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 17px;
+}
+.dshAcPauseList { flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; display: flex; }
+.dshAcPauseList li { align-items: center; gap: 8px; display: flex; }
+.dshAcPauseId {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
 `;
 
 /** Inject the stylesheet once; a no-op outside a browser environment. */

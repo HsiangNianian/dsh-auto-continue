@@ -39,7 +39,10 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
-- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)")
+- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)"); a **separate template** fires on `max-tokens` (e.g. "继续输出, 不要重复已生成的内容")
+- **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire
+- **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown and the consecutive cap) and **Pause this session 1h** actions
+- **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips and give-ups, broken down by error code, with a one-click reset
 - **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error; the browser asks for permission on first use, and nothing is shown again after a denial
 
 It watches the live event streams and reacts to:
@@ -161,13 +164,15 @@ dsh web
 
 ## Configuration
 
-Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugins** and find the **dsh-client-auto-continue** configuration card, right where every other plugin's config lives.
+Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugins** and find the **dsh-client-auto-continue** configuration card, right where every other plugin's config lives. Besides the fields below, the card shows a live **stats panel** (today's activity with a reset button) and the list of **paused sessions** (each with a per-session resume button).
 
 **Or skip the GUI and edit the config file directly** — the engine reads the plugin's section from `~/.dsh/settings.yaml` (one shared file for every plugin's sections), so this works in any install, patched or not. The file is watched and re-read automatically, so changes apply live; restart `dsh web` if a page that was already open doesn't pick them up. Fields you leave out fall back to the defaults in the table below:
 
 ```yaml
 auto-continue:
+  paused: false
   continueText: '继续'
+  continueTextMaxTokens: '继续'
   graceMs: 3000
   cooldownMs: 20000
   maxConsecutive: 3
@@ -194,7 +199,9 @@ auto-continue:
 
 | Field | Default | Description |
 | --- | --- | --- |
+| Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
 | Continue text | `继续` | Text automatically sent after an interruption |
+| Continue text (max tokens) | `继续` | Text sent when the output token ceiling is reached (same placeholders) |
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
 | Cooldown (ms) | `20000` | Min interval between auto-continues per session (failed attempts count too) |
 | Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
@@ -209,7 +216,7 @@ auto-continue:
 | Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
 | Browser notifications | `off` | Notify when auto-continue fires, gives up, or hits a permanent error |
 
-`continueText` accepts the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure) and `{turn}` — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`.
+`continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`.
 
 ---
 
@@ -219,7 +226,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 
 - It opens the same two read-only event streams the web UI already uses (no extra server, no third-party endpoints)
 - The only write it ever performs is `sessions.prompt` — the same call the Send button makes — with the text you configured
-- Browser storage is limited to small `localStorage` keys for cross-tab coordination
+- Browser storage is limited to small `localStorage` keys: cross-tab coordination stamps, per-session pauses, and the daily stats counters
 - Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
 
 ---
@@ -230,7 +237,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 15 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 22 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

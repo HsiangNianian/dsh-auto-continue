@@ -23,6 +23,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 /** Services required by this plugin. */
 export declare const inject: string[];
+export { fillTemplate, pauseSession, pausedSessions, readTodayStats, resetTodayStats, sessionPauseUntil, unpauseSession, } from './engine.ts';
 /**
  * Plugin body: mount the engine and the settings card.
  * @param ctx - client root context.

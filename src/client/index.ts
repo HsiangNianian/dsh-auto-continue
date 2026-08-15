@@ -44,6 +44,17 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Services required by this plugin. */
 export const inject = ['slots', 'locale', 'connection', 'settingsScope'];
 
+// 浏览器侧辅助(设置卡片与模拟测试共用): 暂停控制与统计读取。
+export {
+  fillTemplate,
+  pauseSession,
+  pausedSessions,
+  readTodayStats,
+  resetTodayStats,
+  sessionPauseUntil,
+  unpauseSession,
+} from './engine.ts';
+
 /** 当前 runner(HMR 重载时先销毁旧的再建新的)。 */
 let current: AutoContinueRunner | null = null;
 

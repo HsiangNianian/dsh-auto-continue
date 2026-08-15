@@ -39,7 +39,10 @@
 
 - **错误分类** — 临时性错误(网络 / 超时 / 5xx / 429 等)自动续跑; 永久性错误跳过并通知, 因为重试也没用。判定为永久性的条件: HTTP 状态码 401/403, 或 code/message 命中认证、凭据/API Key、余额/配额、模型不存在、上下文长度/超限等关键词。关闭分类后则全部自动继续
 - **自适应退避** — 连续失败时等待时间递增(冷却 × 系数: 20s → 40s → 80s…), 有上限, 不再对故障上游狂轰滥炸
-- **模板化继续文本** — `continueText` 支持 `{code}` `{message}` `{status}` `{tool}` `{turn}` 占位符, 续跑消息可携带失败上下文(如「继续 (git push 失败: UPSTREAM)」)
+- **模板化继续文本** — `continueText` 支持 `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` 占位符, 续跑消息可携带失败上下文(如「继续 (git push 失败: UPSTREAM)」); 达到 `max-tokens` 时使用**另一套模板**(如「继续输出, 不要重复已生成的内容」)
+- **暂停** — 设置卡片里的全局 **暂停自动继续** 开关可立即停掉一切(实时 + 扫描); 会话级暂停(如通过通知按钮)只挂起单个会话, 到期自动恢复
+- **通知按钮** — 通知带 **立即续跑**(无视冷却与连续上限, 马上发送)和 **暂停该会话 1 小时** 按钮
+- **统计面板** — 设置卡片展示今日自动继续次数、恢复成功、继续后失败、永久性跳过、达上限停止, 按错误码分布, 可一键清零
 - **浏览器通知** — 可选: 自动继续成功 / 放弃 / 遇到永久性错误时弹出提醒; 首次使用时请求权限, 被拒绝后不再打扰
 
 插件监听实时事件流, 对以下情况作出反应:
@@ -157,13 +160,15 @@ dsh web
 
 ## 配置
 
-所有参数都可以在 GUI 里配置——无需改文件或控制台。打开 **设置 → 插件**, 找到 **dsh-client-auto-continue** 的配置卡片, 和其他插件的配置放在一起。
+所有参数都可以在 GUI 里配置——无需改文件或控制台。打开 **设置 → 插件**, 找到 **dsh-client-auto-continue** 的配置卡片, 和其他插件的配置放在一起。除了下面的字段, 卡片还带一个**统计面板**(今日活动, 可一键清零)和**已暂停会话**列表(每个都可单独解除)。
 
 **或者跳过 GUI, 直接编辑配置文件** — 引擎从 `~/.dsh/settings.yaml` 读取插件段落(所有插件的设置都在这一个文件里), 因此无论是否打过补丁都能用。文件被监听、自动重读, 改动即时生效; 若已打开的页面没反应, 重启 `dsh web` 即可。没填写的字段会回落到下表中的默认值:
 
 ```yaml
 auto-continue:
+  paused: false
   continueText: '继续'
+  continueTextMaxTokens: '继续'
   graceMs: 3000
   cooldownMs: 20000
   maxConsecutive: 3
@@ -190,7 +195,9 @@ auto-continue:
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
+| 暂停自动继续 | 关 | 全局暂停: 实时与扫描都不再自动发送, 已排队的待发送也会取消 |
 | 继续文本 | `继续` | 中断后自动发送的消息内容 |
+| 超限时的继续文本 | `继续` | 达到输出 token 上限时自动发送的文本(支持相同占位符) |
 | 宽限期 (ms) | `3000` | 中断后等待的时长; 期间宿主自行恢复则取消 |
 | 冷却时间 (ms) | `20000` | 同一会话两次自动「继续」的最小间隔(失败尝试也计入) |
 | 最大连续次数 | `3` | 同一会话连续自动「继续」上限; 超过后停止, 直到用户介入或成功回合 |
@@ -205,7 +212,7 @@ auto-continue:
 | 最大退避间隔 (ms) | `300000` | 自适应退避的上限 |
 | 浏览器通知 | 关 | 自动继续成功 / 放弃 / 遇到永久性错误时弹通知 |
 
-`continueText` 支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)和 `{turn}`——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。
+`continueText`(以及 `continueTextMaxTokens`)支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)、`{sessionTitle}`(来自会话列表)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。
 
 ---
 
@@ -215,7 +222,7 @@ auto-continue:
 
 - 只复用 webui 本身就在用的两条只读事件流(无额外服务、无第三方端点)
 - 唯一会执行的写入是 `sessions.prompt`——与点「发送」按钮完全相同的调用, 内容为你配置的文本
-- 浏览器存储仅限于少量 `localStorage` 键(跨标签页协调用)
+- 浏览器存储仅限于少量 `localStorage` 键: 跨标签页协调时间戳、会话级暂停、每日统计计数
 - 浏览器通知是可选开启的(`notify` 设置), 仅在首次使用时请求一次权限
 
 ---
@@ -226,7 +233,7 @@ auto-continue:
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # 监听变更自动重建; 宿主 HMR 免刷新热重载
-npm run test        # node tests/simulate.mjs — 15 个行为场景
+npm run test        # node tests/simulate.mjs — 22 个行为场景
 ```
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。

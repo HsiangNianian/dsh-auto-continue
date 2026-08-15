@@ -16,6 +16,8 @@ export const AUTO_CONTINUE_NS = 'auto-continue';
 export const AutoContinueSchema = z.object({
   /** Text automatically sent after an interruption. */
   continueText: z.string().default('继续'),
+  /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
+  continueTextMaxTokens: z.string().default('继续'),
   /** Grace period after an interruption before auto-sending (ms). */
   graceMs: z.natural().default(3000),
   /** Minimum interval between two auto-continues per session (ms). */
@@ -42,6 +44,8 @@ export const AutoContinueSchema = z.object({
   backoffMaxMs: z.natural().default(300000),
   /** Show browser notifications for auto-continue events. */
   notify: z.boolean().default(false),
+  /** Globally pause auto-continue: no live or scan send. */
+  paused: z.boolean().default(false),
 });
 
 /**

@@ -9,6 +9,13 @@
  *   6. 连续次数上限 → 停止
  *   7. 太久远的中断 → 扫描不处理
  *   8. 设置作用域中的 continueText 覆盖生效
+ *   9-15. 错误分类 / 退避 / 模板 / interrupted / agent-error
+ *   16. 全局暂停 → 不自动继续
+ *   17. 会话级暂停 → 不自动继续
+ *   18. max-tokens 使用专用继续文本
+ *   19. 统计记录(跳过/发送/失败/恢复/停止)
+ *   20. 新占位符 {errorCount} {sessionTitle} {elapsed}
+ *   21. 通知操作按钮(立即续跑 / 暂停该会话 1 小时)
  * 运行: node tests/simulate.mjs
  */
 import { readFileSync } from 'node:fs';
@@ -24,6 +31,10 @@ const fakeLocalStorage = {
   getItem: (k) => (storage.has(k) ? storage.get(k) : null),
   setItem: (k, v) => void storage.set(k, String(v)),
   removeItem: (k) => void storage.delete(k),
+  key: (i) => [...storage.keys()][i] ?? null,
+  get length() {
+    return storage.size;
+  },
 };
 let handoff = null;
 globalThis.window = {
@@ -31,13 +42,20 @@ globalThis.window = {
 };
 globalThis.localStorage = fakeLocalStorage;
 
-// 通知桩: 测试可替换实现并检查调用
+// 通知桩: 测试可替换实现并检查调用, 可触发操作按钮
 const notificationCalls = [];
+const notificationInstances = [];
 globalThis.Notification = class {
   static permission = 'granted';
   static requestPermission = async () => 'granted';
   constructor(title, options) {
-    notificationCalls.push({ title, body: options?.body ?? '' });
+    notificationCalls.push({ title, body: options?.body ?? '', actions: options?.actions ?? [] });
+    this.onclick = null;
+    this.onaction = null;
+    notificationInstances.push(this);
+  }
+  fireAction(action) {
+    this.onaction?.({ action });
   }
 };
 
@@ -449,6 +467,150 @@ function startPlugin(api, overrides = {}) {
   api.pushHost({ type: 'host/agent-error', sessionId: 's1', message: 'network connection refused' });
   await sleep(600);
   check('已发送', api.prompts.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 16: 全局暂停 → 不自动继续 ----------
+{
+  console.log('测试 16: 全局暂停(paused)→ 不自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { paused: true });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 17: 会话级暂停 → 不自动继续 ----------
+{
+  console.log('测试 17: 会话级暂停 → 不自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api);
+  exports.pauseSession('s1', 60_000);
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  check('暂停列表包含 s1', exports.pausedSessions().some((p) => p.sessionId === 's1'));
+  exports.unpauseSession('s1');
+  check('解除后列表为空', exports.pausedSessions().length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 18: max-tokens 使用专用继续文本 ----------
+{
+  console.log('测试 18: max-tokens 使用专用继续文本');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { continueText: '继续', continueTextMaxTokens: '继续输出, 不要重复' });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'max-tokens' }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check('使用超限专用文本', api.prompts[0]?.content?.[0]?.text === '继续输出, 不要重复');
+  await sleep(50);
+}
+
+// ---------- 测试 19: 统计记录(跳过/发送/失败/停止) ----------
+{
+  console.log('测试 19a: 统计记录(跳过/发送/失败/停止)');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { notify: false, maxConsecutive: 2, scanOnBoot: false });
+  await sleep(50);
+  // 永久性错误 → 跳过
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'INVALID_API_KEY', message: 'bad key', status: 401 } }));
+  await sleep(300);
+  // 临时错误 → 发送 1(consecutive=1; 发送发生在 ~推入+230ms)
+  api.pushMux(turnEnd('s1', 2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(1000);
+  check('已发送 1 次', api.prompts.length === 1);
+  // 继续后仍失败 → failed=1; 距上次尝试已 ≥600ms 退避 → 再发送 2(consecutive=2 → 达上限 gaveUp=1)
+  api.pushMux(turnEnd('s1', 3, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(500);
+  check('已发送 2 次', api.prompts.length === 2);
+  // 达上限: 不再发送(该失败会把上次发送的待确认消费掉, 不重复计入 failed)
+  api.pushMux(turnEnd('s1', 4, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(500);
+  check('达上限后未再发送', api.prompts.length === 2);
+  // 引擎停止追踪后, 后续成功回合不再归功于自动继续
+  api.pushMux(turnEnd('s1', 5, { kind: 'completed' }));
+  await sleep(100);
+  const stats = exports.readTodayStats();
+  check('sent=2', stats.sent === 2);
+  check('skipped=1', stats.skipped === 1);
+  check('failed=2(两次发送后各失败一次)', stats.failed === 2);
+  check('gaveUp=1', stats.gaveUp === 1);
+  check('recovered=0(停止追踪后不计)', stats.recovered === 0);
+  check('byCode UPSTREAM=2', stats.byCode['UPSTREAM'] === 2);
+  check('byCode INVALID_API_KEY=1', stats.byCode['INVALID_API_KEY'] === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 19b: 统计 — 发送后成功回合计入恢复, 清零可用 ----------
+{
+  console.log('测试 19b: 恢复统计与清零');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { notify: false, maxConsecutive: 3, scanOnBoot: false });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('已发送 1 次', api.prompts.length === 1);
+  api.pushMux(turnEnd('s1', 2, { kind: 'completed' }));
+  await sleep(100);
+  let stats = exports.readTodayStats();
+  check('sent=1', stats.sent === 1);
+  check('recovered=1', stats.recovered === 1);
+  check('failed=0', stats.failed === 0);
+  exports.resetTodayStats();
+  stats = exports.readTodayStats();
+  check('清零后 sent=0', stats.sent === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 20: 新占位符 {errorCount} {sessionTitle} {elapsed} ----------
+{
+  console.log('测试 20: 新占位符 {errorCount} {sessionTitle} {elapsed}');
+  const text = exports.fillTemplate('继续({errorCount}次, {sessionTitle}, 已等{elapsed})', {
+    facts: { code: 'UPSTREAM', message: 'x' },
+    errorCount: 3,
+    sessionTitle: '修复构建',
+    elapsedMs: 65_000,
+  });
+  check('占位符已填充', text === '继续(3次, 修复构建, 已等1m5s)');
+  check('空上下文安全', exports.fillTemplate('继续 {elapsed} {sessionTitle}', {}) === '继续  ');
+  check('毫秒格式', exports.fillTemplate('{elapsed}', { elapsedMs: 500 }) === '500ms');
+  await sleep(10);
+}
+
+// ---------- 测试 21: 通知操作按钮(立即续跑 / 暂停该会话 1 小时) ----------
+{
+  console.log('测试 21: 通知操作按钮(立即续跑 / 暂停该会话 1 小时)');
+  const api = new FakeApi();
+  api.addSession('s1');
+  notificationCalls.length = 0;
+  notificationInstances.length = 0;
+  startPlugin(api, { notify: true, maxConsecutive: 1, scanOnBoot: false });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(550);
+  check('已发送 1 次', api.prompts.length === 1);
+  const call = notificationCalls.find((c) => c.title.includes('已自动继续'));
+  check('通知带 2 个操作按钮', call !== undefined && call.actions.length === 2);
+  check('按钮为立即续跑/暂停', call?.actions?.[0]?.action === 'resume' && call?.actions?.[1]?.action === 'pause1h');
+  // 「立即续跑」: 无视冷却与连续上限, 再发一次
+  const inst = notificationInstances[notificationInstances.length - 1];
+  inst.fireAction('resume');
+  await sleep(400);
+  check('立即续跑后共 2 次', api.prompts.length === 2);
+  // 「暂停该会话 1 小时」: 进入暂停列表
+  inst.fireAction('pause1h');
+  await sleep(50);
+  check('会话已暂停', exports.pausedSessions().length === 1);
   await sleep(50);
 }
 

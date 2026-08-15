@@ -7,8 +7,12 @@
 export declare const zh: {
     'card.title': string;
     'card.description': string;
+    'field.paused': string;
+    'field.pausedHint': string;
     'field.continueText': string;
     'field.continueTextHint': string;
+    'field.continueTextMaxTokens': string;
+    'field.continueTextMaxTokensHint': string;
     'field.graceMs': string;
     'field.graceMsHint': string;
     'field.cooldownMs': string;
@@ -35,6 +39,20 @@ export declare const zh: {
     'field.backoffMaxMsHint': string;
     'field.notify': string;
     'field.notifyHint': string;
+    'stats.title': string;
+    'stats.sent': string;
+    'stats.skipped': string;
+    'stats.recovered': string;
+    'stats.failed': string;
+    'stats.gaveUp': string;
+    'stats.byCode': string;
+    'stats.empty': string;
+    'stats.reset': string;
+    'pause.title': string;
+    'pause.none': string;
+    'pause.clearAll': string;
+    'pause.unpause': string;
+    'pause.minutes': string;
     'chrome.collapse': string;
     'chrome.expand': string;
     'chrome.unsaved': string;

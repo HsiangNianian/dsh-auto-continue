@@ -7,10 +7,16 @@
  * configuration section; styles live in `styles.ts` and use the DSH design
  * tokens so the card follows the active theme.
  */
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createSnapshotStore, type SettingsScope, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client';
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { AutoContinueSettings } from './engine.ts';
+import {
+  pausedSessions,
+  readTodayStats,
+  resetTodayStats,
+  unpauseSession,
+  type AutoContinueSettings,
+} from './engine.ts';
 import type { SettingsCardKey } from './locales.ts';
 import {
   booleanField,
@@ -29,7 +35,9 @@ injectStyles();
 
 /** What the auto-continue card renders. */
 export interface AutoContinueSettingsCardState extends CardShell {
+  paused: CardFieldState;
   continueText: CardFieldState;
+  continueTextMaxTokens: CardFieldState;
   graceMs: CardFieldState;
   cooldownMs: CardFieldState;
   maxConsecutive: CardFieldState;
@@ -63,7 +71,9 @@ export class AutoContinueSettingsCardController {
    */
   constructor(scope: SettingsScope<AutoContinueSettings>) {
     this.form = new CardForm(scope, [
+      booleanField('paused'),
       textField('continueText'),
+      textField('continueTextMaxTokens'),
       numberField('graceMs', 0),
       numberField('cooldownMs', 0),
       numberField('maxConsecutive', 1),
@@ -84,7 +94,9 @@ export class AutoContinueSettingsCardController {
   private projection(): AutoContinueSettingsCardState {
     return {
       ...this.form.shell(),
+      paused: this.form.field('paused'),
       continueText: this.form.field('continueText'),
+      continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
       graceMs: this.form.field('graceMs'),
       cooldownMs: this.form.field('cooldownMs'),
       maxConsecutive: this.form.field('maxConsecutive'),
@@ -256,6 +268,107 @@ function BooleanField(props: FieldProps) {
   );
 }
 
+/** 实时面板: 今日统计 + 已暂停会话。浏览器本地状态, 每 5 秒刷新一次。 */
+function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
+  const { t } = props;
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => refresh((value) => value + 1), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const stats = readTodayStats();
+  const hasStats = stats.sent + stats.skipped + stats.recovered + stats.failed + stats.gaveUp > 0;
+  const codes = Object.entries(stats.byCode)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+  const paused = pausedSessions();
+  return (
+    <>
+      <section className="dshAcPanel">
+        <div className="dshAcPanelHead">
+          <span className="dshAcPanelTitle">{t('stats.title')}</span>
+          {hasStats ? (
+            <button
+              type="button"
+              className="dshAcReset"
+              onClick={() => {
+                resetTodayStats();
+                refresh((value) => value + 1);
+              }}
+            >
+              {t('stats.reset')}
+            </button>
+          ) : null}
+        </div>
+        {!hasStats ? (
+          <p className="dshAcHint">{t('stats.empty')}</p>
+        ) : (
+          <>
+            <dl className="dshAcStats">
+              <div><dt>{t('stats.sent')}</dt><dd>{stats.sent}</dd></div>
+              <div><dt>{t('stats.recovered')}</dt><dd>{stats.recovered}</dd></div>
+              <div><dt>{t('stats.failed')}</dt><dd>{stats.failed}</dd></div>
+              <div><dt>{t('stats.skipped')}</dt><dd>{stats.skipped}</dd></div>
+              <div><dt>{t('stats.gaveUp')}</dt><dd>{stats.gaveUp}</dd></div>
+            </dl>
+            {codes.length > 0 ? (
+              <div className="dshAcCodes">
+                <span className="dshAcHint">{t('stats.byCode')}:</span>
+                {codes.map(([code, count]) => (
+                  <span key={code} className="dshAcCode">
+                    {code} ×{count}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
+      <section className="dshAcPanel">
+        <div className="dshAcPanelHead">
+          <span className="dshAcPanelTitle">{t('pause.title')}</span>
+          {paused.length > 0 ? (
+            <button
+              type="button"
+              className="dshAcReset"
+              onClick={() => {
+                for (const item of paused) unpauseSession(item.sessionId);
+                refresh((value) => value + 1);
+              }}
+            >
+              {t('pause.clearAll')}
+            </button>
+          ) : null}
+        </div>
+        {paused.length === 0 ? (
+          <p className="dshAcHint">{t('pause.none')}</p>
+        ) : (
+          <ul className="dshAcPauseList">
+            {paused.map((item) => (
+              <li key={item.sessionId}>
+                <span className="dshAcPauseId">{item.sessionId.slice(0, 8)}…</span>
+                <span className="dshAcHint">
+                  {Math.max(1, Math.ceil((item.until - Date.now()) / 60000))} {t('pause.minutes')}
+                </span>
+                <button
+                  type="button"
+                  className="dshAcReset"
+                  onClick={() => {
+                    unpauseSession(item.sessionId);
+                    refresh((value) => value + 1);
+                  }}
+                >
+                  {t('pause.unpause')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
 /**
  * Render the auto-continue card.
  * @param props - locale copy, the card snapshot, and its form actions.
@@ -275,6 +388,15 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
       onSave={props.save}
       onDiscard={props.discard}
     >
+      <BooleanField
+        id="auto-continue-paused"
+        label={t('field.paused')}
+        hint={t('field.pausedHint')}
+        {...shared}
+        {...state.paused}
+        onEdit={(text) => props.edit('paused', text)}
+        onReset={() => props.resetField('paused')}
+      />
       <ValueField
         id="auto-continue-continue-text"
         label={t('field.continueText')}
@@ -283,6 +405,15 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.continueText}
         onEdit={(text) => props.edit('continueText', text)}
         onReset={() => props.resetField('continueText')}
+      />
+      <ValueField
+        id="auto-continue-continue-text-max-tokens"
+        label={t('field.continueTextMaxTokens')}
+        hint={t('field.continueTextMaxTokensHint')}
+        {...shared}
+        {...state.continueTextMaxTokens}
+        onEdit={(text) => props.edit('continueTextMaxTokens', text)}
+        onReset={() => props.resetField('continueTextMaxTokens')}
       />
       <ValueField
         id="auto-continue-grace-ms"
@@ -410,6 +541,7 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         onEdit={(text) => props.edit('notify', text)}
         onReset={() => props.resetField('notify')}
       />
+      <LivePanels t={t} />
     </SettingsCard>
   );
 }

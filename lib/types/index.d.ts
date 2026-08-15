@@ -11,6 +11,8 @@ export declare const AUTO_CONTINUE_NS = "auto-continue";
 export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
+    /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
+    continueTextMaxTokens: z<string, string>;
     /** Grace period after an interruption before auto-sending (ms). */
     graceMs: z<number, number>;
     /** Minimum interval between two auto-continues per session (ms). */
@@ -37,9 +39,13 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     backoffMaxMs: z<number, number>;
     /** Show browser notifications for auto-continue events. */
     notify: z<boolean, boolean>;
+    /** Globally pause auto-continue: no live or scan send. */
+    paused: z<boolean, boolean>;
 }>, Schemastery.ObjectT<{
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
+    /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
+    continueTextMaxTokens: z<string, string>;
     /** Grace period after an interruption before auto-sending (ms). */
     graceMs: z<number, number>;
     /** Minimum interval between two auto-continues per session (ms). */
@@ -66,6 +72,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     backoffMaxMs: z<number, number>;
     /** Show browser notifications for auto-continue events. */
     notify: z<boolean, boolean>;
+    /** Globally pause auto-continue: no live or scan send. */
+    paused: z<boolean, boolean>;
 }>>;
 /**
  * Plugin body: register the settings namespace when a settings provider is
