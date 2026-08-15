@@ -121,11 +121,12 @@ dsh web
 
 > Switching from a manual install to `dsh plugin add`? Remove the manual `insert` entry first — the bundle patch registers the row and a duplicate would conflict.
 
-> **Known DSH limitation (0.1.0-rc.6):** the web plugin-configuration section only
-> exposes settings namespaces on a hardcoded allowlist in the installed
-> `@deepseek-ai/dsh-host-apiproxy` bundle. Until upstream moves exposure into
-> `settings.register()`, one idempotent vendor patch is required for the
-> settings card to appear (re-run it after reinstalling dsh):
+> **Known DSH limitation (0.1.0-rc.6):** the web settings surface only exposes
+> namespaces on a hardcoded allowlist in the installed `@deepseek-ai/dsh-host-apiproxy`
+> bundle. Until upstream moves exposure into `settings.register()`, one idempotent
+> vendor patch makes exposure **registry-driven** — every namespace a plugin
+> registers (this one or any other) becomes visible, with no plugin-specific
+> strings anywhere. Run it once, and re-run after reinstalling dsh:
 >
 > ```sh
 > node node_modules/dsh-client-auto-continue/scripts/patch-expose.mjs
@@ -136,7 +137,7 @@ dsh web
 > covers every reachable dsh installation: the profile-linked copy, a global
 > `npm i -g @deepseek-ai/dsh` install, and the invoking directory's own. The
 > auto-continue engine itself works without this patch — it only gates the
-> GUI settings card.
+> GUI settings section.
 
 ### Verify & uninstall
 
@@ -156,7 +157,7 @@ dsh web
 
 ## Configuration
 
-Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugin configuration** and find the **Auto continue** card.
+Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Auto continue** — the plugin's own section, placed right after **Agent presets**.
 
 **How the card works:**
 

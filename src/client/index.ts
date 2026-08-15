@@ -12,8 +12,6 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 import type {} from '@deepseek-ai/dsh-client-locale/client';
 // Type-only: pulls the settings-surface SlotMap merge and ctx.settingsScope.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client';
-// Type-only: pulls the `settings.plugin.item` SlotMap merge.
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client';
 import { AutoContinueRunner, resolveConfig, type AutoContinueSettings } from './engine.ts';
 import { en, zh, type SettingsCardKey } from './locales.ts';
 import {
@@ -59,15 +57,18 @@ export function apply(ctx: ClientContext): void {
   current?.dispose();
   current = new AutoContinueRunner(ctx.connection.api, () => resolveConfig(scope.getSnapshot().value));
 
-  // Plugin configuration card: one staged form over the `auto-continue`
-  // settings namespace, contributed to the plugin-configuration section.
+  // Own settings section: one staged form over the `auto-continue` namespace,
+  // rendered as a dedicated settings page right after Agent presets (order 21).
+  // Registered through the public `settings.section` slot — no allowlist entry
+  // anywhere — so any other plugin can mount its own section the same way.
   const controller = new AutoContinueSettingsCardController(scope);
-  ctx.slots.inject('settings.plugin.item', () =>
+  ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       {
-        name: 'settings.plugin.item',
+        name: 'settings.section',
         id: 'auto-continue',
-        order: 90,
+        order: 21,
+        label: () => ctx.locale.bind(NS)('nav'),
         locale: NS,
         inject: () => controller.inject(),
       },

@@ -6,6 +6,7 @@
 
 /** 简体中文词典(键集的事实来源)。 */
 export const zh = {
+  'nav': '自动继续',
   'card.title': '自动继续',
   'card.description': '请求因网络等原因(非人为)中断后, 自动发送「继续」续跑。',
   'field.continueText': '继续文本',
@@ -57,6 +58,7 @@ export type SettingsCardKey = keyof typeof zh;
 
 /** English dictionary, checked complete against the zh key set. */
 export const en: Record<SettingsCardKey, string> = {
+  'nav': 'Auto continue',
   'card.title': 'Auto continue',
   'card.description': 'When a request is interrupted by a non-human cause, automatically send 「继续」 to resume.',
   'field.continueText': 'Continue text',

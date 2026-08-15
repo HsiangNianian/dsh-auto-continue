@@ -5,6 +5,7 @@
  */
 /** 简体中文词典(键集的事实来源)。 */
 export declare const zh: {
+    nav: string;
     'card.title': string;
     'card.description': string;
     'field.continueText': string;

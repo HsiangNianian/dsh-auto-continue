@@ -110,9 +110,9 @@ export class AutoContinueSettingsCardController {
   }
 }
 
-/** Props the renderer binds for the auto-continue card. */
+/** Props the renderer binds for the auto-continue settings section (renders the card). */
 export type AutoContinueSettingsCardProps =
-  PropsRuntime<'settings.plugin.item'> & PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
+  PropsRuntime<'settings.section'> & PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
 
 /** Card chrome: a disclosure header naming the plugin and what its settings govern, the controls, and the save that writes them. */
 function SettingsCard(props: {
@@ -257,7 +257,7 @@ function BooleanField(props: FieldProps) {
 }
 
 /**
- * Render the auto-continue card.
+ * Render the auto-continue settings section: the settings card with all fields.
  * @param props - locale copy, the card snapshot, and its form actions.
  * @returns the card.
  */
