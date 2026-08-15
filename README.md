@@ -47,11 +47,11 @@ It watches the live event streams and reacts to:
 | Event | Meaning |
 | --- | --- |
 | `turn/end` → `error` | Turn failed (model / network / timeout, …) |
-| `turn/end` → `interrupted` | Crash-orphaned turn left behind by a host restart |
+| `turn/end` → `interrupted` | Crash-orphaned turn left behind by a host restart (recovered by the startup scan) |
 | `turn/end` → `max-tokens` | Output token ceiling reached |
 | `host/agent-error` | Agent failure with no turn position |
 
-**Never auto-continues:** user-aborted turns (`aborted`) or policy rejections (`blocked`); sessions the host already resumed itself; running sessions or sessions with queued messages; subagent sessions; anything inside the cooldown / consecutive-cap windows (configurable in the settings card, below).
+**Never auto-continues:** user-aborted turns (`aborted`) or policy rejections (`blocked`); live `interrupted` turn-ends too — that marker is only written by crash repair when the host reloads, so orphaned turns are recovered by the startup scan, not the live path; sessions the host already resumed itself; running sessions or sessions with queued messages; subagent sessions; anything inside the cooldown / consecutive-cap windows (configurable in the settings card, below).
 
 ---
 
