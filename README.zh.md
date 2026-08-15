@@ -128,13 +128,15 @@ dsh web
 > 没有任何插件相关的硬编码字符串。执行一次即可, 重新安装 dsh 后重跑:
 >
 > ```sh
-> node node_modules/dsh-client-auto-continue/scripts/patch-expose.mjs
+> npx --yes --package dsh-client-auto-continue patch-expose
 > dsh web
 > ```
 >
-> 补丁脚本随 npm 包一起发布(无需克隆仓库), 并覆盖所有可达的 dsh 安装: profile
-> 链接副本、全局 `npm i -g @deepseek-ai/dsh` 安装、以及当前目录的安装。自动续跑
-> 引擎本身不依赖这个补丁——它只影响 GUI 设置区是否可见。
+> 补丁脚本随 npm 包以 `bin` 形式发布(全新环境下任意目录都能直接执行, 无需克隆仓库、
+> 无需猜测 profile 路径), 并覆盖所有可达的 dsh 安装: profile 链接副本、全局
+> `npm i -g @deepseek-ai/dsh` 安装、以及当前目录的安装。若是从本仓库安装,
+> 同一脚本在仓库根目录执行 `node scripts/patch-expose.mjs` 即可。自动续跑引擎
+> 本身不依赖这个补丁——它只影响 GUI 设置区是否可见。
 
 ### 验证与卸载
 

@@ -129,15 +129,17 @@ dsh web
 > strings anywhere. Run it once, and re-run after reinstalling dsh:
 >
 > ```sh
-> node node_modules/dsh-client-auto-continue/scripts/patch-expose.mjs
+> npx --yes --package dsh-client-auto-continue patch-expose
 > dsh web
 > ```
 >
-> The patch script ships inside the npm package (no repo clone needed) and
-> covers every reachable dsh installation: the profile-linked copy, a global
-> `npm i -g @deepseek-ai/dsh` install, and the invoking directory's own. The
-> auto-continue engine itself works without this patch — it only gates the
-> GUI settings section.
+> The patch script ships inside the npm package as a `bin` (works from any
+> directory in a fresh environment — no repo clone, no profile-path guessing)
+> and covers every reachable dsh installation: the profile-linked copy, a
+> global `npm i -g @deepseek-ai/dsh` install, and the invoking directory's
+> own. If you installed from this repository instead, the same script is
+> `node scripts/patch-expose.mjs` at the repo root. The auto-continue engine
+> itself works without this patch — it only gates the GUI settings section.
 
 ### Verify & uninstall
 
