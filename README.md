@@ -139,7 +139,9 @@ dsh web
 > global `npm i -g @deepseek-ai/dsh` install, and the invoking directory's
 > own. If you installed from this repository instead, the same script is
 > `node scripts/patch-expose.mjs` at the repo root. The auto-continue engine
-> itself works without this patch — it only gates the GUI settings section.
+> itself works without this patch — it only gates the GUI settings section;
+> until then, configure everything directly in `~/.dsh/settings.yaml`
+> (see [Configuration](#configuration)).
 
 ### Verify & uninstall
 
@@ -160,6 +162,26 @@ dsh web
 ## Configuration
 
 Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Auto continue** — the plugin's own section, placed right after **Agent presets**.
+
+**Or skip the GUI and edit the config file directly** — the engine reads the plugin's section from `~/.dsh/settings.yaml` (one shared file for every plugin's sections), so this works in any install, patched or not. The file is watched and re-read automatically, so changes apply live; restart `dsh web` if a page that was already open doesn't pick them up. Fields you leave out fall back to the defaults in the table below:
+
+```yaml
+auto-continue:
+  continueText: '继续'
+  graceMs: 3000
+  cooldownMs: 20000
+  maxConsecutive: 3
+  scanOnBoot: true
+  scanLimit: 8
+  freshMs: 900000
+  reconnectScanDelayMs: 5000
+  reconnectBackoffMs: 3000
+  verbose: true
+  classify: true
+  backoffFactor: 2
+  backoffMaxMs: 300000
+  notify: false
+```
 
 **How the card works:**
 

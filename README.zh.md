@@ -136,7 +136,8 @@ dsh web
 > 无需猜测 profile 路径), 并覆盖所有可达的 dsh 安装: profile 链接副本、全局
 > `npm i -g @deepseek-ai/dsh` 安装、以及当前目录的安装。若是从本仓库安装,
 > 同一脚本在仓库根目录执行 `node scripts/patch-expose.mjs` 即可。自动续跑引擎
-> 本身不依赖这个补丁——它只影响 GUI 设置区是否可见。
+> 本身不依赖这个补丁——它只影响 GUI 设置区是否可见; 在此之前, 可以直接在
+> `~/.dsh/settings.yaml` 里配置全部参数(见 [配置](#配置))。
 
 ### 验证与卸载
 
@@ -157,6 +158,26 @@ dsh web
 ## 配置
 
 所有参数都可以在 GUI 里配置——无需改文件或控制台。打开 **设置 → 自动继续**——插件专属设置区, 位于 **Agent 预设** 之后。
+
+**或者跳过 GUI, 直接编辑配置文件** — 引擎从 `~/.dsh/settings.yaml` 读取插件段落(所有插件的设置都在这一个文件里), 因此无论是否打过补丁都能用。文件被监听、自动重读, 改动即时生效; 若已打开的页面没反应, 重启 `dsh web` 即可。没填写的字段会回落到下表中的默认值:
+
+```yaml
+auto-continue:
+  continueText: '继续'
+  graceMs: 3000
+  cooldownMs: 20000
+  maxConsecutive: 3
+  scanOnBoot: true
+  scanLimit: 8
+  freshMs: 900000
+  reconnectScanDelayMs: 5000
+  reconnectBackoffMs: 3000
+  verbose: true
+  classify: true
+  backoffFactor: 2
+  backoffMaxMs: 300000
+  notify: false
+```
 
 **卡片操作说明:**
 
