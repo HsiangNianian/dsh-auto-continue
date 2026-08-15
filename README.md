@@ -190,6 +190,12 @@ auto-continue:
 
 **How the card works:**
 
+![Settings → Plugins](docs/screenshots/05-plugins-view.png)
+
+![Card fields](docs/screenshots/06-card-fields.png)
+
+![Stats & paused sessions](docs/screenshots/07-card-panels.png)
+
 - Edits are **staged** — nothing reaches the disk until you hit **Save**; an unsaved badge marks the card while drafts are pending, and **Discard** drops them
 - A field you changed shows an **Overridden** badge with a per-field **Reset to default** button that restores the built-in value
 - Boolean fields are **tri-state**: *Inherit* (use the default) / *On* / *Off*
