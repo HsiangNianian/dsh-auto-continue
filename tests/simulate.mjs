@@ -411,5 +411,18 @@ function startPlugin(api, overrides = {}) {
   await sleep(50);
 }
 
+// ---------- 测试 13: 实时流 interrupted(用户停止被误标场景)→ 不自动继续 ----------
+{
+  console.log('测试 13: 实时 turn/end interrupted → 不自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api);
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'interrupted' }));
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  await sleep(50);
+}
+
 console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌`);
 process.exit(failures === 0 ? 0 : 1);

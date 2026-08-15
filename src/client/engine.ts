@@ -106,7 +106,12 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
   };
 }
 
-/** 视为「非人为中断」的回合结束原因。aborted(用户停止)与 blocked(策略拒绝)不在其中。 */
+/**
+ * 视为「非人为中断」的回合结束原因, 用于启动/重连扫描。
+ * - `interrupted` 只由崩溃修复在宿主重载时写入(loop 永不实时发出), 因此仅在扫描路径处理;
+ * - 实时事件路径只对 `error` / `max-tokens` 自动续跑;
+ * - `aborted`(用户停止)与 `blocked`(策略拒绝)永不自动继续。
+ */
 type NonHumanReason = 'error' | 'interrupted' | 'max-tokens';
 
 function isNonHumanReason(kind: string): kind is NonHumanReason {
@@ -458,6 +463,11 @@ export class AutoContinueRunner {
           state.consecutive = 0;
         } else if (reason.kind === 'blocked') {
           // 策略拒绝: 不自动继续
+        } else if (reason.kind === 'interrupted') {
+          // 实时路径的 interrupted 仅来自崩溃修复重载(loop 从不实时发出);
+          // 用户手动停止在 DSH 中标记为 aborted, 不走到这里。实时流里出现
+          // interrupted 视为异常中断, 不自动继续——宿主崩溃孤儿回合由扫描恢复。
+          state.consecutive = 0;
         } else if (reason.kind === 'error') {
           // 记录失败事实(分类与模板填充用), 然后按类型处理
           const error = reason.error;
@@ -468,8 +478,8 @@ export class AutoContinueRunner {
           };
           state.lastTurn = event.data.turn;
           this.onTurnFailure(sessionId, 'turn/end:error', state.lastFailure);
-        } else if (isNonHumanReason(reason.kind)) {
-          this.schedule(sessionId, `turn/end:${reason.kind}`);
+        } else if (reason.kind === 'max-tokens') {
+          this.schedule(sessionId, 'turn/end:max-tokens');
         }
         break;
       }
