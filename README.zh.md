@@ -205,7 +205,7 @@ dsh web
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # 监听变更自动重建; 宿主 HMR 免刷新热重载
-npm run test        # node tests/simulate.mjs — 12 个行为场景
+npm run test        # node tests/simulate.mjs — 15 个行为场景
 ```
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。
