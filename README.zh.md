@@ -219,6 +219,7 @@ npm run test        # node tests/simulate.mjs — 12 个行为场景
 ## 链接
 
 - **仓库**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)
+- **LINUX DO**: [linux.do](https://linux.do)
 - **DeepSeek Harness**: [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
 
 ---
