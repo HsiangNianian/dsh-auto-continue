@@ -240,6 +240,8 @@ npm run test        # node tests/simulate.mjs — 22 个行为场景
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。
 
+CI 在每次 push / PR 时跑 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) 体检, 并作为发布的前置条件——体检失败时 tag 流程拒绝发布。
+
 ---
 
 ## 活跃度

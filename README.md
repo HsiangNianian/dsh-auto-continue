@@ -244,6 +244,8 @@ npm run test        # node tests/simulate.mjs — 22 behavioral scenarios
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.
 
+CI runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) on every push / PR and gates releases — the tag workflow refuses to publish while the check fails.
+
 ---
 
 ## Activity

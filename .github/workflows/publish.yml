@@ -9,7 +9,11 @@ permissions:
   contents: write
 
 jobs:
+  plugin-check:
+    uses: ./.github/workflows/plugin-check.yml
+
   publish:
+    needs: [plugin-check]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
