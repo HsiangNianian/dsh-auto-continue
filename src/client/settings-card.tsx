@@ -38,6 +38,9 @@ export interface AutoContinueSettingsCardState extends CardShell {
   paused: CardFieldState;
   continueText: CardFieldState;
   continueTextMaxTokens: CardFieldState;
+  guardTools: CardFieldState;
+  guardPendingText: CardFieldState;
+  guardDoneText: CardFieldState;
   graceMs: CardFieldState;
   cooldownMs: CardFieldState;
   maxConsecutive: CardFieldState;
@@ -74,6 +77,9 @@ export class AutoContinueSettingsCardController {
       booleanField('paused'),
       textField('continueText'),
       textField('continueTextMaxTokens'),
+      booleanField('guardTools'),
+      textField('guardPendingText'),
+      textField('guardDoneText'),
       numberField('graceMs', 0),
       numberField('cooldownMs', 0),
       numberField('maxConsecutive', 1),
@@ -97,6 +103,9 @@ export class AutoContinueSettingsCardController {
       paused: this.form.field('paused'),
       continueText: this.form.field('continueText'),
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
+      guardTools: this.form.field('guardTools'),
+      guardPendingText: this.form.field('guardPendingText'),
+      guardDoneText: this.form.field('guardDoneText'),
       graceMs: this.form.field('graceMs'),
       cooldownMs: this.form.field('cooldownMs'),
       maxConsecutive: this.form.field('maxConsecutive'),
@@ -414,6 +423,33 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.continueTextMaxTokens}
         onEdit={(text) => props.edit('continueTextMaxTokens', text)}
         onReset={() => props.resetField('continueTextMaxTokens')}
+      />
+      <BooleanField
+        id="auto-continue-guard-tools"
+        label={t('field.guardTools')}
+        hint={t('field.guardToolsHint')}
+        {...shared}
+        {...state.guardTools}
+        onEdit={(text) => props.edit('guardTools', text)}
+        onReset={() => props.resetField('guardTools')}
+      />
+      <ValueField
+        id="auto-continue-guard-pending-text"
+        label={t('field.guardPendingText')}
+        hint={t('field.guardPendingTextHint')}
+        {...shared}
+        {...state.guardPendingText}
+        onEdit={(text) => props.edit('guardPendingText', text)}
+        onReset={() => props.resetField('guardPendingText')}
+      />
+      <ValueField
+        id="auto-continue-guard-done-text"
+        label={t('field.guardDoneText')}
+        hint={t('field.guardDoneTextHint')}
+        {...shared}
+        {...state.guardDoneText}
+        onEdit={(text) => props.edit('guardDoneText', text)}
+        onReset={() => props.resetField('guardDoneText')}
       />
       <ValueField
         id="auto-continue-grace-ms"

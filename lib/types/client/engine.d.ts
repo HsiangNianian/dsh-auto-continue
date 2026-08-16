@@ -17,6 +17,12 @@ export interface AutoContinueSettings {
     continueText?: string;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens?: string;
+    /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
+    guardTools?: boolean;
+    /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
+    guardPendingText?: string;
+    /** Guard text appended when the last tool call completed successfully (don't rerun it). */
+    guardDoneText?: string;
     /** Grace period after an interruption before auto-sending (ms). */
     graceMs?: number;
     /** Minimum interval between two auto-continues per session (ms). */
@@ -99,9 +105,18 @@ export interface TemplateContext {
     sessionTitle?: string;
     /** 自失败发生以来的毫秒数, 对应 {elapsed}。 */
     elapsedMs?: number;
+    /** 上一步工具结果摘要(截断), 对应 {result}(护栏模板用)。 */
+    result?: string;
 }
-/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed})。 */
+/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed}/{result})。 */
 export declare function fillTemplate(template: string, ctx: TemplateContext): string;
+/** 上一步工具调用的判定结果: 是否已确认完成, 以及文本摘要。 */
+export interface ToolResultFacts {
+    /** 工具是否成功完成(内部失败或 isError 视为未成功)。 */
+    ok: boolean;
+    /** 工具输出的文本摘要(截断)。 */
+    excerpt: string;
+}
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
 export declare function effectiveCooldown(consecutive: number, base: number, factor: number, max: number): number;
 /** 暂停某会话: 到 `until` 之前, 引擎不会为该会话自动继续(通知按钮等调用)。 */
@@ -172,6 +187,16 @@ export declare class AutoContinueRunner {
     private schedule;
     private cancelPending;
     private fire;
+    /**
+     * 组装本次续跑消息: 模板填充 + 幂等护栏。
+     * 护栏依据上一步工具调用的执行状态附加指引, 防止重跑副作用操作:
+     * - 结果未确认(可能已部分执行)→ 提示先确认状态、不要重复执行
+     * - 已确认成功 → 提示已完成、不要重复执行
+     * - 已失败 → 不加护栏(重试工具本来就是目的)
+     */
+    private buildContinueText;
+    /** 上一步工具调用的护栏状态(实时路径, 由 mux 帧维护)。 */
+    private currentGuard;
     /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */
     private readonly titles;
     /** 查一次 session.list, 顺带缓存该会话的标题。 */
@@ -186,4 +211,6 @@ export declare class AutoContinueRunner {
      * @returns 是否成功完成一次扫描(宿主就绪)。
      */
     private scanInterrupted;
+    /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
+    private applyGuardFromEvents;
 }

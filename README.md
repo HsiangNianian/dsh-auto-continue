@@ -40,6 +40,7 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)"); a **separate template** fires on `max-tokens` (e.g. "继续输出, 不要重复已生成的内容")
+- **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown and the consecutive cap) and **Pause this session 1h** actions
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips and give-ups, broken down by error code, with a one-click reset
@@ -173,6 +174,9 @@ auto-continue:
   paused: false
   continueText: '继续'
   continueTextMaxTokens: '继续'
+  guardTools: true
+  guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)'
+  guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)'
   graceMs: 3000
   cooldownMs: 20000
   maxConsecutive: 3
@@ -204,6 +208,9 @@ auto-continue:
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
 | Continue text | `继续` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `继续` | Text sent when the output token ceiling is reached (same placeholders) |
+| Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
+| Guard text (unconfirmed result) | `(上一步工具「{tool}」可能未完成…)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
+| Guard text (tool succeeded) | `(上一步工具「{tool}」已完成…)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
 | Cooldown (ms) | `20000` | Min interval between auto-continues per session (failed attempts count too) |
 | Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
@@ -218,7 +225,7 @@ auto-continue:
 | Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
 | Browser notifications | `off` | Notify when auto-continue fires, gives up, or hits a permanent error |
 
-`continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`.
+`continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
 
 ---
 
@@ -239,7 +246,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 22 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 27 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

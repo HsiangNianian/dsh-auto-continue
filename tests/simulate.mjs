@@ -415,7 +415,8 @@ function startPlugin(api, overrides = {}) {
   console.log('测试 12: 模板占位符 {code} 与 {tool} 填充');
   const api = new FakeApi();
   api.addSession('s1');
-  startPlugin(api, { continueText: '继续({tool}: {code})' });
+  // 关掉幂等护栏, 专注模板填充本身
+  startPlugin(api, { continueText: '继续({tool}: {code})', guardTools: false });
   await sleep(50);
   api.pushMux({
     type: 'session/event',
@@ -611,6 +612,193 @@ function startPlugin(api, overrides = {}) {
   inst.fireAction('pause1h');
   await sleep(50);
   check('会话已暂停', exports.pausedSessions().length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 22: 幂等护栏 — 工具结果未确认 → 附加 pending 护栏 ----------
+{
+  console.log('测试 22: 幂等护栏(结果未确认)→ 附加先确认状态的护栏文本');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false });
+  await sleep(50);
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: { type: 'tool/call', seq: 5, time: Date.now(), data: { name: 'git-push', callId: 'c1', arguments: '{}' } },
+  });
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check(
+    '附加 pending 护栏',
+    api.prompts[0]?.content?.[0]?.text ===
+      '继续 (上一步工具「git-push」可能未完成, 先确认状态再继续, 不要重复执行)',
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 23: 幂等护栏 — 工具已成功 → 附加 done 护栏(含结果摘要) ----------
+{
+  console.log('测试 23: 幂等护栏(工具已成功)→ 附加不要重复执行的护栏文本');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false });
+  await sleep(50);
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: { type: 'tool/call', seq: 5, time: Date.now(), data: { name: 'git-push', callId: 'c1', arguments: '{}' } },
+  });
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: {
+      type: 'tool/result',
+      seq: 6,
+      time: Date.now(),
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool-result',
+            toolCallId: 'c1',
+            content: [{ type: 'text', text: 'push 成功, main -> origin/main' }],
+          }],
+        },
+      },
+    },
+  });
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check(
+    '附加 done 护栏(含结果)',
+    api.prompts[0]?.content?.[0]?.text ===
+      '继续 (上一步工具「git-push」已完成, 结果: push 成功, main -> origin/main; 不要重复执行, 直接继续)',
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 24: 幂等护栏 — 工具已失败 → 不加护栏(重试是目的) ----------
+{
+  console.log('测试 24: 幂等护栏(工具已失败)→ 不加护栏');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false });
+  await sleep(50);
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: { type: 'tool/call', seq: 5, time: Date.now(), data: { name: 'bash', callId: 'c1', arguments: '{}' } },
+  });
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: {
+      type: 'tool/result',
+      seq: 6,
+      time: Date.now(),
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool-result',
+            toolCallId: 'c1',
+            content: [{ type: 'text', text: 'command failed' }],
+            isError: true,
+          }],
+        },
+      },
+    },
+  });
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check('无护栏文本', api.prompts[0]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
+// ---------- 测试 25: 幂等护栏 — 关闭开关 → 不加护栏 ----------
+{
+  console.log('测试 25: 幂等护栏(guardTools 关)→ 不加护栏');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, guardTools: false });
+  await sleep(50);
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: { type: 'tool/call', seq: 5, time: Date.now(), data: { name: 'bash', callId: 'c1', arguments: '{}' } },
+  });
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check('无护栏文本', api.prompts[0]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
+// ---------- 测试 26: 幂等护栏 — 新回合开始后重置, 不跨回合误用 ----------
+{
+  console.log('测试 26: 幂等护栏(新回合重置)→ 上个回合的工具不触发护栏');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false });
+  await sleep(50);
+  // 回合 1: 发起工具调用但回合被用户中止
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: { type: 'tool/call', seq: 5, time: Date.now(), data: { name: 'git-push', callId: 'c1', arguments: '{}' } },
+  });
+  api.pushMux(turnEnd('s1', 1, { kind: 'aborted', reason: { kind: 'human' } }));
+  // 回合 2: 正常开始, 失败, 无工具调用 → 不应带护栏
+  api.pushMux(turnStart('s1', 2));
+  api.pushMux(turnEnd('s1', 2, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  check('无护栏文本', api.prompts[0]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
+// ---------- 测试 27: 幂等护栏 — 扫描路径从历史重建工具状态 ----------
+{
+  console.log('测试 27: 扫描路径(历史里工具无结果)→ 附加 pending 护栏');
+  const api = new FakeApi();
+  const now = Date.now();
+  api.addSession('s1', {
+    running: false,
+    events: [
+      {
+        event: {
+          type: 'tool/call',
+          seq: 1,
+          time: now - 60_000,
+          data: { turn: 1, step: 1, name: 'git-push', callId: 'c1', arguments: '{}' },
+        },
+      },
+      {
+        event: {
+          type: 'turn/end',
+          seq: 2,
+          time: now - 60_000,
+          data: { turn: 1, reason: { kind: 'interrupted' } },
+        },
+      },
+    ],
+  });
+  startPlugin(api, { scanOnBoot: true });
+  await sleep(1000);
+  check('已发送', api.prompts.length === 1);
+  check(
+    '附加 pending 护栏',
+    api.prompts[0]?.content?.[0]?.text ===
+      '继续 (上一步工具「git-push」可能未完成, 先确认状态再继续, 不要重复执行)',
+  );
   await sleep(50);
 }
 

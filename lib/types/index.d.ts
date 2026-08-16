@@ -13,6 +13,12 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens: z<string, string>;
+    /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
+    guardTools: z<boolean, boolean>;
+    /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
+    guardPendingText: z<string, string>;
+    /** Guard text appended when the last tool call completed successfully (don't rerun it). */
+    guardDoneText: z<string, string>;
     /** Grace period after an interruption before auto-sending (ms). */
     graceMs: z<number, number>;
     /** Minimum interval between two auto-continues per session (ms). */
@@ -46,6 +52,12 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens: z<string, string>;
+    /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
+    guardTools: z<boolean, boolean>;
+    /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
+    guardPendingText: z<string, string>;
+    /** Guard text appended when the last tool call completed successfully (don't rerun it). */
+    guardDoneText: z<string, string>;
     /** Grace period after an interruption before auto-sending (ms). */
     graceMs: z<number, number>;
     /** Minimum interval between two auto-continues per session (ms). */

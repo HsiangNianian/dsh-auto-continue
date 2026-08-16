@@ -18,6 +18,16 @@ export const AutoContinueSchema = z.object({
   continueText: z.string().default('继续'),
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
   continueTextMaxTokens: z.string().default('继续'),
+  /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
+  guardTools: z.boolean().default(true),
+  /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
+  guardPendingText: z
+    .string()
+    .default('(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)'),
+  /** Guard text appended when the last tool call completed successfully (don't rerun it). */
+  guardDoneText: z
+    .string()
+    .default('(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)'),
   /** Grace period after an interruption before auto-sending (ms). */
   graceMs: z.natural().default(3000),
   /** Minimum interval between two auto-continues per session (ms). */

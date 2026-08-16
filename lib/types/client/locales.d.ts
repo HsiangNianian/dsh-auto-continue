@@ -13,6 +13,12 @@ export declare const zh: {
     'field.continueTextHint': string;
     'field.continueTextMaxTokens': string;
     'field.continueTextMaxTokensHint': string;
+    'field.guardTools': string;
+    'field.guardToolsHint': string;
+    'field.guardPendingText': string;
+    'field.guardPendingTextHint': string;
+    'field.guardDoneText': string;
+    'field.guardDoneTextHint': string;
     'field.graceMs': string;
     'field.graceMsHint': string;
     'field.cooldownMs': string;

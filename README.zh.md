@@ -40,6 +40,7 @@
 - **错误分类** — 临时性错误(网络 / 超时 / 5xx / 429 等)自动续跑; 永久性错误跳过并通知, 因为重试也没用。判定为永久性的条件: HTTP 状态码 401/403, 或 code/message 命中认证、凭据/API Key、余额/配额、模型不存在、上下文长度/超限等关键词。关闭分类后则全部自动继续
 - **自适应退避** — 连续失败时等待时间递增(冷却 × 系数: 20s → 40s → 80s…), 有上限, 不再对故障上游狂轰滥炸
 - **模板化继续文本** — `continueText` 支持 `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` 占位符, 续跑消息可携带失败上下文(如「继续 (git push 失败: UPSTREAM)」); 达到 `max-tokens` 时使用**另一套模板**(如「继续输出, 不要重复已生成的内容」)
+- **幂等护栏** — 续跑前检查上一步工具调用: 结果未确认(回合在工具执行中途夭折, 如 `git push` 可能已经推上去了)时, 续跑消息会提示模型先确认状态、不要重复执行; 工具已确认成功时说明已完成、请勿重复; 工具失败则不加护栏(重试本来就是目的)。两段护栏文本都可配置(支持 `{tool}` / `{result}` 占位符)
 - **暂停** — 设置卡片里的全局 **暂停自动继续** 开关可立即停掉一切(实时 + 扫描); 会话级暂停(如通过通知按钮)只挂起单个会话, 到期自动恢复
 - **通知按钮** — 通知带 **立即续跑**(无视冷却与连续上限, 马上发送)和 **暂停该会话 1 小时** 按钮
 - **统计面板** — 设置卡片展示今日自动继续次数、恢复成功、继续后失败、永久性跳过、达上限停止, 按错误码分布, 可一键清零
@@ -169,6 +170,9 @@ auto-continue:
   paused: false
   continueText: '继续'
   continueTextMaxTokens: '继续'
+  guardTools: true
+  guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)'
+  guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)'
   graceMs: 3000
   cooldownMs: 20000
   maxConsecutive: 3
@@ -200,6 +204,9 @@ auto-continue:
 | 暂停自动继续 | 关 | 全局暂停: 实时与扫描都不再自动发送, 已排队的待发送也会取消 |
 | 继续文本 | `继续` | 中断后自动发送的消息内容 |
 | 超限时的继续文本 | `继续` | 达到输出 token 上限时自动发送的文本(支持相同占位符) |
+| 幂等护栏 | 开 | 续跑前检查上一步工具调用并给出指引(见「它做什么」) |
+| 结果未确认时的护栏文本 | `(上一步工具「{tool}」可能未完成…)` | 上一步工具可能已部分执行时附加; 支持 {tool} 占位符 |
+| 工具已成功时的护栏文本 | `(上一步工具「{tool}」已完成…)` | 上一步工具已确认成功时附加; 支持 {tool} / {result} 占位符 |
 | 宽限期 (ms) | `3000` | 中断后等待的时长; 期间宿主自行恢复则取消 |
 | 冷却时间 (ms) | `20000` | 同一会话两次自动「继续」的最小间隔(失败尝试也计入) |
 | 最大连续次数 | `3` | 同一会话连续自动「继续」上限; 超过后停止, 直到用户介入或成功回合 |
@@ -214,7 +221,7 @@ auto-continue:
 | 最大退避间隔 (ms) | `300000` | 自适应退避的上限 |
 | 浏览器通知 | 关 | 自动继续成功 / 放弃 / 遇到永久性错误时弹通知 |
 
-`continueText`(以及 `continueTextMaxTokens`)支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)、`{sessionTitle}`(来自会话列表)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。
+`continueText`(以及 `continueTextMaxTokens`)支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)、`{sessionTitle}`(来自会话列表)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。护栏文本支持 `{tool}` 与 `{result}`(上一步工具输出的截断摘要)。
 
 ---
 
@@ -235,7 +242,7 @@ auto-continue:
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # 监听变更自动重建; 宿主 HMR 免刷新热重载
-npm run test        # node tests/simulate.mjs — 22 个行为场景
+npm run test        # node tests/simulate.mjs — 27 个行为场景
 ```
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。

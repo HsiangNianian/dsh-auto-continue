@@ -26,6 +26,12 @@ export interface AutoContinueSettings {
   continueText?: string;
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
   continueTextMaxTokens?: string;
+  /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
+  guardTools?: boolean;
+  /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
+  guardPendingText?: string;
+  /** Guard text appended when the last tool call completed successfully (don't rerun it). */
+  guardDoneText?: string;
   /** Grace period after an interruption before auto-sending (ms). */
   graceMs?: number;
   /** Minimum interval between two auto-continues per session (ms). */
@@ -63,6 +69,9 @@ export type AutoContinueConfig = Required<AutoContinueSettings>;
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   continueText: '继续',
   continueTextMaxTokens: '继续',
+  guardTools: true,
+  guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)',
+  guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)',
   graceMs: 3000,
   cooldownMs: 20000,
   maxConsecutive: 3,
@@ -98,9 +107,20 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     typeof value.continueTextMaxTokens === 'string' && value.continueTextMaxTokens.trim() !== ''
       ? value.continueTextMaxTokens
       : DEFAULT_CONFIG.continueTextMaxTokens;
+  const guardPendingText =
+    typeof value.guardPendingText === 'string' && value.guardPendingText.trim() !== ''
+      ? value.guardPendingText
+      : DEFAULT_CONFIG.guardPendingText;
+  const guardDoneText =
+    typeof value.guardDoneText === 'string' && value.guardDoneText.trim() !== ''
+      ? value.guardDoneText
+      : DEFAULT_CONFIG.guardDoneText;
   return {
     continueText: text,
     continueTextMaxTokens: maxTokensText,
+    guardTools: booleanOr(value.guardTools, DEFAULT_CONFIG.guardTools),
+    guardPendingText,
+    guardDoneText,
     graceMs: numberOr(value.graceMs, DEFAULT_CONFIG.graceMs),
     cooldownMs: numberOr(value.cooldownMs, DEFAULT_CONFIG.cooldownMs),
     maxConsecutive: Math.max(1, numberOr(value.maxConsecutive, DEFAULT_CONFIG.maxConsecutive)),
@@ -249,9 +269,11 @@ export interface TemplateContext {
   sessionTitle?: string;
   /** 自失败发生以来的毫秒数, 对应 {elapsed}。 */
   elapsedMs?: number;
+  /** 上一步工具结果摘要(截断), 对应 {result}(护栏模板用)。 */
+  result?: string;
 }
 
-/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed})。 */
+/** 用失败事实与回合信息填充 continueText 模板占位符({code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed}/{result})。 */
 export function fillTemplate(template: string, ctx: TemplateContext): string {
   return template
     .replace(/\{code\}/g, ctx.facts?.code ?? '')
@@ -261,7 +283,51 @@ export function fillTemplate(template: string, ctx: TemplateContext): string {
     .replace(/\{turn\}/g, ctx.turn !== undefined ? String(ctx.turn) : '')
     .replace(/\{errorCount\}/g, ctx.errorCount !== undefined ? String(ctx.errorCount) : '')
     .replace(/\{sessionTitle\}/g, ctx.sessionTitle ?? '')
-    .replace(/\{elapsed\}/g, formatElapsed(ctx.elapsedMs));
+    .replace(/\{elapsed\}/g, formatElapsed(ctx.elapsedMs))
+    .replace(/\{result\}/g, ctx.result ?? '');
+}
+
+// ---------- 幂等护栏: 上一步工具调用的执行状态 ----------
+
+/** 工具结果摘要的最大长度(护栏模板 {result} 用)。 */
+const TOOL_RESULT_CAP = 160;
+
+/** 从任意内容块里递归收集文本(结果为模型可见的工具输出)。 */
+function extractText(blocks: unknown, cap: number): string {
+  let out = '';
+  const walk = (value: unknown): void => {
+    if (out.length >= cap) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (typeof value !== 'object' || value === null) return;
+    const record = value as Record<string, unknown>;
+    if (record['type'] === 'text' && typeof record['text'] === 'string') {
+      out += record['text'];
+      return;
+    }
+    for (const child of Object.values(record)) walk(child);
+  };
+  walk(blocks);
+  return out.slice(0, cap);
+}
+
+/** 上一步工具调用的判定结果: 是否已确认完成, 以及文本摘要。 */
+export interface ToolResultFacts {
+  /** 工具是否成功完成(内部失败或 isError 视为未成功)。 */
+  ok: boolean;
+  /** 工具输出的文本摘要(截断)。 */
+  excerpt: string;
+}
+
+/** 从 tool/result 事件载荷提取成功与否与文本摘要。 */
+function toolResultFacts(data: {
+  error?: { name?: string; code?: string };
+  message?: { content?: Array<{ type?: string; content?: unknown; isError?: boolean }> };
+}): ToolResultFacts {
+  const failed = data.error !== undefined || data.message?.content?.[0]?.isError === true;
+  return { ok: !failed, excerpt: extractText(data.message?.content?.[0]?.content, TOOL_RESULT_CAP) };
 }
 
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
@@ -493,8 +559,10 @@ interface SessionState {
   lastFailure: FailureFacts | undefined;
   /** 最近一次失败的发生时间(模板 {elapsed} 与恢复统计用)。 */
   lastFailureAt: number;
-  /** 失败前最后一次工具调用的名称(模板 {tool})。 */
+  /** 失败前最后一次工具调用的名称(模板 {tool} 与幂等护栏用)。 */
   lastTool: string | undefined;
+  /** 上一步工具调用的结果状态: 'pending' = 已发起未见结果(可能已部分执行)。 */
+  lastToolResult: 'pending' | ToolResultFacts | undefined;
   /** 失败回合的编号(模板 {turn})。 */
   lastTurn: number | undefined;
   /** 我们最近一次自动发送的时间戳; 0 = 没有待确认的恢复。 */
@@ -513,6 +581,7 @@ const freshState = (): SessionState => ({
   lastFailure: undefined,
   lastFailureAt: 0,
   lastTool: undefined,
+  lastToolResult: undefined,
   lastTurn: undefined,
   pendingRecoveryAt: 0,
 });
@@ -657,7 +726,16 @@ export class AutoContinueRunner {
       case 'session/event':
         if (frame.event.type === 'tool/call') {
           const name = frame.event.data.name;
-          if (typeof name === 'string') this.state(frame.sessionId).lastTool = name;
+          if (typeof name === 'string') {
+            const state = this.state(frame.sessionId);
+            state.lastTool = name;
+            state.lastToolResult = 'pending'; // 已发起, 尚未见结果
+          }
+        } else if (frame.event.type === 'tool/result') {
+          const state = this.state(frame.sessionId);
+          if (state.lastToolResult === 'pending') {
+            state.lastToolResult = toolResultFacts(frame.event.data);
+          }
         }
         this.onSessionEvent(frame.sessionId, frame.event);
         break;
@@ -678,6 +756,9 @@ export class AutoContinueRunner {
     switch (event.type) {
       case 'turn/start':
         state.running = true;
+        // 新回合开始: 清空上一步工具调用状态, 避免跨回合误用护栏
+        state.lastTool = undefined;
+        state.lastToolResult = undefined;
         this.cancelPending(sessionId, '宿主自行开启新回合');
         break;
       case 'turn/end': {
@@ -930,14 +1011,7 @@ export class AutoContinueRunner {
         sessionTitle = info?.title;
       }
     }
-    const text = fillTemplate(template, {
-      facts: state.lastFailure,
-      tool: state.lastTool,
-      turn: state.lastTurn,
-      errorCount: state.consecutive + 1,
-      sessionTitle,
-      elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
-    });
+    const text = this.buildContinueText(config, state, template, sessionTitle);
     const zone = clientTimeZone();
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
     try {
@@ -984,6 +1058,51 @@ export class AutoContinueRunner {
     } finally {
       releaseSend(sessionId);
     }
+  }
+
+  /**
+   * 组装本次续跑消息: 模板填充 + 幂等护栏。
+   * 护栏依据上一步工具调用的执行状态附加指引, 防止重跑副作用操作:
+   * - 结果未确认(可能已部分执行)→ 提示先确认状态、不要重复执行
+   * - 已确认成功 → 提示已完成、不要重复执行
+   * - 已失败 → 不加护栏(重试工具本来就是目的)
+   */
+  private buildContinueText(
+    config: AutoContinueConfig,
+    state: SessionState,
+    template: string,
+    sessionTitle: string | undefined,
+  ): string {
+    let text = fillTemplate(template, {
+      facts: state.lastFailure,
+      tool: state.lastTool,
+      turn: state.lastTurn,
+      errorCount: state.consecutive + 1,
+      sessionTitle,
+      elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
+    });
+    if (!config.guardTools) return text;
+    const guard = this.currentGuard(state);
+    if (guard.kind === 'pending') {
+      text += ` ${fillTemplate(config.guardPendingText, { tool: guard.tool, result: guard.result })}`;
+    } else if (guard.kind === 'done') {
+      text += ` ${fillTemplate(config.guardDoneText, { tool: guard.tool, result: guard.result })}`;
+    }
+    return text;
+  }
+
+  /** 上一步工具调用的护栏状态(实时路径, 由 mux 帧维护)。 */
+  private currentGuard(state: SessionState): {
+    kind: 'none' | 'pending' | 'done' | 'failed';
+    tool?: string;
+    result?: string;
+  } {
+    if (state.lastTool === undefined || state.lastToolResult === undefined) return { kind: 'none' };
+    if (state.lastToolResult === 'pending') return { kind: 'pending', tool: state.lastTool };
+    if (state.lastToolResult.ok) {
+      return { kind: 'done', tool: state.lastTool, result: state.lastToolResult.excerpt };
+    }
+    return { kind: 'failed', tool: state.lastTool };
   }
 
   /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */
@@ -1108,9 +1227,38 @@ export class AutoContinueRunner {
         if (superseded) break;
       }
       if (superseded) continue;
+      // 幂等护栏: 从历史事件里重建上一步工具调用的执行状态
+      this.applyGuardFromEvents(state, events, lastEnd.seq);
       this.log(`扫描发现中断 ${summary.sessionId}(turn/end:${reason.kind}), 安排自动继续`);
       this.schedule(summary.sessionId, `scan:turn/end:${reason.kind}`);
     }
     return true;
+  }
+
+  /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
+  private applyGuardFromEvents(
+    state: SessionState,
+    events: { event: SessionEvent }[],
+    untilSeq: number,
+  ): void {
+    state.lastTool = undefined;
+    state.lastToolResult = undefined;
+    let call: SessionEvent<'tool/call'> | undefined;
+    for (const entry of events) {
+      const event = entry.event;
+      if (event.seq >= untilSeq) continue;
+      if (event.type === 'tool/call') call = event;
+    }
+    if (call === undefined) return;
+    state.lastTool = call.data.name;
+    state.lastToolResult = 'pending';
+    for (const entry of events) {
+      const event = entry.event;
+      if (event.seq <= call.seq || event.seq >= untilSeq) continue;
+      if (event.type === 'tool/result') {
+        state.lastToolResult = toolResultFacts(event.data);
+        break;
+      }
+    }
   }
 }
