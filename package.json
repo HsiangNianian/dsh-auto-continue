@@ -18,9 +18,12 @@
   },
   "files": [
     "lib",
+    "src",
     "cordis.patch.yml",
     "scripts",
     "docs",
+    "tsconfig.json",
+    "tsconfig.build.json",
     "README.md",
     "README.zh.md",
     "LICENSE"
@@ -45,7 +48,7 @@
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "node tests/simulate.mjs",
-    "prepublishOnly": "npm run build"
+    "prepack": "npm run build"
   },
   "keywords": [
     "dsh",
@@ -79,7 +82,8 @@
   "peerDependencies": {
     "react": "^18.2.0",
     "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "^4.0.1"
   },
   "bin": {
     "patch-expose": "./scripts/patch-expose.mjs"

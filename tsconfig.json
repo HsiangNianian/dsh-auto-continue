@@ -19,7 +19,8 @@
     "types": [
       "react"
     ],
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": [
     "src/**/*.ts",
