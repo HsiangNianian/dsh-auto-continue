@@ -257,6 +257,7 @@ While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` e
 - **Repository**: [github.com/HsiangNianian/dsh-auto-continue](https://github.com/HsiangNianian/dsh-auto-continue)
 - **LINUX DO**: [linux.do](https://linux.do)
 - **DeepSeek Harness**: [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
+- **dsh-plugin-check**: [github.com/omdsh-dev/dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) — health-check your own DSH plugin repos
 
 ---
 
