@@ -49,6 +49,18 @@ jobs:
           mkdir -p dist
           npm pack --pack-destination dist
 
+      - name: Package release archive
+        run: |
+          version=$(node -p "require('./package.json').version")
+          sha="${GITHUB_SHA:0:7}"
+          dir="dsh-client-auto-continue-${version}"
+          mkdir -p "dist/${dir}"
+          cp lib/client.js lib/client.js.map lib/index.js "dist/${dir}/"
+          cd dist
+          zip -q -r "dsh-client-auto-continue-${version}-${sha}.zip" "${dir}"
+          rm -rf "${dir}"
+          echo "archive=dsh-client-auto-continue-${version}-${sha}.zip" >> "$GITHUB_ENV"
+
       - name: Publish to npm
         run: npm publish --access public
         env:
@@ -66,8 +78,6 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" \
             dist/*.tgz \
-            lib/client.js \
-            lib/client.js.map \
-            lib/index.js \
+            "dist/${archive}" \
             --title "dsh-auto-continue v$version" \
             --notes "$notes"
