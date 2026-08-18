@@ -20,7 +20,7 @@
   <br>
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=fff" alt="TypeScript">
   <img src="https://img.shields.io/badge/esbuild-FFCF00?style=flat&logo=esbuild&logoColor=000" alt="esbuild">
-  <img src="https://img.shields.io/badge/zero__runtime__deps-16a34a?style=flat" alt="GUI 可配置">
+  <img src="https://img.shields.io/badge/GUI--configurable-0ea5e9?style=flat" alt="GUI configurable">
 </p>
 
 <p align="center">
@@ -41,8 +41,8 @@
 - **自适应退避** — 连续失败时等待时间递增(冷却 × 系数: 20s → 40s → 80s…), 有上限, 不再对故障上游狂轰滥炸
 - **模板化继续文本** — `continueText` 支持 `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` 占位符, 续跑消息可携带失败上下文(如「继续 (git push 失败: UPSTREAM)」); 达到 `max-tokens` 时使用**另一套模板**(如「继续输出, 不要重复已生成的内容」)
 - **幂等护栏** — 续跑前检查上一步工具调用: 结果未确认(回合在工具执行中途夭折, 如 `git push` 可能已经推上去了)时, 续跑消息会提示模型先确认状态、不要重复执行; 工具已确认成功时说明已完成、请勿重复; 工具失败则不加护栏(重试本来就是目的)。两段护栏文本都可配置(支持 `{tool}` / `{result}` 占位符)
-- **暂停** — 设置卡片里的全局 **暂停自动继续** 开关可立即停掉一切(实时 + 扫描); 会话级暂停(如通过通知按钮)只挂起单个会话, 到期自动恢复
-- **通知按钮** — 通知带 **立即续跑**(无视冷却与连续上限, 马上发送)和 **暂停该会话 1 小时** 按钮
+- **暂停** — 设置卡片里的全局 **暂停自动继续** 开关可立即停掉一切(实时 + 扫描); 会话级暂停(如通过通知按钮)只挂起单个会话, 到期自动恢复。唯一的显式例外是通知里的 **立即续跑** 按钮——按下它等于用户明确要求发送这一次, 不受暂停限制
+- **通知按钮** — 通知带 **立即续跑**(无视冷却、连续上限与暂停, 马上发送)和 **暂停该会话 1 小时** 按钮
 - **统计面板** — 设置卡片展示今日自动继续次数、恢复成功、继续后失败、永久性跳过、达上限停止, 按错误码分布, 可一键清零
 - **浏览器通知** — 可选: 自动继续成功 / 放弃 / 遇到永久性错误时弹出提醒; 首次使用时请求权限, 被拒绝后不再打扰
 
@@ -229,7 +229,7 @@ auto-continue:
 插件是纯浏览器端, **不触碰任何文件、凭据, 也不访问 dsh 宿主以外的网络**:
 
 - 只复用 webui 本身就在用的两条只读事件流(无额外服务、无第三方端点)
-- 唯一会执行的写入是 `sessions.prompt`——与点「发送」按钮完全相同的调用, 内容为你配置的文本
+- 引擎**唯一会自动执行的写入**是 `sessions.prompt`——与点「发送」按钮完全相同的调用, 内容为你配置的文本(设置卡片里保存配置会通过常规设置 API 写入 `~/.dsh/settings.yaml` 的 `auto-continue` 段落, 与任何其他设置一样)
 - 浏览器存储仅限于少量 `localStorage` 键: 跨标签页协调时间戳、会话级暂停、每日统计计数
 - 浏览器通知是可选开启的(`notify` 设置), 仅在首次使用时请求一次权限
 
@@ -241,12 +241,12 @@ auto-continue:
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # 监听变更自动重建; 宿主 HMR 免刷新热重载
-npm run test        # node tests/simulate.mjs — 27 个行为场景
+npm run test        # node tests/simulate.mjs — 29 个行为场景
 ```
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。
 
-CI 在每次 push / PR 时跑 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) 体检, 并作为发布的前置条件——体检失败时 tag 流程拒绝发布。
+CI 在每次推送到 `main` 及每个 PR 时跑 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) 体检, 并作为发布的前置条件——体检失败时 tag 流程拒绝发布。
 
 ---
 

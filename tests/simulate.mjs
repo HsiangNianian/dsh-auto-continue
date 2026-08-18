@@ -16,6 +16,8 @@
  *   19. 统计记录(跳过/发送/失败/恢复/停止)
  *   20. 新占位符 {errorCount} {sessionTitle} {elapsed}
  *   21. 通知操作按钮(立即续跑 / 暂停该会话 1 小时)
+ *   22-27. 幂等护栏(结果未确认/已成功/已失败/开关关闭/跨回合重置/扫描重建)
+ *   28. classify 关闭时 agent-error 永久错误仍不自动继续
  * 运行: node tests/simulate.mjs
  */
 import { readFileSync } from 'node:fs';
@@ -803,4 +805,17 @@ function startPlugin(api, overrides = {}) {
 }
 
 console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌`);
+
+// ---------- 测试 28: classify 关闭时 agent-error 永久错误仍不自动继续 ----------
+{
+  console.log('测试 28: classify 关闭时 agent-error 序列化失败 → 仍不自动继续');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { classify: false });
+  await sleep(50);
+  api.pushHost({ type: 'host/agent-error', sessionId: 's1', message: 'session event "turn/end" carries non-JSON-serializable data' });
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  await sleep(50);
+}
 process.exit(failures === 0 ? 0 : 1);

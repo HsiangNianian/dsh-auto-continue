@@ -52,7 +52,7 @@ export const zh = {
   'stats.recovered': '恢复成功',
   'stats.failed': '继续后仍失败',
   'stats.gaveUp': '停止(达上限)',
-  'stats.byCode': '错误码分布',
+  'stats.byCode': '按错误码统计',
   'stats.empty': '今天还没有自动继续记录。',
   'stats.reset': '清零',
   'pause.title': '已暂停会话',

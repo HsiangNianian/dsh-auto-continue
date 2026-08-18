@@ -828,7 +828,10 @@ export class AutoContinueRunner {
       case 'host/agent-error':
         if (this.state(frame.sessionId).subagent) break;
         this.log(`host/agent-error(${frame.sessionId}): ${frame.message}`);
-        if (this.getConfig().classify && !isTransientAgentError(frame.message)) {
+        // agent-error 的「仅网络/超时类自动续跑」是无条件安全承诺(与 classify 开关无关):
+        // 序列化失败等永久性 agent 错误(包括用户停止的连带 DOMException)绝不能自动续跑,
+        // 否则会退回「用户停止被误续跑」的场景(issue #2)。
+        if (!isTransientAgentError(frame.message)) {
           // 永久性 agent 错误(序列化失败/配置错误等): 跳过并通知, 避免把用户停止等
           // 场景误判为可恢复中断后自动续跑。
           this.log(`跳过 ${frame.sessionId}: 永久性 agent 错误 — ${frame.message}`);

@@ -41,8 +41,8 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)"); a **separate template** fires on `max-tokens` (e.g. "继续输出, 不要重复已生成的内容")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
-- **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire
-- **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown and the consecutive cap) and **Pause this session 1h** actions
+- **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
+- **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips and give-ups, broken down by error code, with a one-click reset
 - **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error; the browser asks for permission on first use, and nothing is shown again after a denial
 
@@ -234,7 +234,7 @@ auto-continue:
 The plugin is browser-only and touches **no files, credentials, or network beyond the dsh host**:
 
 - It opens the same two read-only event streams the web UI already uses (no extra server, no third-party endpoints)
-- The only write it ever performs is `sessions.prompt` — the same call the Send button makes — with the text you configured
+- The engine's **only automatic write** is `sessions.prompt` — the same call the Send button makes — with the text you configured (saving the settings card writes the `auto-continue` section of `~/.dsh/settings.yaml` through the normal settings API, exactly like any other setting)
 - Browser storage is limited to small `localStorage` keys: cross-tab coordination stamps, per-session pauses, and the daily stats counters
 - Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
 
@@ -246,12 +246,12 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 27 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 29 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.
 
-CI runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) on every push / PR and gates releases — the tag workflow refuses to publish while the check fails.
+CI runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) on every push to `main` and every pull request, and gates releases — the tag workflow refuses to publish while the check fails.
 
 ---
 

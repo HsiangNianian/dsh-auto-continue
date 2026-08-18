@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Vendor patch for a known DSH limitation (0.1.0-rc.6):
+ * Vendor patch for a known DSH limitation (0.1.0-rc.6 and earlier):
  *
  * The web settings surface only exposes namespaces listed in the hardcoded
  * `WEB_SETTINGS_NAMESPACES` / `PRODUCT_SETTINGS_NAMESPACES` allowlists inside
@@ -10,11 +10,13 @@
  * proxy's own comment calls moving exposure into `settings.register()` "deferred
  * work").
  *
- * This script makes the exposure REGISTRY-DRIVEN instead of hardcoded: it
- * patches `exposedNamespaces()` to also expose every namespace currently
- * registered with the settings provider. The patch contains NO plugin-specific
- * string, so the settings of ANY plugin that registers a namespace (and mounts
- * its own settings section) appear automatically — this plugin included.
+ * Since DSH 0.1.0-rc.7 upstream made exposure REGISTRY-DRIVEN, so this script
+ * is a no-op there (it detects the missing function and reports accordingly).
+ * On rc.6 and earlier it patches `exposedNamespaces()` to also expose every
+ * namespace currently registered with the settings provider. The patch
+ * contains NO plugin-specific string, so the settings of ANY plugin that
+ * registers a namespace (and mounts its own settings section) appear
+ * automatically — this plugin included.
  *
  * It is applied to every reachable dsh installation: the profile-linked copy
  * (pnpm store / npx cache), a global `npm i -g @deepseek-ai/dsh` install under
@@ -100,7 +102,10 @@ for (const packageJson of candidates) {
   if (!source.includes(GENERIC_MARKER)) {
     const fnStart = source.indexOf('\tfunction exposedNamespaces() {');
     if (fnStart === -1) {
-      console.error(`[patch-expose] could not locate exposedNamespaces() in ${bundlePath}`);
+      // DSH ≥ 0.1.0-rc.7 已把设置暴露改为注册表驱动, 没有这个函数也不需要补丁。
+      console.log(
+        `[patch-expose] ${bundlePath}: DSH ≥ 0.1.0-rc.7 已原生支持 registry-driven 设置暴露, 无需补丁 — skipped.`,
+      );
       continue;
     }
     const fnEnd = source.indexOf('\t}', fnStart);
