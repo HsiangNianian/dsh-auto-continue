@@ -125,12 +125,12 @@ dsh web
 
 > Switching from a manual install to `dsh plugin add`? Remove the manual `insert` entry first — the bundle patch registers the row and a duplicate would conflict.
 
-> **Known DSH limitation (0.1.0-rc.6):** the web settings surface only exposes
-> namespaces on a hardcoded allowlist in the installed `@deepseek-ai/dsh-host-apiproxy`
-> bundle. Until upstream moves exposure into `settings.register()`, one idempotent
-> vendor patch makes exposure **registry-driven** — every namespace a plugin
-> registers (this one or any other) becomes visible, with no plugin-specific
-> strings anywhere. Run it once, and re-run after reinstalling dsh:
+> **Note (DSH ≥ 0.1.0-rc.7):** upstream made settings exposure **registry-driven**
+> — every namespace a plugin registers is served to the web settings surface,
+> so the settings card just works, no vendor patch needed. Only DSH 0.1.0-rc.6
+> and earlier gate exposure behind a hardcoded allowlist in
+> `@deepseek-ai/dsh-host-apiproxy`; on those versions, run the idempotent
+> vendor patch once (and re-run after reinstalling dsh):
 >
 > ```sh
 > npx --yes --package dsh-client-auto-continue patch-expose
@@ -144,7 +144,7 @@ dsh web
 > own. If you installed from this repository instead, the same script is
 > `node scripts/patch-expose.mjs` at the repo root. The auto-continue engine
 > itself works without this patch — it only gates the GUI settings section;
-> until then, configure everything directly in `~/.dsh/settings.yaml`
+> on rc.6 and earlier, configure everything directly in `~/.dsh/settings.yaml`
 > (see [Configuration](#configuration)).
 
 ### Verify & uninstall

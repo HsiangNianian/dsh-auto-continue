@@ -72,16 +72,15 @@ export function apply(ctx: ClientContext): void {
 
   // Plugin configuration card: one staged form over the `auto-continue`
   // settings namespace, contributed to the plugin-configuration section
-  // (Settings → Plugins). Registered through the public `settings.plugin.item`
-  // slot — no hardcoded section order, label or path anywhere — so the card
-  // shows up in the plugin list like any other plugin's config card.
+  // (Settings → Plugins). Since DSH 0.1.0-rc.7 `settings.plugin.item` is a
+  // keyed slot dispatched by the settings namespace it edits, so the entry
+  // registers with `key` (the namespace), like the official cards.
   const controller = new AutoContinueSettingsCardController(scope);
   ctx.slots.inject('settings.plugin.item', () =>
     ctx.slots.register(
       {
         name: 'settings.plugin.item',
-        id: 'auto-continue',
-        order: 90,
+        key: SETTINGS_NS,
         locale: NS,
         inject: () => controller.inject(),
       },
