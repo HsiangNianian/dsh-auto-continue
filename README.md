@@ -127,27 +127,7 @@ dsh web
 
 > Switching from a manual install to `dsh plugin add`? Remove the manual `insert` entry first — the bundle patch registers the row and a duplicate would conflict.
 
-> **Note (DSH ≥ 0.1.0-rc.7):** upstream made settings exposure **registry-driven**
-> — every namespace a plugin registers is served to the web settings surface,
-> so the settings card just works, no vendor patch needed. Only DSH 0.1.0-rc.6
-> and earlier gate exposure behind a hardcoded allowlist in
-> `@deepseek-ai/dsh-host-apiproxy`; on those versions, run the idempotent
-> vendor patch once (and re-run after reinstalling dsh):
->
-> ```sh
-> npx --yes --package dsh-client-auto-continue patch-expose
-> dsh web
-> ```
->
-> The patch script ships inside the npm package as a `bin` (works from any
-> directory in a fresh environment — no repo clone, no profile-path guessing)
-> and covers every reachable dsh installation: the profile-linked copy, a
-> global `npm i -g @deepseek-ai/dsh` install, and the invoking directory's
-> own. If you installed from this repository instead, the same script is
-> `node scripts/patch-expose.mjs` at the repo root. The auto-continue engine
-> itself works without this patch — it only gates the GUI settings section;
-> on rc.6 and earlier, configure everything directly in `~/.dsh/settings.yaml`
-> (see [Configuration](#configuration)).
+> **Settings exposure:** since DSH 0.1.0-rc.7 the web settings surface is **registry-driven** — every namespace a plugin registers is served, so the settings card works out of the box, no vendor patch needed (the plugin requires rc.7+, see Quick Start).
 
 ### Verify & uninstall
 
