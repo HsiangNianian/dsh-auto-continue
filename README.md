@@ -201,9 +201,9 @@ auto-continue:
 | Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |
 | Short-sentence threshold | `8` | Consecutive short sentences with no tool call in between trip the loop guard |
 | Same-tool repeat count | `4` | Consecutive identical tool calls trip the loop guard |
-| Loop text | `(检测到你可能陷入循环…)` | Text sent after the loop guard restarts a turn; `{tool}` placeholder |
-| Guard text (unconfirmed result) | `(上一步工具「{tool}」可能未完成…)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
-| Guard text (tool succeeded) | `(上一步工具「{tool}」已完成…)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
+| Loop text | `(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)` | Text sent after the loop guard restarts a turn; `{tool}` placeholder |
+| Guard text (unconfirmed result) | `(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
+| Guard text (tool succeeded) | `(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
 | Cooldown (ms) | `20000` | Min interval between auto-continues per session (failed attempts count too) |
 | Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
