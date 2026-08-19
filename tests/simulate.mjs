@@ -90,6 +90,7 @@ const exports = handoff.factory(stubRequire);
 class FakeApi {
   constructor() {
     this.prompts = [];
+    this.cancels = [];
     this.listCalls = 0;
     this.historyCalls = [];
     this.sessionRows = [];
@@ -136,6 +137,10 @@ class FakeApi {
     },
     prompt: async (req) => {
       this.prompts.push(req);
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+    cancel: async (req) => {
+      this.cancels.push(req.sessionId);
       return { result: { ok: true, value: { accepted: true } } };
     },
   };
@@ -818,4 +823,138 @@ console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌
   check('未发送', api.prompts.length === 0);
   await sleep(50);
 }
+
+// ---------- 测试 29: loop guard — 短句空转触发打断并重启 ----------
+{
+  console.log('测试 29: 短句空转 → 打断 + 重启(loop 文本)');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopShortCount: 3, graceMs: 100, cooldownMs: 300, maxConsecutive: 3 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const short = (seq, text) => ({
+    type: 'session/event',
+    sessionId: 's1',
+    event: {
+      type: 'assistant/message', seq, time: Date.now(),
+      data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } },
+    },
+  });
+  api.pushMux(short(10, 'Let me read.'));
+  api.pushMux(short(11, 'Let me read it.'));
+  api.pushMux(short(12, 'Let me read now.'));
+  await sleep(150); // cancel 异步落定
+  check('已调用 cancel', api.cancels.length === 1);
+  check('cancel 目标会话', api.cancels[0] === 's1');
+  // 打断后的 aborted 带来源标记 → 用 loop 文本重启
+  api.pushMux(turnEnd('s1', 1, { kind: 'aborted', reason: { kind: 'human' } }));
+  await sleep(400); // 宽限 100ms + 余量
+  check('已重启发送', api.prompts.length === 1);
+  check('使用 loop 文本', api.prompts[0]?.content?.[0]?.text.includes('陷入循环'));
+  check('looped 统计=1', exports.readTodayStats().looped === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 30: loop guard — 相同工具连续调用触发打断 ----------
+{
+  console.log('测试 30: 相同工具连续调用 → 打断');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) {
+    api.pushMux({
+      type: 'session/event',
+      sessionId: 's1',
+      event: { type: 'tool/call', seq: 20 + i, time: Date.now(), data: { turn: 1, step: 1, name: 'read', callId: 'c' + i, arguments: '{}' } },
+    });
+  }
+  await sleep(150);
+  check('已调用 cancel', api.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 31: loop guard — 长句/不同工具不触发 ----------
+{
+  console.log('测试 31: 长句与不同工具 → 不触发');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopShortCount: 3, loopToolRepeat: 3, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const msg = (seq, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: { type: 'assistant/message', seq, time: Date.now(), data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+  });
+  // 短句 + 长句交替 → 短句计数被长句重置
+  api.pushMux(msg(10, 'Let me read.'));
+  api.pushMux(msg(11, '好的, 现在开始仔细分析这份文件的完整结构和每个部分的作用, 以及它们之间的相互关系。'));
+  api.pushMux(msg(12, 'Let me read.'));
+  api.pushMux(msg(13, 'Let me read it.'));
+  // 不同工具 → 工具计数重置
+  api.pushMux({ type: 'session/event', sessionId: 's1', event: { type: 'tool/call', seq: 20, time: Date.now(), data: { turn: 1, step: 1, name: 'read', callId: 'c1', arguments: '{}' } } });
+  api.pushMux({ type: 'session/event', sessionId: 's1', event: { type: 'tool/call', seq: 21, time: Date.now(), data: { turn: 1, step: 1, name: 'grep', callId: 'c2', arguments: '{}' } } });
+  await sleep(150);
+  check('未调用 cancel', api.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 32: loop guard — 关闭开关 → 不触发 ----------
+{
+  console.log('测试 32: loopGuard 关闭 → 不触发');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopGuard: false, loopShortCount: 2, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const short = (seq, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: { type: 'assistant/message', seq, time: Date.now(), data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+  });
+  api.pushMux(short(10, 'Let me read.'));
+  api.pushMux(short(11, 'Let me read it.'));
+  api.pushMux(short(12, 'Let me read now.'));
+  await sleep(150);
+  check('未调用 cancel', api.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 33: loop guard — 打断受冷却, 用户停止不误重启 ----------
+{
+  console.log('测试 33: 打断冷却与用户停止区分');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopShortCount: 2, graceMs: 100, cooldownMs: 300, maxConsecutive: 3 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const short = (seq, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: { type: 'assistant/message', seq, time: Date.now(), data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+  });
+  api.pushMux(short(10, 'Let me read.'));
+  api.pushMux(short(11, 'Let me read it.'));
+  await sleep(120);
+  check('已调用 cancel', api.cancels.length === 1);
+  // 打断后立刻再来短句(冷却期内)→ 不再打断
+  api.pushMux(short(12, 'Let me read now.'));
+  api.pushMux(short(13, 'Let me read.'));
+  await sleep(120);
+  check('冷却期内未重复打断', api.cancels.length === 1);
+  // 冷却过后新回合又循环 → 再次打断
+  await sleep(400);
+  api.pushMux(turnStart('s1', 2));
+  await sleep(30);
+  api.pushMux(short(20, 'Let me read.'));
+  api.pushMux(short(21, 'Let me read it.'));
+  await sleep(150);
+  check('冷却后再次打断', api.cancels.length === 2);
+  await sleep(50);
+}
+
 process.exit(failures === 0 ? 0 : 1);

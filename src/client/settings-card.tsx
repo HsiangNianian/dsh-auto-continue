@@ -54,6 +54,11 @@ export interface AutoContinueSettingsCardState extends CardShell {
   backoffFactor: CardFieldState;
   backoffMaxMs: CardFieldState;
   notify: CardFieldState;
+  loopGuard: CardFieldState;
+  loopShortChars: CardFieldState;
+  loopShortCount: CardFieldState;
+  loopToolRepeat: CardFieldState;
+  loopText: CardFieldState;
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -93,6 +98,11 @@ export class AutoContinueSettingsCardController {
       numberField('backoffFactor', 1),
       numberField('backoffMaxMs', 0),
       booleanField('notify'),
+      booleanField('loopGuard'),
+      numberField('loopShortChars', 1),
+      numberField('loopShortCount', 2),
+      numberField('loopToolRepeat', 2),
+      textField('loopText'),
     ]);
     this.store = this.form.bind(() => this.projection(), createSnapshotStore);
   }
@@ -119,6 +129,11 @@ export class AutoContinueSettingsCardController {
       backoffFactor: this.form.field('backoffFactor'),
       backoffMaxMs: this.form.field('backoffMaxMs'),
       notify: this.form.field('notify'),
+      loopGuard: this.form.field('loopGuard'),
+      loopShortChars: this.form.field('loopShortChars'),
+      loopShortCount: this.form.field('loopShortCount'),
+      loopToolRepeat: this.form.field('loopToolRepeat'),
+      loopText: this.form.field('loopText'),
     };
   }
 
@@ -286,7 +301,7 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
     return () => clearInterval(timer);
   }, []);
   const stats = readTodayStats();
-  const hasStats = stats.sent + stats.skipped + stats.recovered + stats.failed + stats.gaveUp > 0;
+  const hasStats = stats.sent + stats.skipped + stats.recovered + stats.failed + stats.gaveUp + stats.looped > 0;
   const codes = Object.entries(stats.byCode)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
@@ -319,6 +334,7 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
               <div><dt>{t('stats.failed')}</dt><dd>{stats.failed}</dd></div>
               <div><dt>{t('stats.skipped')}</dt><dd>{stats.skipped}</dd></div>
               <div><dt>{t('stats.gaveUp')}</dt><dd>{stats.gaveUp}</dd></div>
+              <div><dt>{t('stats.looped')}</dt><dd>{stats.looped}</dd></div>
             </dl>
             {codes.length > 0 ? (
               <div className="dshAcCodes">
@@ -576,6 +592,54 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.notify}
         onEdit={(text) => props.edit('notify', text)}
         onReset={() => props.resetField('notify')}
+      />
+      <BooleanField
+        id="auto-continue-loop-guard"
+        label={t('field.loopGuard')}
+        hint={t('field.loopGuardHint')}
+        {...shared}
+        {...state.loopGuard}
+        onEdit={(text) => props.edit('loopGuard', text)}
+        onReset={() => props.resetField('loopGuard')}
+      />
+      <ValueField
+        id="auto-continue-loop-short-chars"
+        label={t('field.loopShortChars')}
+        hint={t('field.loopShortCharsHint')}
+        numeric
+        {...shared}
+        {...state.loopShortChars}
+        onEdit={(text) => props.edit('loopShortChars', text)}
+        onReset={() => props.resetField('loopShortChars')}
+      />
+      <ValueField
+        id="auto-continue-loop-short-count"
+        label={t('field.loopShortCount')}
+        hint={t('field.loopShortCountHint')}
+        numeric
+        {...shared}
+        {...state.loopShortCount}
+        onEdit={(text) => props.edit('loopShortCount', text)}
+        onReset={() => props.resetField('loopShortCount')}
+      />
+      <ValueField
+        id="auto-continue-loop-tool-repeat"
+        label={t('field.loopToolRepeat')}
+        hint={t('field.loopToolRepeatHint')}
+        numeric
+        {...shared}
+        {...state.loopToolRepeat}
+        onEdit={(text) => props.edit('loopToolRepeat', text)}
+        onReset={() => props.resetField('loopToolRepeat')}
+      />
+      <ValueField
+        id="auto-continue-loop-text"
+        label={t('field.loopText')}
+        hint={t('field.loopTextHint')}
+        {...shared}
+        {...state.loopText}
+        onEdit={(text) => props.edit('loopText', text)}
+        onReset={() => props.resetField('loopText')}
       />
       <LivePanels t={t} />
     </SettingsCard>

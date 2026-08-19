@@ -43,7 +43,8 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
-- **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips and give-ups, broken down by error code, with a one-click reset
+- **Loop guard** — watches **running** turns too: many consecutive short model messages with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly, trips the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds and the loop text are configurable
+- **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips, give-ups and loop breaks, broken down by error code, with a one-click reset
 - **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error; the browser asks for permission on first use, and nothing is shown again after a denial
 
 It watches the live event streams and reacts to:
@@ -172,6 +173,11 @@ auto-continue:
   backoffFactor: 2
   backoffMaxMs: 300000
   notify: false
+  loopGuard: true
+  loopShortChars: 40
+  loopShortCount: 8
+  loopToolRepeat: 4
+  loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)'
 ```
 
 **How the card works:**
@@ -191,6 +197,11 @@ auto-continue:
 | Continue text | `继续` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `继续` | Text sent when the output token ceiling is reached (same placeholders) |
 | Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
+| Loop guard | `on` | Detect a running turn spinning in place and restart it (see What It Does) |
+| Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |
+| Short-sentence threshold | `8` | Consecutive short sentences with no tool call in between trip the loop guard |
+| Same-tool repeat count | `4` | Consecutive identical tool calls trip the loop guard |
+| Loop text | `(检测到你可能陷入循环…)` | Text sent after the loop guard restarts a turn; `{tool}` placeholder |
 | Guard text (unconfirmed result) | `(上一步工具「{tool}」可能未完成…)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
 | Guard text (tool succeeded) | `(上一步工具「{tool}」已完成…)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
@@ -228,7 +239,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 29 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 34 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

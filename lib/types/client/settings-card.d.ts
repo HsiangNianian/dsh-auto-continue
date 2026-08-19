@@ -23,6 +23,11 @@ export interface AutoContinueSettingsCardState extends CardShell {
     backoffFactor: CardFieldState;
     backoffMaxMs: CardFieldState;
     notify: CardFieldState;
+    loopGuard: CardFieldState;
+    loopShortChars: CardFieldState;
+    loopShortCount: CardFieldState;
+    loopToolRepeat: CardFieldState;
+    loopText: CardFieldState;
 }
 /** The registration-side face the card's slot entry injects. */
 export interface AutoContinueSettingsCardFace extends CardActions {

@@ -51,6 +51,16 @@ export interface AutoContinueSettings {
     notify?: boolean;
     /** Globally pause auto-continue: no live or scan send, queued pending sends cancelled. */
     paused?: boolean;
+    /** Loop guard: detect a running turn spinning in place (short talk without tools, or the same tool repeating) and restart it. */
+    loopGuard?: boolean;
+    /** A model message shorter than this many chars counts as a "short sentence" (loop signal). */
+    loopShortChars?: number;
+    /** Consecutive short sentences with no tool call in between trip the loop guard. */
+    loopShortCount?: number;
+    /** Consecutive identical tool calls trip the loop guard. */
+    loopToolRepeat?: number;
+    /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
+    loopText?: string;
 }
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;
@@ -144,6 +154,8 @@ export interface DayStats {
     failed: number;
     /** 达到连续上限而停止的次数(按停止事件计)。 */
     gaveUp: number;
+    /** loop guard 打断并重启回合的次数。 */
+    looped: number;
     /** 按错误码计数的失败分布。 */
     byCode: Record<string, number>;
 }
@@ -171,6 +183,21 @@ export declare class AutoContinueRunner {
     private runMux;
     private runHost;
     private onMuxFrame;
+    /** 从 assistant/message 事件提取纯文本。 */
+    private assistantText;
+    /**
+     * loop guard 信号 1(空转): 连续短句且期间无工具调用。
+     * 短句 = 模型消息文本短于 loopShortChars; 长句或工具调用都会重置计数。
+     */
+    private onAssistantMessage;
+    /** 两个循环信号的公共检查; 命中且本回合未打断过则打断。 */
+    private checkLoop;
+    /**
+     * 打断运行中的回合: cancel(带来源标记)+ 进冷却。
+     * 随后的 turn/end aborted 会因 loopCancelled 走「可恢复中断」路径,
+     * 用 loopText 重启回合——不会与用户手动停止混淆。
+     */
+    private interruptLoop;
     private onSessionEvent;
     private onHostFrame;
     /** 回合失败入口: 先做错误分类, 永久性失败跳过并通知, 临时性失败走正常调度。 */

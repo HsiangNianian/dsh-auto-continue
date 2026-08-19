@@ -51,6 +51,17 @@ export declare const zh: {
     'stats.recovered': string;
     'stats.failed': string;
     'stats.gaveUp': string;
+    'stats.looped': string;
+    'field.loopGuard': string;
+    'field.loopGuardHint': string;
+    'field.loopShortChars': string;
+    'field.loopShortCharsHint': string;
+    'field.loopShortCount': string;
+    'field.loopShortCountHint': string;
+    'field.loopToolRepeat': string;
+    'field.loopToolRepeatHint': string;
+    'field.loopText': string;
+    'field.loopTextHint': string;
     'stats.byCode': string;
     'stats.empty': string;
     'stats.reset': string;

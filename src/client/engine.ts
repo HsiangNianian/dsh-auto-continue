@@ -60,6 +60,16 @@ export interface AutoContinueSettings {
   notify?: boolean;
   /** Globally pause auto-continue: no live or scan send, queued pending sends cancelled. */
   paused?: boolean;
+  /** Loop guard: detect a running turn spinning in place (short talk without tools, or the same tool repeating) and restart it. */
+  loopGuard?: boolean;
+  /** A model message shorter than this many chars counts as a "short sentence" (loop signal). */
+  loopShortChars?: number;
+  /** Consecutive short sentences with no tool call in between trip the loop guard. */
+  loopShortCount?: number;
+  /** Consecutive identical tool calls trip the loop guard. */
+  loopToolRepeat?: number;
+  /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
+  loopText?: string;
 }
 
 /** Fully resolved configuration (built-in defaults + user overrides). */
@@ -86,6 +96,11 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   backoffMaxMs: 300000,
   notify: false,
   paused: false,
+  loopGuard: true,
+  loopShortChars: 40,
+  loopShortCount: 8,
+  loopToolRepeat: 4,
+  loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
 };
 
 function numberOr(value: unknown, fallback: number): number {
@@ -135,6 +150,14 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     backoffMaxMs: numberOr(value.backoffMaxMs, DEFAULT_CONFIG.backoffMaxMs),
     notify: booleanOr(value.notify, DEFAULT_CONFIG.notify),
     paused: booleanOr(value.paused, DEFAULT_CONFIG.paused),
+    loopGuard: booleanOr(value.loopGuard, DEFAULT_CONFIG.loopGuard),
+    loopShortChars: Math.max(1, numberOr(value.loopShortChars, DEFAULT_CONFIG.loopShortChars)),
+    loopShortCount: Math.max(2, numberOr(value.loopShortCount, DEFAULT_CONFIG.loopShortCount)),
+    loopToolRepeat: Math.max(2, numberOr(value.loopToolRepeat, DEFAULT_CONFIG.loopToolRepeat)),
+    loopText:
+      typeof value.loopText === 'string' && value.loopText.trim() !== ''
+        ? value.loopText
+        : DEFAULT_CONFIG.loopText,
   };
 }
 
@@ -462,6 +485,8 @@ export interface DayStats {
   failed: number;
   /** 达到连续上限而停止的次数(按停止事件计)。 */
   gaveUp: number;
+  /** loop guard 打断并重启回合的次数。 */
+  looped: number;
   /** 按错误码计数的失败分布。 */
   byCode: Record<string, number>;
 }
@@ -506,12 +531,13 @@ function bumpStat(delta: {
   recovered?: number;
   failed?: number;
   gaveUp?: number;
+  looped?: number;
   code?: string;
 }): void {
   const list = readStats();
   let day = list.find((item) => item.date === todayKey());
   if (day === undefined) {
-    day = { date: todayKey(), sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, byCode: {} };
+    day = { date: todayKey(), sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, looped: 0, byCode: {} };
     list.unshift(day);
   }
   if (delta.sent !== undefined) day.sent += delta.sent;
@@ -519,6 +545,7 @@ function bumpStat(delta: {
   if (delta.recovered !== undefined) day.recovered += delta.recovered;
   if (delta.failed !== undefined) day.failed += delta.failed;
   if (delta.gaveUp !== undefined) day.gaveUp += delta.gaveUp;
+  if (delta.looped !== undefined) day.looped += delta.looped;
   if (delta.code !== undefined) day.byCode[delta.code] = (day.byCode[delta.code] ?? 0) + 1;
   writeStats(list.slice(0, STATS_MAX_DAYS));
 }
@@ -528,7 +555,7 @@ export function readTodayStats(): DayStats {
   const today = todayKey();
   const found = readStats().find((item) => item.date === today);
   return (
-    found ?? { date: today, sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, byCode: {} }
+    found ?? { date: today, sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, looped: 0, byCode: {} }
   );
 }
 
@@ -567,6 +594,14 @@ interface SessionState {
   lastTurn: number | undefined;
   /** 我们最近一次自动发送的时间戳; 0 = 没有待确认的恢复。 */
   pendingRecoveryAt: number;
+  /** 当前连续短句数(loop guard 信号 1: 空转)。 */
+  shortRun: number;
+  /** 当前连续相同工具调用(loop guard 信号 2: 死循环)。 */
+  toolRun: { name: string; count: number } | undefined;
+  /** 本回合已触发过 loop guard(防重复打断)。 */
+  loopFired: boolean;
+  /** 我们主动 cancel 过本回合(区分用户停止)。 */
+  loopCancelled: boolean;
 }
 
 const freshState = (): SessionState => ({
@@ -584,6 +619,10 @@ const freshState = (): SessionState => ({
   lastToolResult: undefined,
   lastTurn: undefined,
   pendingRecoveryAt: 0,
+  shortRun: 0,
+  toolRun: undefined,
+  loopFired: false,
+  loopCancelled: false,
 });
 
 /** 自动发送后, 在该窗口内出现的回合结束才计入恢复统计。 */
@@ -730,12 +769,23 @@ export class AutoContinueRunner {
             const state = this.state(frame.sessionId);
             state.lastTool = name;
             state.lastToolResult = 'pending'; // 已发起, 尚未见结果
+            // loop guard 信号 2: 连续相同工具调用(工具调用 = 有进展, 重置短句信号)
+            state.shortRun = 0;
+            if (state.toolRun?.name === name) {
+              state.toolRun.count += 1;
+            } else {
+              state.toolRun = { name, count: 1 };
+            }
+            this.checkLoop(frame.sessionId, state);
           }
         } else if (frame.event.type === 'tool/result') {
           const state = this.state(frame.sessionId);
           if (state.lastToolResult === 'pending') {
             state.lastToolResult = toolResultFacts(frame.event.data);
           }
+        } else if (frame.event.type === 'assistant/message') {
+          const state = this.state(frame.sessionId);
+          this.onAssistantMessage(frame.sessionId, state, frame.event);
         }
         this.onSessionEvent(frame.sessionId, frame.event);
         break;
@@ -751,6 +801,77 @@ export class AutoContinueRunner {
     }
   }
 
+  /** 从 assistant/message 事件提取纯文本。 */
+  private assistantText(event: SessionEvent<'assistant/message'>): string {
+    const content = event.data.message.content;
+    if (!Array.isArray(content)) return '';
+    return content
+      .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+      .map((part) => part.text)
+      .join('');
+  }
+
+  /**
+   * loop guard 信号 1(空转): 连续短句且期间无工具调用。
+   * 短句 = 模型消息文本短于 loopShortChars; 长句或工具调用都会重置计数。
+   */
+  private onAssistantMessage(
+    sessionId: SessionId,
+    state: SessionState,
+    event: SessionEvent<'assistant/message'>,
+  ): void {
+    if (!this.getConfig().loopGuard) return;
+    const text = this.assistantText(event);
+    if (text.trim().length < this.getConfig().loopShortChars) {
+      state.shortRun += 1;
+    } else {
+      state.shortRun = 0; // 长句 = 有实际输出, 重置
+    }
+    this.checkLoop(sessionId, state);
+  }
+
+  /** 两个循环信号的公共检查; 命中且本回合未打断过则打断。 */
+  private checkLoop(sessionId: SessionId, state: SessionState): void {
+    if (!this.getConfig().loopGuard) return;
+    if (state.loopFired) return;
+    if (!state.running) return; // 只干预运行中的回合
+    const config = this.getConfig();
+    if (state.shortRun >= config.loopShortCount) {
+      this.log(`检测到空转循环 ${sessionId}: 连续 ${state.shortRun} 条短句且无工具调用`);
+      void this.interruptLoop(sessionId, state);
+    } else if (state.toolRun !== undefined && state.toolRun.count >= config.loopToolRepeat) {
+      this.log(`检测到工具死循环 ${sessionId}: 「${state.toolRun.name}」连续 ${state.toolRun.count} 次`);
+      void this.interruptLoop(sessionId, state);
+    }
+  }
+
+  /**
+   * 打断运行中的回合: cancel(带来源标记)+ 进冷却。
+   * 随后的 turn/end aborted 会因 loopCancelled 走「可恢复中断」路径,
+   * 用 loopText 重启回合——不会与用户手动停止混淆。
+   */
+  private async interruptLoop(sessionId: SessionId, state: SessionState): Promise<void> {
+    if (state.loopFired) return;
+    // 打断本身受冷却约束: 距上次打断/发送太近时不再打断, 防止反复打断刷屏
+    if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) {
+      this.log(`跳过循环打断 ${sessionId}: 处于冷却期`);
+      return;
+    }
+    state.loopFired = true;
+    state.loopCancelled = true;
+    state.lastAttemptAt = Date.now(); // 打断计入冷却, 防反复打断
+    bumpStat({ looped: 1 });
+    try {
+      const response = await this.api.sessions.cancel({ sessionId });
+      this.log(
+        `已打断循环 ${sessionId}: ${response.result.ok ? 'cancel 已受理' : 'cancel 被拒绝'}`,
+      );
+    } catch (error) {
+      this.log(`打断循环失败 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      state.loopCancelled = false;
+    }
+  }
+
   private onSessionEvent(sessionId: SessionId, event: SessionEvent): void {
     const state = this.state(sessionId);
     switch (event.type) {
@@ -759,6 +880,11 @@ export class AutoContinueRunner {
         // 新回合开始: 清空上一步工具调用状态, 避免跨回合误用护栏
         state.lastTool = undefined;
         state.lastToolResult = undefined;
+        // loop guard 状态按回合重置
+        state.shortRun = 0;
+        state.toolRun = undefined;
+        state.loopFired = false;
+        state.loopCancelled = false;
         this.cancelPending(sessionId, '宿主自行开启新回合');
         break;
       case 'turn/end': {
@@ -771,9 +897,22 @@ export class AutoContinueRunner {
           state.lastFailure = undefined;
           this.noteRecovery(sessionId, 'completed');
         } else if (reason.kind === 'aborted') {
-          // 用户主动停止: 不自动继续, 视为用户介入
-          state.consecutive = 0;
-          state.pendingRecoveryAt = 0;
+          if (state.loopCancelled) {
+            // 我们自己的 loop guard 打断: 视为可恢复中断, 用循环提示文本重启回合。
+            // 重启不受冷却限制(冷却约束的是"再次打断")。
+            state.loopCancelled = false;
+            state.loopFired = false;
+            state.consecutive = 0;
+            state.pendingRecoveryAt = 0;
+            state.shortRun = 0;
+            state.toolRun = undefined;
+            state.lastAttemptAt = 0;
+            this.schedule(sessionId, 'loop:aborted');
+          } else {
+            // 用户主动停止: 不自动继续, 视为用户介入
+            state.consecutive = 0;
+            state.pendingRecoveryAt = 0;
+          }
         } else if (reason.kind === 'blocked') {
           // 策略拒绝: 不自动继续
         } else if (reason.kind === 'interrupted') {
@@ -962,7 +1101,11 @@ export class AutoContinueRunner {
       void this.fire(sessionId, reason);
     }, config.graceMs);
     state.pendingTimer = timer;
-    const template = reason.includes('max-tokens') ? config.continueTextMaxTokens : config.continueText;
+    const template = reason.startsWith('loop:')
+      ? config.loopText
+      : reason.includes('max-tokens')
+        ? config.continueTextMaxTokens
+        : config.continueText;
     this.log(
       `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${template}」`,
     );
@@ -1005,7 +1148,11 @@ export class AutoContinueRunner {
       return;
     }
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
-    const template = reason.includes('max-tokens') ? config.continueTextMaxTokens : config.continueText;
+    const template = reason.startsWith('loop:')
+      ? config.loopText
+      : reason.includes('max-tokens')
+        ? config.continueTextMaxTokens
+        : config.continueText;
     let sessionTitle: string | undefined;
     if (template.includes('{sessionTitle}')) {
       sessionTitle = this.titles.get(sessionId);

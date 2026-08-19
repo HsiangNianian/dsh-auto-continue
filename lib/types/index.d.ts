@@ -47,6 +47,16 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     notify: z<boolean, boolean>;
     /** Globally pause auto-continue: no live or scan send. */
     paused: z<boolean, boolean>;
+    /** Loop guard: detect a running turn spinning in place and restart it. */
+    loopGuard: z<boolean, boolean>;
+    /** A model message shorter than this many chars counts as a short sentence (loop signal). */
+    loopShortChars: z<number, number>;
+    /** Consecutive short sentences with no tool call in between trip the loop guard. */
+    loopShortCount: z<number, number>;
+    /** Consecutive identical tool calls trip the loop guard. */
+    loopToolRepeat: z<number, number>;
+    /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
+    loopText: z<string, string>;
 }>, Schemastery.ObjectT<{
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
@@ -86,6 +96,16 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     notify: z<boolean, boolean>;
     /** Globally pause auto-continue: no live or scan send. */
     paused: z<boolean, boolean>;
+    /** Loop guard: detect a running turn spinning in place and restart it. */
+    loopGuard: z<boolean, boolean>;
+    /** A model message shorter than this many chars counts as a short sentence (loop signal). */
+    loopShortChars: z<number, number>;
+    /** Consecutive short sentences with no tool call in between trip the loop guard. */
+    loopShortCount: z<number, number>;
+    /** Consecutive identical tool calls trip the loop guard. */
+    loopToolRepeat: z<number, number>;
+    /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
+    loopText: z<string, string>;
 }>>;
 /**
  * Plugin body: register the settings namespace when a settings provider is
