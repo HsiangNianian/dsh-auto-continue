@@ -75,6 +75,8 @@
 
 DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。安装后重启 `dsh web` 即可。
 
+> **要求 DSH ≥ 0.1.0-rc.7** — 新版本通过 keyed 的 `settings.plugin.item` 槽位注册设置卡片; 在 rc.6 及更早版本上插件会加载失败(`list slot ... requires options.id`), 请先升级 dsh。
+
 ### 从 npm 安装(推荐)
 
 已发布为 [`dsh-client-auto-continue`](https://www.npmjs.com/package/dsh-client-auto-continue):

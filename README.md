@@ -75,6 +75,8 @@ All knobs live in the plugin's settings card — see [Configuration](#configurat
 
 DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, restart `dsh web`, done.
 
+> **Requires DSH ≥ 0.1.0-rc.7** — newer versions register the settings card through the keyed `settings.plugin.item` slot; on rc.6 and earlier the plugin fails to load (`list slot ... requires options.id`). Upgrade dsh first.
+
 ### From npm (recommended)
 
 Published as [`dsh-client-auto-continue`](https://www.npmjs.com/package/dsh-client-auto-continue):
