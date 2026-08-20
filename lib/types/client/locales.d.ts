@@ -60,6 +60,8 @@ export declare const zh: {
     'field.loopWindowMsHint': string;
     'field.loopShortCount': string;
     'field.loopShortCountHint': string;
+    'field.loopRepeatText': string;
+    'field.loopRepeatTextHint': string;
     'field.loopToolRepeat': string;
     'field.loopToolRepeatHint': string;
     'field.loopText': string;

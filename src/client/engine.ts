@@ -70,6 +70,8 @@ export interface AutoContinueSettings {
   loopShortCount?: number;
   /** Consecutive identical tool calls with identical arguments AND identical results trip the loop guard. */
   loopToolRepeat?: number;
+  /** Consecutive identical short sentences trip the loop guard (strongest spinning signal). */
+  loopRepeatText?: number;
   /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
   loopText?: string;
 }
@@ -102,6 +104,7 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   loopShortChars: 40,
   loopWindowMs: 30000,
   loopShortCount: 12,
+  loopRepeatText: 4,
   loopToolRepeat: 5,
   loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
 };
@@ -157,6 +160,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     loopShortChars: Math.max(1, numberOr(value.loopShortChars, DEFAULT_CONFIG.loopShortChars)),
     loopWindowMs: Math.max(1000, numberOr(value.loopWindowMs, DEFAULT_CONFIG.loopWindowMs)),
     loopShortCount: Math.max(2, numberOr(value.loopShortCount, DEFAULT_CONFIG.loopShortCount)),
+    loopRepeatText: Math.max(2, numberOr(value.loopRepeatText, DEFAULT_CONFIG.loopRepeatText)),
     loopToolRepeat: Math.max(2, numberOr(value.loopToolRepeat, DEFAULT_CONFIG.loopToolRepeat)),
     loopText:
       typeof value.loopText === 'string' && value.loopText.trim() !== ''
@@ -602,6 +606,10 @@ interface SessionState {
   shortRun: number;
   /** 最后一条短句的时间(时间窗判定用)。 */
   lastShortAt: number;
+  /** 最后一条模型消息的文本(相同文本重复判定用)。 */
+  lastAssistantText: string;
+  /** 连续相同文本消息数(最强空转信号, 不限长度)。 */
+  sameTextRun: number;
   /**
    * 工具重复信号(loop guard 信号 2: 死循环)。
    * 只有「同工具 + 同参数 + 同结果」的连续调用才累计; 参数或结果有变化视为有进展, 计数重置。
@@ -641,6 +649,8 @@ const freshState = (): SessionState => ({
   pendingRecoveryAt: 0,
   shortRun: 0,
   lastShortAt: 0,
+  lastAssistantText: '',
+  sameTextRun: 0,
   toolRun: undefined,
   loopFired: false,
   loopCancelled: false,
@@ -860,7 +870,17 @@ export class AutoContinueRunner {
   ): void {
     if (!this.getConfig().loopGuard) return;
     const text = this.assistantText(event);
-    if (text.trim().length < this.getConfig().loopShortChars) {
+    const trimmed = text.trim();
+    // 相同文本重复(不限长度): 模型反复输出完全相同的消息是最强的循环信号,
+    // 例如 "Let me test variants of the regex..." 连续 7 遍
+    if (trimmed !== '' && trimmed === state.lastAssistantText) {
+      state.sameTextRun += 1;
+    } else {
+      state.lastAssistantText = trimmed;
+      state.sameTextRun = 1;
+    }
+    // 短句计数(长度 < loopShortChars 且落在时间窗内): 空转信号
+    if (trimmed.length < this.getConfig().loopShortChars) {
       const now = Date.now();
       if (now - state.lastShortAt > this.getConfig().loopWindowMs) {
         state.shortRun = 0; // 超过时间窗: 上一次短句太久远, 不算连续
@@ -880,7 +900,10 @@ export class AutoContinueRunner {
     if (state.loopFired) return;
     if (!state.running) return; // 只干预运行中的回合
     const config = this.getConfig();
-    if (state.shortRun >= config.loopShortCount) {
+    if (state.sameTextRun >= config.loopRepeatText) {
+      this.log(`检测到空转循环 ${sessionId}: 连续 ${state.sameTextRun} 条相同消息`);
+      void this.interruptLoop(sessionId, state);
+    } else if (state.shortRun >= config.loopShortCount) {
       this.log(`检测到空转循环 ${sessionId}: 连续 ${state.shortRun} 条短句且无工具调用`);
       void this.interruptLoop(sessionId, state);
     } else if (state.toolRun !== undefined && state.toolRun.count >= config.loopToolRepeat) {
@@ -928,6 +951,8 @@ export class AutoContinueRunner {
         // loop guard 状态按回合重置
         state.shortRun = 0;
         state.lastShortAt = 0;
+        state.lastAssistantText = '';
+        state.sameTextRun = 0;
         state.toolRun = undefined;
         state.loopFired = false;
         state.loopCancelled = false;
@@ -952,6 +977,8 @@ export class AutoContinueRunner {
             state.pendingRecoveryAt = 0;
             state.shortRun = 0;
             state.lastShortAt = 0;
+            state.lastAssistantText = '';
+            state.sameTextRun = 0;
             state.toolRun = undefined;
             state.lastAttemptAt = 0;
             this.schedule(sessionId, 'loop:aborted');

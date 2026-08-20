@@ -1018,4 +1018,50 @@ console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌
   await sleep(50);
 }
 
+
+// ---------- 测试 36: loop guard — 相同短句重复触发(最强信号) ----------
+{
+  console.log('测试 36: 连续相同短句 → 打断');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopRepeatText: 3, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const short = (seq, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: { type: 'assistant/message', seq, time: Date.now(), data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+  });
+  // 同一句话重复 3 遍(即使间隔拉长也不影响——相同短句不依赖时间窗)
+  api.pushMux(short(10, 'Let me test variants of the regex to isolate the unmatched-paren issue.'));
+  await sleep(200);
+  api.pushMux(short(11, 'Let me test variants of the regex to isolate the unmatched-paren issue.'));
+  await sleep(200);
+  api.pushMux(short(12, 'Let me test variants of the regex to isolate the unmatched-paren issue.'));
+  await sleep(150);
+  check('已调用 cancel', api.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 37: loop guard — 相似但不完全相同的短句不触发相同信号 ----------
+{
+  console.log('测试 37: 措辞略有变化的短句 → 相同信号不触发');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopRepeatText: 3, loopShortCount: 99, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const short = (seq, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: { type: 'assistant/message', seq, time: Date.now(), data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+  });
+  api.pushMux(short(10, 'Let me read the region now.'));
+  api.pushMux(short(11, 'Let me read the final region now.'));
+  api.pushMux(short(12, 'Let me read it now.'));
+  await sleep(150);
+  check('未调用 cancel', api.cancels.length === 0);
+  await sleep(50);
+}
+
 process.exit(failures === 0 ? 0 : 1);

@@ -43,7 +43,7 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
-- **Loop guard** — watches **running** turns too: many short model messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress), trips the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
+- **Loop guard** — watches **running** turns too. Three signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips, give-ups and loop breaks, broken down by error code, with a one-click reset
 - **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error; the browser asks for permission on first use, and nothing is shown again after a denial
 
@@ -177,6 +177,7 @@ auto-continue:
   loopShortChars: 40
   loopWindowMs: 30000
   loopShortCount: 12
+  loopRepeatText: 4
   loopToolRepeat: 5
   loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)'
 ```
@@ -202,6 +203,7 @@ auto-continue:
 | Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |
 | Short-sentence window (ms) | `30000` | Consecutive short sentences must land inside this window; normal thinking spread over time is not misjudged |
 | Short-sentence threshold | `12` | Consecutive short sentences inside the window, with no tool call in between, trip the loop guard |
+| Identical message count | `4` | Consecutive identical messages (any length) trip the loop guard — the strongest spinning signal |
 | Same-tool repeat count | `5` | Consecutive calls of the same tool with identical arguments and results trip the loop guard |
 | Loop text | `(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)` | Text sent after the loop guard restarts a turn; `{tool}` placeholder |
 | Guard text (unconfirmed result) | `(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
@@ -241,7 +243,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 36 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 38 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

@@ -61,6 +61,8 @@ export interface AutoContinueSettings {
     loopShortCount?: number;
     /** Consecutive identical tool calls with identical arguments AND identical results trip the loop guard. */
     loopToolRepeat?: number;
+    /** Consecutive identical short sentences trip the loop guard (strongest spinning signal). */
+    loopRepeatText?: number;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText?: string;
 }
