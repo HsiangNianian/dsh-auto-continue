@@ -856,24 +856,85 @@ console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌
   await sleep(50);
 }
 
-// ---------- 测试 30: loop guard — 相同工具连续调用触发打断 ----------
+// ---------- 测试 30: loop guard — 同工具+同参数+同结果连续调用触发打断 ----------
 {
-  console.log('测试 30: 相同工具连续调用 → 打断');
+  console.log('测试 30: 同工具+同参数+同结果连续调用 → 打断');
   const api = new FakeApi();
   api.addSession('s1');
   startPlugin(api, { scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
   await sleep(50);
   api.pushMux(turnStart('s1', 1));
   await sleep(30);
+  const toolResult = (seq, callId, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: {
+      type: 'tool/result', seq, time: Date.now(),
+      data: { turn: 1, step: 1, message: { role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] } },
+    },
+  });
   for (let i = 0; i < 3; i += 1) {
     api.pushMux({
       type: 'session/event',
       sessionId: 's1',
-      event: { type: 'tool/call', seq: 20 + i, time: Date.now(), data: { turn: 1, step: 1, name: 'read', callId: 'c' + i, arguments: '{}' } },
+      event: { type: 'tool/call', seq: 20 + i * 2, time: Date.now(), data: { turn: 1, step: 1, name: 'read', callId: 'c' + i, arguments: '{}' } },
     });
+    api.pushMux(toolResult(21 + i * 2, 'c' + i, 'same output'));
   }
   await sleep(150);
   check('已调用 cancel', api.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 34: loop guard — 同工具同参数但结果不同 → 不触发 ----------
+{
+  console.log('测试 34: 同工具同参数但结果变化 → 不触发(有进展)');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const toolResult = (seq, callId, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: {
+      type: 'tool/result', seq, time: Date.now(),
+      data: { turn: 1, step: 1, message: { role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] } },
+    },
+  });
+  for (let i = 0; i < 4; i += 1) {
+    api.pushMux({
+      type: 'session/event',
+      sessionId: 's1',
+      event: { type: 'tool/call', seq: 20 + i * 2, time: Date.now(), data: { turn: 1, step: 1, name: 'read', callId: 'c' + i, arguments: '{}' } },
+    });
+    api.pushMux(toolResult(21 + i * 2, 'c' + i, `output changed ${i}`));
+  }
+  await sleep(150);
+  check('未调用 cancel', api.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 35: loop guard — 短句超出时间窗 → 不触发 ----------
+{
+  console.log('测试 35: 短句间隔超过时间窗 → 不触发(正常思考)');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, loopShortCount: 3, loopWindowMs: 1000, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnStart('s1', 1));
+  await sleep(30);
+  const short = (seq, text) => ({
+    type: 'session/event', sessionId: 's1',
+    event: { type: 'assistant/message', seq, time: Date.now(), data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text }] } } },
+  });
+  // 每条短句间隔 1500ms > 时间窗 1000ms → 计数始终被重置
+  api.pushMux(short(10, 'Let me read.'));
+  await sleep(1500);
+  api.pushMux(short(11, 'Let me read it.'));
+  await sleep(1500);
+  api.pushMux(short(12, 'Let me read now.'));
+  await sleep(150);
+  check('未调用 cancel', api.cancels.length === 0);
   await sleep(50);
 }
 

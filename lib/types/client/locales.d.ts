@@ -56,6 +56,8 @@ export declare const zh: {
     'field.loopGuardHint': string;
     'field.loopShortChars': string;
     'field.loopShortCharsHint': string;
+    'field.loopWindowMs': string;
+    'field.loopWindowMsHint': string;
     'field.loopShortCount': string;
     'field.loopShortCountHint': string;
     'field.loopToolRepeat': string;

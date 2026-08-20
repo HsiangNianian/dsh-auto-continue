@@ -55,9 +55,11 @@ export interface AutoContinueSettings {
     loopGuard?: boolean;
     /** A model message shorter than this many chars counts as a "short sentence" (loop signal). */
     loopShortChars?: number;
-    /** Consecutive short sentences with no tool call in between trip the loop guard. */
+    /** Consecutive short sentences within this window (ms) with no tool call in between trip the loop guard. */
+    loopWindowMs?: number;
+    /** Consecutive short sentences trip the loop guard. */
     loopShortCount?: number;
-    /** Consecutive identical tool calls trip the loop guard. */
+    /** Consecutive identical tool calls with identical arguments AND identical results trip the loop guard. */
     loopToolRepeat?: number;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText?: string;
@@ -186,8 +188,9 @@ export declare class AutoContinueRunner {
     /** 从 assistant/message 事件提取纯文本。 */
     private assistantText;
     /**
-     * loop guard 信号 1(空转): 连续短句且期间无工具调用。
-     * 短句 = 模型消息文本短于 loopShortChars; 长句或工具调用都会重置计数。
+     * loop guard 信号 1(空转): 时间窗内连续短句且期间无工具调用。
+     * 短句 = 模型消息文本短于 loopShortChars; 长句、工具调用、或短句间隔超过
+     * loopWindowMs(正常思考的短文本散布在长时间里)都会重置计数。
      */
     private onAssistantMessage;
     /** 两个循环信号的公共检查; 命中且本回合未打断过则打断。 */

@@ -60,10 +60,12 @@ export const AutoContinueSchema = z.object({
   loopGuard: z.boolean().default(true),
   /** A model message shorter than this many chars counts as a short sentence (loop signal). */
   loopShortChars: z.natural().min(1).default(40),
-  /** Consecutive short sentences with no tool call in between trip the loop guard. */
-  loopShortCount: z.natural().min(2).default(8),
-  /** Consecutive identical tool calls trip the loop guard. */
-  loopToolRepeat: z.natural().min(2).default(4),
+  /** Consecutive short sentences within this window (ms) with no tool call in between trip the loop guard. */
+  loopWindowMs: z.natural().min(1000).default(30000),
+  /** Consecutive short sentences trip the loop guard. */
+  loopShortCount: z.natural().min(2).default(12),
+  /** Consecutive identical tool calls with identical arguments AND results trip the loop guard. */
+  loopToolRepeat: z.natural().min(2).default(5),
   /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
   loopText: z
     .string()

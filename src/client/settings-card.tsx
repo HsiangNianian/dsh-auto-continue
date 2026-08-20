@@ -57,6 +57,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
   notify: CardFieldState;
   loopGuard: CardFieldState;
   loopShortChars: CardFieldState;
+  loopWindowMs: CardFieldState;
   loopShortCount: CardFieldState;
   loopToolRepeat: CardFieldState;
   loopText: CardFieldState;
@@ -101,6 +102,7 @@ export class AutoContinueSettingsCardController {
       booleanField('notify'),
       booleanField('loopGuard'),
       numberField('loopShortChars', 1),
+      numberField('loopWindowMs', 1000),
       numberField('loopShortCount', 2),
       numberField('loopToolRepeat', 2),
       textField('loopText'),
@@ -132,6 +134,7 @@ export class AutoContinueSettingsCardController {
       notify: this.form.field('notify'),
       loopGuard: this.form.field('loopGuard'),
       loopShortChars: this.form.field('loopShortChars'),
+      loopWindowMs: this.form.field('loopWindowMs'),
       loopShortCount: this.form.field('loopShortCount'),
       loopToolRepeat: this.form.field('loopToolRepeat'),
       loopText: this.form.field('loopText'),
@@ -616,6 +619,16 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.loopShortChars}
         onEdit={(text) => props.edit('loopShortChars', text)}
         onReset={() => props.resetField('loopShortChars')}
+      />
+      <ValueField
+        id="auto-continue-loop-window-ms"
+        label={t('field.loopWindowMs')}
+        hint={t('field.loopWindowMsHint')}
+        numeric
+        {...shared}
+        {...state.loopWindowMs}
+        onEdit={(text) => props.edit('loopWindowMs', text)}
+        onReset={() => props.resetField('loopWindowMs')}
       />
       <ValueField
         id="auto-continue-loop-short-count"

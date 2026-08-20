@@ -51,9 +51,11 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopGuard: z<boolean, boolean>;
     /** A model message shorter than this many chars counts as a short sentence (loop signal). */
     loopShortChars: z<number, number>;
-    /** Consecutive short sentences with no tool call in between trip the loop guard. */
+    /** Consecutive short sentences within this window (ms) with no tool call in between trip the loop guard. */
+    loopWindowMs: z<number, number>;
+    /** Consecutive short sentences trip the loop guard. */
     loopShortCount: z<number, number>;
-    /** Consecutive identical tool calls trip the loop guard. */
+    /** Consecutive identical tool calls with identical arguments AND results trip the loop guard. */
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
@@ -100,9 +102,11 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopGuard: z<boolean, boolean>;
     /** A model message shorter than this many chars counts as a short sentence (loop signal). */
     loopShortChars: z<number, number>;
-    /** Consecutive short sentences with no tool call in between trip the loop guard. */
+    /** Consecutive short sentences within this window (ms) with no tool call in between trip the loop guard. */
+    loopWindowMs: z<number, number>;
+    /** Consecutive short sentences trip the loop guard. */
     loopShortCount: z<number, number>;
-    /** Consecutive identical tool calls trip the loop guard. */
+    /** Consecutive identical tool calls with identical arguments AND results trip the loop guard. */
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;

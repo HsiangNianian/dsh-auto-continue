@@ -64,9 +64,11 @@ export interface AutoContinueSettings {
   loopGuard?: boolean;
   /** A model message shorter than this many chars counts as a "short sentence" (loop signal). */
   loopShortChars?: number;
-  /** Consecutive short sentences with no tool call in between trip the loop guard. */
+  /** Consecutive short sentences within this window (ms) with no tool call in between trip the loop guard. */
+  loopWindowMs?: number;
+  /** Consecutive short sentences trip the loop guard. */
   loopShortCount?: number;
-  /** Consecutive identical tool calls trip the loop guard. */
+  /** Consecutive identical tool calls with identical arguments AND identical results trip the loop guard. */
   loopToolRepeat?: number;
   /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
   loopText?: string;
@@ -98,8 +100,9 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   paused: false,
   loopGuard: true,
   loopShortChars: 40,
-  loopShortCount: 8,
-  loopToolRepeat: 4,
+  loopWindowMs: 30000,
+  loopShortCount: 12,
+  loopToolRepeat: 5,
   loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
 };
 
@@ -152,6 +155,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     paused: booleanOr(value.paused, DEFAULT_CONFIG.paused),
     loopGuard: booleanOr(value.loopGuard, DEFAULT_CONFIG.loopGuard),
     loopShortChars: Math.max(1, numberOr(value.loopShortChars, DEFAULT_CONFIG.loopShortChars)),
+    loopWindowMs: Math.max(1000, numberOr(value.loopWindowMs, DEFAULT_CONFIG.loopWindowMs)),
     loopShortCount: Math.max(2, numberOr(value.loopShortCount, DEFAULT_CONFIG.loopShortCount)),
     loopToolRepeat: Math.max(2, numberOr(value.loopToolRepeat, DEFAULT_CONFIG.loopToolRepeat)),
     loopText:
@@ -596,8 +600,24 @@ interface SessionState {
   pendingRecoveryAt: number;
   /** 当前连续短句数(loop guard 信号 1: 空转)。 */
   shortRun: number;
-  /** 当前连续相同工具调用(loop guard 信号 2: 死循环)。 */
-  toolRun: { name: string; count: number } | undefined;
+  /** 最后一条短句的时间(时间窗判定用)。 */
+  lastShortAt: number;
+  /**
+   * 工具重复信号(loop guard 信号 2: 死循环)。
+   * 只有「同工具 + 同参数 + 同结果」的连续调用才累计; 参数或结果有变化视为有进展, 计数重置。
+   */
+  toolRun:
+    | {
+        /** 工具名 + 参数(用于判定是否同一调用)。 */
+        key: string;
+        /** 连续相同调用数(结果确认后更新)。 */
+        count: number;
+        /** 上次该调用的结果摘要(比较用)。 */
+        lastResult: string | undefined;
+        /** 本次调用等待结果确认。 */
+        waiting: boolean;
+      }
+    | undefined;
   /** 本回合已触发过 loop guard(防重复打断)。 */
   loopFired: boolean;
   /** 我们主动 cancel 过本回合(区分用户停止)。 */
@@ -620,6 +640,7 @@ const freshState = (): SessionState => ({
   lastTurn: undefined,
   pendingRecoveryAt: 0,
   shortRun: 0,
+  lastShortAt: 0,
   toolRun: undefined,
   loopFired: false,
   loopCancelled: false,
@@ -769,19 +790,35 @@ export class AutoContinueRunner {
             const state = this.state(frame.sessionId);
             state.lastTool = name;
             state.lastToolResult = 'pending'; // 已发起, 尚未见结果
-            // loop guard 信号 2: 连续相同工具调用(工具调用 = 有进展, 重置短句信号)
+            // loop guard 信号 2: 同工具+同参数才可能是循环; 参数变化 = 有进展
+            // (工具调用本身也重置短句信号)。计数在结果确认后才推进。
             state.shortRun = 0;
-            if (state.toolRun?.name === name) {
-              state.toolRun.count += 1;
+            const key = `${name}\n${frame.event.data.arguments}`;
+            if (state.toolRun?.key === key) {
+              state.toolRun.waiting = true; // 结果到达时与上次结果比较
             } else {
-              state.toolRun = { name, count: 1 };
+              state.toolRun = { key, count: 1, lastResult: undefined, waiting: false };
             }
-            this.checkLoop(frame.sessionId, state);
           }
         } else if (frame.event.type === 'tool/result') {
           const state = this.state(frame.sessionId);
           if (state.lastToolResult === 'pending') {
-            state.lastToolResult = toolResultFacts(frame.event.data);
+            const facts = toolResultFacts(frame.event.data);
+            state.lastToolResult = facts;
+            // 结果确认: 与上次相同 → 计数推进; 不同 → 有进展, 重置
+            const run = state.toolRun;
+            if (run !== undefined && run.waiting) {
+              run.waiting = false;
+              if (run.lastResult !== undefined && run.lastResult === facts.excerpt) {
+                run.count += 1;
+                this.checkLoop(frame.sessionId, state);
+              } else {
+                run.lastResult = facts.excerpt;
+                run.count = 1;
+              }
+            } else if (run !== undefined && !run.waiting) {
+              run.lastResult = facts.excerpt;
+            }
           }
         } else if (frame.event.type === 'assistant/message') {
           const state = this.state(frame.sessionId);
@@ -812,8 +849,9 @@ export class AutoContinueRunner {
   }
 
   /**
-   * loop guard 信号 1(空转): 连续短句且期间无工具调用。
-   * 短句 = 模型消息文本短于 loopShortChars; 长句或工具调用都会重置计数。
+   * loop guard 信号 1(空转): 时间窗内连续短句且期间无工具调用。
+   * 短句 = 模型消息文本短于 loopShortChars; 长句、工具调用、或短句间隔超过
+   * loopWindowMs(正常思考的短文本散布在长时间里)都会重置计数。
    */
   private onAssistantMessage(
     sessionId: SessionId,
@@ -823,9 +861,15 @@ export class AutoContinueRunner {
     if (!this.getConfig().loopGuard) return;
     const text = this.assistantText(event);
     if (text.trim().length < this.getConfig().loopShortChars) {
+      const now = Date.now();
+      if (now - state.lastShortAt > this.getConfig().loopWindowMs) {
+        state.shortRun = 0; // 超过时间窗: 上一次短句太久远, 不算连续
+      }
       state.shortRun += 1;
+      state.lastShortAt = now;
     } else {
       state.shortRun = 0; // 长句 = 有实际输出, 重置
+      state.lastShortAt = 0;
     }
     this.checkLoop(sessionId, state);
   }
@@ -840,7 +884,8 @@ export class AutoContinueRunner {
       this.log(`检测到空转循环 ${sessionId}: 连续 ${state.shortRun} 条短句且无工具调用`);
       void this.interruptLoop(sessionId, state);
     } else if (state.toolRun !== undefined && state.toolRun.count >= config.loopToolRepeat) {
-      this.log(`检测到工具死循环 ${sessionId}: 「${state.toolRun.name}」连续 ${state.toolRun.count} 次`);
+      const toolName = state.toolRun.key.split('\n')[0] ?? '?';
+      this.log(`检测到工具死循环 ${sessionId}: 「${toolName}」连续 ${state.toolRun.count} 次(同参数同结果)`);
       void this.interruptLoop(sessionId, state);
     }
   }
@@ -882,6 +927,7 @@ export class AutoContinueRunner {
         state.lastToolResult = undefined;
         // loop guard 状态按回合重置
         state.shortRun = 0;
+        state.lastShortAt = 0;
         state.toolRun = undefined;
         state.loopFired = false;
         state.loopCancelled = false;
@@ -905,6 +951,7 @@ export class AutoContinueRunner {
             state.consecutive = 0;
             state.pendingRecoveryAt = 0;
             state.shortRun = 0;
+            state.lastShortAt = 0;
             state.toolRun = undefined;
             state.lastAttemptAt = 0;
             this.schedule(sessionId, 'loop:aborted');

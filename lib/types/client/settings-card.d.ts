@@ -25,6 +25,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
     notify: CardFieldState;
     loopGuard: CardFieldState;
     loopShortChars: CardFieldState;
+    loopWindowMs: CardFieldState;
     loopShortCount: CardFieldState;
     loopToolRepeat: CardFieldState;
     loopText: CardFieldState;
