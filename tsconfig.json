@@ -17,7 +17,8 @@
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
     "types": [
-      "react"
+      "react",
+      "node"
     ],
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true

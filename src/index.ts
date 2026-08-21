@@ -1,13 +1,24 @@
 /**
- * Host half of the auto-continue plugin: registers the `auto-continue`
- * settings namespace so the browser half's settings card can edit it and the
- * engine can read it. No other host-side behavior.
+ * Host half of the auto-continue plugin.
+ *
+ * - Registers the `auto-continue` settings namespace (the browser half's
+ *   settings card edits it; the host engine reads it).
+ * - Runs the single-instance auto-continue engine: listens to the session
+ *   event firehose, sends via `agent.followup`, cancels via `agent.cancel`.
+ * - Serves a status bridge the browser half subscribes to: notifications and
+ *   runtime state (stats / pauses), plus an action endpoint for notification
+ *   buttons.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import { settingsNamespace } from '@deepseek-ai/dsh-settings';
+import { AutoContinueRunner, resolveConfig, type AutoContinueSettings } from './host/engine.ts';
 // Type-only: pulls the `ctx.settings` Context augmentation from dsh-settings.
 import type {} from '@deepseek-ai/dsh-settings';
+// Type-only: pulls the `ctx.webServer` Context augmentation.
+import type {} from '@deepseek-ai/dsh-host-webserver';
+import type {} from '@deepseek-ai/dsh-agent';
+import type {} from '@deepseek-ai/dsh-session';
 
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export const AUTO_CONTINUE_NS = 'auto-continue';
@@ -75,14 +86,95 @@ export const AutoContinueSchema = z.object({
 });
 
 /**
- * Plugin body: register the settings namespace when a settings provider is
- * composed. Changes apply live — the browser half observes the scope.
+ * Plugin body: register the settings namespace, start the single-instance
+ * engine, and serve the status bridge.
  * @param ctx - host plugin context.
  */
 export function apply(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.register(settingsNamespace(AUTO_CONTINUE_NS), AutoContinueSchema, {
       applies: 'live',
+    });
+  });
+
+  // 单实例引擎: host 进程内监听会话事件, 所有标签页共享同一个引擎。
+  ctx.inject(['settings', 'agents', 'webServer'], (engineCtx) => {
+    const runner = new AutoContinueRunner(engineCtx, () =>
+      resolveConfig(engineCtx.settings.get(settingsNamespace(AUTO_CONTINUE_NS)) as AutoContinueSettings | undefined),
+    );
+
+    // 状态桥: browser 侧订阅通知与运行时状态(SSE)。
+    const sseClients = new Set<(data: string) => void>();
+    const pushToAll = (data: string): void => {
+      for (const send of sseClients) {
+        try {
+          send(data);
+        } catch {
+          sseClients.delete(send);
+        }
+      }
+    };
+    const statePayload = (): string =>
+      JSON.stringify({
+        type: 'state',
+        stats: runner.todayStats(),
+        paused: runner.activePauses(),
+      });
+
+    runner.subscribeNotices(() => {
+      for (const notice of runner.drainNotices()) {
+        pushToAll(`data: ${JSON.stringify({ type: 'notice', notice })}\n\n`);
+      }
+    });
+    runner.subscribeState(() => {
+      pushToAll(`data: ${statePayload()}\n\n`);
+    });
+
+    engineCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/auto-continue-bridge',
+      handler: (req, res) => {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+        });
+        res.write(`data: ${statePayload()}\n\n`);
+        const send = (data: string): void => {
+          res.write(data);
+        };
+        sseClients.add(send);
+        req.on('close', () => sseClients.delete(send));
+      },
+    });
+
+    // 通知按钮动作: browser 点击「立即续跑 / 暂停该会话」时 POST 到这里。
+    engineCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/auto-continue-action',
+      handler: (req, res) => {
+        let body = '';
+        req.on('data', (chunk: Buffer) => {
+          body += chunk.toString('utf8');
+          if (body.length > 4096) req.destroy();
+        });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body) as { sessionId?: string; action?: string };
+            if (typeof parsed.action === 'string') {
+              runner.handleNoticeAction((parsed.sessionId as never) ?? undefined, parsed.action);
+              res.writeHead(200, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ ok: true }));
+              return;
+            }
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          } catch {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          }
+        });
+      },
     });
   });
 }

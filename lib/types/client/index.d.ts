@@ -1,20 +1,16 @@
 /**
- * Auto-continue plugin, browser half.
+ * Auto-continue plugin, browser half (thin shell).
  *
- * - Runs the auto-continue engine over the live mux + host event streams.
- * - Registers the `auto-continue` settings card into the plugin-configuration
- *   section (`settings.plugin.item`), editing the same namespace the engine
- *   reads — every behavior knob is configurable from the GUI.
+ * Since 0.8.0 the auto-continue ENGINE runs inside the host process (single
+ * instance — see src/host/engine.ts), so this half only:
+ * - registers the `auto-continue` settings card (`settings.plugin.item`),
+ * - subscribes to the host status bridge (SSE) and shows browser
+ *   notifications with action buttons (Resume now / Pause 1h) via the bridge
+ *   action endpoint,
+ * - feeds the card's stats / paused-sessions panels from the bridge state.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client';
 import { type SettingsCardKey } from './locales.ts';
-/** 客户端根上下文的 connection 服务(由 dsh-client-connection 挂载)。 */
-declare module '@deepseek-ai/cordis' {
-    interface Context {
-        connection: ConnectionHandle;
-    }
-}
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {
         /** auto-continue settings-card copy. */
@@ -23,9 +19,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 /** Services required by this plugin. */
 export declare const inject: string[];
-export { fillTemplate, pauseSession, pausedSessions, readTodayStats, resetTodayStats, sessionPauseUntil, unpauseSession, } from './engine.ts';
+export { pausedSessions, readTodayStats, resetTodayStats, unpauseSession, } from './bridge.ts';
 /**
- * Plugin body: mount the engine and the settings card.
+ * Plugin body: settings card + host status bridge (notifications, stats,
+ * paused sessions).
  * @param ctx - client root context.
  */
 export declare function apply(ctx: ClientContext): void;

@@ -31,7 +31,7 @@
 
 ## What It Does
 
-For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh web`): whenever a request in the web GUI gets interrupted by a **non-human cause**, the plugin simulates the user typing **「继续」** and sends it, so the agent keeps working without manual intervention. The message enters the session log exactly like a manual prompt — the model sees it, and the interrupted work resumes.
+For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh web`): whenever a request in the web GUI gets interrupted by a **non-human cause**, the plugin simulates the user typing **「继续」** and sends it, so the agent keeps working without manual intervention. The message enters the session log exactly like a manual prompt — the model sees it, and the interrupted work resumes. Since 0.8.0 the engine runs **inside the host process** (single instance), so it keeps watching even with every browser tab closed, and multiple open tabs can never double-send.
 
 ![demo](docs/demo.svg)
 
@@ -62,15 +62,11 @@ It watches the live event streams and reacts to:
 
 ## How It Works
 
-The plugin opens two extra SSE streams in the browser — `events.mux` (session events) and `events.host` (host events). The host supports multiple consumers, so this never interferes with the built-in runtime. On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then calls `sessions.prompt` in `queue` mode with the configured text.
+The host-side engine subscribes to the session event firehose inside the dsh host process — exactly one engine, regardless of how many tabs are open (the duplicate-send class of bugs cannot exist by construction). On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then sends the configured text through the agent registry (`agent.followup`, the same queue the Send button uses).
 
-On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed). Before every send the plugin also asks the host one authoritative question — is the latest session event already this exact message? If the same text is still queued (the last event is that `user/message`), it skips; once the message has been processed (the last event is a turn end or anything else), a fresh send is allowed, so legitimate consecutive resumes are never blocked.
+On host boot it also scans the live sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed — the agent-loop resumes the session and the engine picks it up).
 
-With the page open in several tabs, a cross-tab atomic send lock (Web Locks API with a mutex-stamp fallback), a shared per-session cooldown stamp, and a shared send counter that hard-caps consecutive sends at `maxConsecutive` guarantee exactly one tab sends — no duplicated 「继续」, even when several tabs watch the same session.
-
-All knobs live in the plugin's settings card — see [Configuration](#configuration).
-
----
+The browser half is a thin shell: the settings card, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
 
 ## Quick Start
 
@@ -214,8 +210,8 @@ auto-continue:
 | Scan on load / reconnect | `on` | Scan recently interrupted sessions on load / reconnect |
 | Scan limit | `8` | Max sessions scanned (running / subagent sessions excluded) |
 | Scan window (ms) | `900000` | Scan only considers interruptions inside this window |
-| Reconnect scan delay (ms) | `5000` | Delay before scanning after a reconnect |
-| Reconnect backoff (ms) | `3000` | SSE reconnect backoff |
+| Reconnect scan delay (ms) | `5000` | Legacy — unused since the engine moved into the host (kept for config compatibility) |
+| Reconnect backoff (ms) | `3000` | Legacy — unused since the engine moved into the host (kept for config compatibility) |
 | Verbose logs | `on` | `[auto-continue]` console logs |
 | Classify errors | `on` | Auto-resume transient failures only; auth / balance / model errors are skipped and notified |
 | Backoff factor | `2` | Cooldown multiplier per consecutive failure (2 = 20s → 40s → 80s…) |
@@ -232,7 +228,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 
 - It opens the same two read-only event streams the web UI already uses (no extra server, no third-party endpoints)
 - The engine's **only automatic write** is `sessions.prompt` — the same call the Send button makes — with the text you configured (saving the settings card writes the `auto-continue` section of `~/.dsh/settings.yaml` through the normal settings API, exactly like any other setting)
-- Browser storage is limited to small `localStorage` keys: cross-tab send locks and counts (a hard cap that stops duplicate sends even with several tabs open), per-session pauses, and the daily stats counters
+- No browser storage at all: the single host-side engine keeps its cooldowns, send caps, pauses and stats in process memory
 - Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
 
 ---
@@ -243,7 +239,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 43 behavioral scenarios
+npm run test        # node tests/simulate-host.mjs — 15 host-side behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

@@ -10,14 +10,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createSnapshotStore, type SettingsScope, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client';
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
+import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
 import {
-  DEFAULT_CONFIG,
   pausedSessions,
   readTodayStats,
   resetTodayStats,
+  subscribeBridge,
   unpauseSession,
-  type AutoContinueSettings,
-} from './engine.ts';
+} from './bridge.ts';
 import type { SettingsCardKey } from './locales.ts';
 import {
   booleanField,
@@ -304,8 +304,13 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
   const { t } = props;
   const [, refresh] = useState(0);
   useEffect(() => {
+    // host 状态桥推送时刷新; 5 秒轮询兜底(桥短暂断线时)
+    const unsubscribe = subscribeBridge(() => refresh((value) => value + 1));
     const timer = setInterval(() => refresh((value) => value + 1), 5000);
-    return () => clearInterval(timer);
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
   }, []);
   const stats = readTodayStats();
   const hasStats = stats.sent + stats.skipped + stats.recovered + stats.failed + stats.gaveUp + stats.looped > 0;

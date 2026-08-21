@@ -1,24 +1,22 @@
 /**
- * Auto-continue engine — browser half core.
+ * Auto-continue engine — host half core (single instance).
  *
- * Watches the two live event streams of the dsh web GUI (mux + host):
- *   - turns ended for a non-human reason (`turn/end` reason ∈ error / interrupted / max-tokens)
- *   - host-reported agent failures with no turn position (`host/agent-error`)
- * After a grace period it sends a queued prompt (default 「继续」) to that
- * session — exactly equivalent to the user typing it manually.
+ * Runs inside the dsh host process, so there is exactly ONE engine regardless
+ * of how many browser tabs are open — the multi-tab duplicate-send class of
+ * bugs (issue #13) cannot exist by construction. Listens to the session event
+ * firehose (`session/event`), sends through the agent registry
+ * (`agent.followup`), cancels through `agent.cancel`, and reads configuration
+ * from the settings service.
  *
  * All behavior is driven by the `auto-continue` settings namespace (see the
  * plugin's settings card); every knob below is user-configurable there.
  */
 
-import type {
-  HostFrame,
-  IApiClient,
-  MuxFrame,
-  SessionId,
-  SessionSummary,
-} from '@deepseek-ai/dsh-client-connection/client';
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
+import type { Context } from '@deepseek-ai/cordis';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import type { Agent } from '@deepseek-ai/dsh-agent';
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
+import type { Session } from '@deepseek-ai/dsh-session';
 
 /** The `auto-continue` settings section (all fields optional on the wire; the host schema carries defaults). */
 export interface AutoContinueSettings {
@@ -233,50 +231,6 @@ export interface NotifyOptions {
 }
 
 /** 浏览器通知(不可用时静默跳过); 点击通知聚焦窗口, 操作按钮走 onAction。 */
-function notify(title: string, body: string, options?: NotifyOptions): void {
-  try {
-    const N = (globalThis as { Notification?: unknown }).Notification as
-      | (new (t: string, o: { body: string; actions?: NotifyAction[] }) => unknown)
-      | undefined;
-    if (typeof N === 'undefined') return;
-    const permission = (N as unknown as { permission?: string }).permission;
-    const create = (): void => {
-      const instance = new N(title, {
-        body,
-        ...(options?.actions !== undefined && options.actions.length > 0
-          ? { actions: options.actions }
-          : {}),
-      });
-      const target = instance as {
-        onclick?: (() => void) | null;
-        onaction?: ((event: { action: string }) => void) | null;
-      };
-      target.onclick = () => {
-        try {
-          (globalThis as { focus?: () => void }).focus?.();
-        } catch {
-          /* ignore */
-        }
-      };
-      if (options?.onAction !== undefined) {
-        target.onaction = (event) => options.onAction?.(event.action);
-      }
-    };
-    if (permission === 'granted') {
-      create();
-    } else if (permission === 'default') {
-      // 首次使用时请求一次权限, 用户拒绝后不再打扰。
-      void (N as unknown as { requestPermission?: () => Promise<string> }).requestPermission?.()
-        .then((result) => {
-          if (result === 'granted') create();
-        })
-        .catch(() => {});
-    }
-  } catch {
-    /* 通知失败不影响核心逻辑 */
-  }
-}
-
 /** 把毫秒格式化为人类可读的经过时长(如 65s → 1m5s)。 */
 function formatElapsed(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '';
@@ -386,180 +340,7 @@ function clientTimeZone(): string | undefined {
   }
 }
 
-/** 跨标签页互斥与冷却记录(仅浏览器本地, 不落盘到宿主)。 */
-const lockPrefix = 'dsh-auto-continue:';
-const lockKey = (sessionId: SessionId) => `${lockPrefix}lock:${sessionId}`;
-const stampKey = (sessionId: SessionId) => `${lockPrefix}last:${sessionId}`;
-const countKey = (sessionId: SessionId) => `${lockPrefix}count:${sessionId}`;
-
-/**
- * 上次自动发送的完整记录(跨标签页): 时间戳 + 文本。
- * 回显识别用它而不是单 runner 内存, 所以任何标签页发出的消息都能被所有标签页认出。
- */
-function readLastSent(sessionId: SessionId): { at: number; text: string } {
-  try {
-    const raw = localStorage.getItem(stampKey(sessionId));
-    if (raw === null) return { at: 0, text: '' };
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null && typeof parsed.text === 'string') {
-      return { at: Number(parsed.at) || 0, text: parsed.text };
-    }
-    return { at: Number(raw) || 0, text: '' }; // 兼容旧格式(纯时间戳)
-  } catch {
-    return { at: 0, text: '' };
-  }
-}
-
-/** 读「上次自动发送」时间戳(跨标签页冷却)。 */
-function readLastSend(sessionId: SessionId): number {
-  return readLastSent(sessionId).at;
-}
-
-function writeLastSend(sessionId: SessionId, at: number, text: string): void {
-  try {
-    localStorage.setItem(stampKey(sessionId), JSON.stringify({ at, text }));
-  } catch {
-    /* ignore */
-  }
-}
-
-// ---------- 跨标签页发送计数(硬上限, 不依赖回显识别) ----------
-
-/** 发送计数窗口: 超过该时长无新发送, 计数自动失效。 */
-const SEND_COUNT_WINDOW_MS = 10 * 60 * 1000;
-
-interface SendCount {
-  at: number;
-  count: number;
-}
-
-function readSendCount(sessionId: SessionId): SendCount {
-  try {
-    const raw = localStorage.getItem(countKey(sessionId));
-    if (raw === null) return { at: 0, count: 0 };
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null && typeof parsed.count === 'number') {
-      const at = Number(parsed.at) || 0;
-      if (Date.now() - at > SEND_COUNT_WINDOW_MS) return { at: 0, count: 0 }; // 窗口过期
-      return { at, count: parsed.count };
-    }
-  } catch {
-    /* ignore */
-  }
-  return { at: 0, count: 0 };
-}
-
-function bumpSendCount(sessionId: SessionId): void {
-  try {
-    const current = readSendCount(sessionId);
-    localStorage.setItem(
-      countKey(sessionId),
-      JSON.stringify({ at: Date.now(), count: current.count + 1 }),
-    );
-  } catch {
-    /* ignore */
-  }
-}
-
-/** 用户介入或成功回合后清零发送计数(跨标签页共享)。 */
-function clearSendCount(sessionId: SessionId): void {
-  try {
-    localStorage.removeItem(countKey(sessionId));
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Web Locks: 跨标签页原子发送锁; 不可用(旧浏览器/测试环境)时回退到互斥戳。 */
-async function withSendLock(sessionId: SessionId, body: () => Promise<void>): Promise<void> {
-  const nav = (globalThis as { navigator?: unknown }).navigator as
-    | { locks?: { request: (name: string, cb: () => Promise<void>) => Promise<void> } }
-    | undefined;
-  if (nav?.locks !== undefined) {
-    await nav.locks.request(`dsh-auto-continue:send:${sessionId}`, body);
-    return;
-  }
-  // 回退: 尽力互斥(单标签页下可靠; 旧浏览器无 Web Locks)
-  if (!claimSend(sessionId)) return;
-  try {
-    await body();
-  } finally {
-    releaseSend(sessionId);
-  }
-}
-
-/** 尝试独占本次发送: 两个标签页同时触发时只有一个成功(Web Locks 的回退方案)。 */
-function claimSend(sessionId: SessionId): boolean {
-  try {
-    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(lockKey(sessionId), token);
-    return localStorage.getItem(lockKey(sessionId)) === token;
-  } catch {
-    return true; // 存储不可用(隐私模式等)时放行
-  }
-}
-
-function releaseSend(sessionId: SessionId): void {
-  try {
-    localStorage.removeItem(lockKey(sessionId));
-  } catch {
-    /* ignore */
-  }
-}
-
-// ---------- 会话级暂停(仅浏览器本地, 跨标签页共享) ----------
-
-const pauseKey = (sessionId: SessionId) => `${lockPrefix}pause:${sessionId}`;
-
-/** 暂停某会话: 到 `until` 之前, 引擎不会为该会话自动继续(通知按钮等调用)。 */
-export function pauseSession(sessionId: SessionId, ms: number): void {
-  try {
-    localStorage.setItem(pauseKey(sessionId), String(Date.now() + ms));
-  } catch {
-    /* ignore */
-  }
-}
-
-/** 解除某会话的暂停。 */
-export function unpauseSession(sessionId: SessionId): void {
-  try {
-    localStorage.removeItem(pauseKey(sessionId));
-  } catch {
-    /* ignore */
-  }
-}
-
-/** 会话暂停的截止时间戳; 0 表示未暂停。 */
-export function sessionPauseUntil(sessionId: SessionId): number {
-  try {
-    return Number(localStorage.getItem(pauseKey(sessionId)) ?? 0) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** 当前生效(未过期)的暂停会话列表; 顺带清理过期条目。 */
-export function pausedSessions(): { sessionId: SessionId; until: number }[] {
-  const out: { sessionId: SessionId; until: number }[] = [];
-  const now = Date.now();
-  try {
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key === null || !key.startsWith(`${lockPrefix}pause:`)) continue;
-      const sessionId = key.slice(lockPrefix.length + 'pause:'.length) as SessionId;
-      const until = Number(localStorage.getItem(key) ?? 0) || 0;
-      if (until > now) out.push({ sessionId, until });
-      else localStorage.removeItem(key);
-    }
-  } catch {
-    /* ignore */
-  }
-  return out;
-}
-
-// ---------- 统计(仅浏览器本地; 按本地日期分桶, 最多保留 90 天) ----------
-
-/** 一天的自动继续统计。 */
+/** 一天的自动继续统计(host 单实例内存态)。 */
 export interface DayStats {
   /** 本地日期 YYYY-MM-DD。 */
   date: string;
@@ -579,9 +360,6 @@ export interface DayStats {
   byCode: Record<string, number>;
 }
 
-const statsKey = `${lockPrefix}stats`;
-const STATS_MAX_DAYS = 90;
-
 function todayKey(): string {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -589,69 +367,34 @@ function todayKey(): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-function readStats(): DayStats[] {
-  try {
-    const raw = localStorage.getItem(statsKey);
-    if (raw === null) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item): item is DayStats =>
-        typeof item === 'object' && item !== null && typeof item.date === 'string',
-    );
-  } catch {
-    return [];
-  }
+/** 空统计桶。 */
+function emptyDayStats(): DayStats {
+  return { date: todayKey(), sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, looped: 0, byCode: {} };
 }
 
-function writeStats(list: DayStats[]): void {
-  try {
-    localStorage.setItem(statsKey, JSON.stringify(list));
-  } catch {
-    /* ignore */
-  }
+/** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
+export interface HostNotice {
+  /** 稳定标识(供 browser 去重)。 */
+  id: string;
+  title: string;
+  body: string;
+  /** 会话 id(通知按钮「立即续跑 / 暂停该会话」作用于它)。 */
+  sessionId?: SessionId;
+  actions: NotifyAction[];
+  /** 产生时间。 */
+  at: number;
 }
 
-/** 累加今日统计(引擎内部记账)。 */
-function bumpStat(delta: {
-  sent?: number;
-  skipped?: number;
-  recovered?: number;
-  failed?: number;
-  gaveUp?: number;
-  looped?: number;
-  code?: string;
-}): void {
-  const list = readStats();
-  let day = list.find((item) => item.date === todayKey());
-  if (day === undefined) {
-    day = { date: todayKey(), sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, looped: 0, byCode: {} };
-    list.unshift(day);
-  }
-  if (delta.sent !== undefined) day.sent += delta.sent;
-  if (delta.skipped !== undefined) day.skipped += delta.skipped;
-  if (delta.recovered !== undefined) day.recovered += delta.recovered;
-  if (delta.failed !== undefined) day.failed += delta.failed;
-  if (delta.gaveUp !== undefined) day.gaveUp += delta.gaveUp;
-  if (delta.looped !== undefined) day.looped += delta.looped;
-  if (delta.code !== undefined) day.byCode[delta.code] = (day.byCode[delta.code] ?? 0) + 1;
-  writeStats(list.slice(0, STATS_MAX_DAYS));
-}
+/** 自动发送后, 在该窗口内出现的回合结束才计入恢复统计。 */
+const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 
-/** 今日统计(设置卡片展示用)。 */
-export function readTodayStats(): DayStats {
-  const today = todayKey();
-  const found = readStats().find((item) => item.date === today);
-  return (
-    found ?? { date: today, sent: 0, skipped: 0, recovered: 0, failed: 0, gaveUp: 0, looped: 0, byCode: {} }
-  );
-}
+/** 回显识别窗口: 排队消息可能几分钟后才被模型处理到, 窗口必须远大于排队延迟。 */
+const ECHO_WINDOW_MS = 10 * 60 * 1000;
 
-/** 清零今日统计。 */
-export function resetTodayStats(): void {
-  writeStats(readStats().filter((item) => item.date !== todayKey()));
-}
-
+/**
+ * 判定一条 user/message 是否是我们自己自动发送的回显。
+ * 单实例引擎: 内存态即可; 排队消息可能几分钟后才被模型处理, 窗口保持 10 分钟。
+ */
 /** 每会话运行时状态。 */
 interface SessionState {
   /** 连续自动「继续」次数; 成功回合或用户手动介入后归零。 */
@@ -739,29 +482,18 @@ const freshState = (): SessionState => ({
   loopRetryTimer: undefined,
 });
 
-/** 自动发送后, 在该窗口内出现的回合结束才计入恢复统计。 */
-const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 
-/** 回显识别窗口: 排队消息可能几分钟后才被模型处理到, 窗口必须远大于排队延迟。 */
-const ECHO_WINDOW_MS = 10 * 60 * 1000;
-
-/**
- * 判定一条 user/message 是否是我们自己自动发送的回显。
- * 用 localStorage 里的上次发送记录(跨标签页): 任何标签页发出的消息,
- * 所有标签页都能认出——排队回显不会误判为「用户介入」而清零上限。
- */
-function isOurEcho(state: SessionState, sessionId: SessionId, event: SessionEvent): boolean {
+function isOurEcho(state: SessionState, event: SessionEvent): boolean {
   if (event.type !== 'user/message') return false;
   const message = event.data;
   if (message.source.kind !== 'user') return false;
-  const last = readLastSent(sessionId);
-  if (last.at === 0 || last.text === '') return false;
-  if (Date.now() - last.at > ECHO_WINDOW_MS) return false;
+  if (state.lastSentText === '') return false;
+  if (Date.now() - state.lastAutoAt > ECHO_WINDOW_MS) return false;
   const text = message.content
     .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
     .map((part) => part.text)
     .join('');
-  return text === last.text;
+  return text === state.lastSentText;
 }
 
 /** SSE 帧外壳: `{ rpcId, payload }`。 */
@@ -809,28 +541,29 @@ async function pumpStream<T>(
 /** 插件主体: 一条 mux 流 + 一条 host 流 + 启动/重连扫描。 */
 export class AutoContinueRunner {
   private readonly states = new Map<SessionId, SessionState>();
-  private readonly muxAbort = new AbortController();
-  private readonly hostAbort = new AbortController();
+  private readonly pauseUntil = new Map<SessionId, number>();
+  private dayStats: DayStats = emptyDayStats();
+  private readonly notices: HostNotice[] = [];
+  private readonly noticeListeners = new Set<() => void>();
+  private readonly stateListeners = new Set<() => void>();
   private disposed = false;
-  private reconnectScans = 0;
 
   /**
-   * @param api - shared wire client (ctx.connection.api).
-   * @param getConfig - read the current resolved configuration (settings scope).
+   * @param ctx - host plugin context (agents registry, session events, settings).
+   * @param getConfig - read the current resolved configuration (settings service).
    */
   constructor(
-    private readonly api: IApiClient,
+    private readonly ctx: Context,
     private readonly getConfig: () => AutoContinueConfig,
   ) {
+    // 单实例事件源: 宿主进程内的会话事件 firehose, 天然覆盖所有会话。
+    ctx.on('session/event', (session, event) => this.onHostEvent(session, event));
     const config = this.getConfig();
-    void this.runMux();
-    void this.runHost();
     if (config.scanOnBoot) {
-      // 启动时连接可能尚未建立, 循环重试直到成功。
       void this.bootScanLoop();
     }
     this.log(
-      `已启动(文本="${config.continueText}", 宽限 ${config.graceMs}ms, ` +
+      `已启动(host 单实例, 文本="${config.continueText}", 宽限 ${config.graceMs}ms, ` +
         `冷却 ${config.cooldownMs}ms, 最多连续 ${config.maxConsecutive} 次)`,
     );
   }
@@ -839,10 +572,64 @@ export class AutoContinueRunner {
     if (this.getConfig().verbose) console.info(`[auto-continue] ${message}`);
   }
 
+  /** 对外(状态桥): 今日统计快照。 */
+  todayStats(): DayStats {
+    const today = todayKey();
+    if (this.dayStats.date !== today) this.dayStats = emptyDayStats();
+    return { ...this.dayStats, byCode: { ...this.dayStats.byCode } };
+  }
+
+  /** 对外(状态桥): 当前生效的会话级暂停列表。 */
+  activePauses(): { sessionId: SessionId; until: number }[] {
+    const now = Date.now();
+    const out: { sessionId: SessionId; until: number }[] = [];
+    for (const [sessionId, until] of this.pauseUntil) {
+      if (until > now) out.push({ sessionId, until });
+    }
+    return out;
+  }
+
+  /** 对外(状态桥): 订阅通知事件(SSE 端点推送)。 */
+  subscribeNotices(listener: () => void): () => void {
+    this.noticeListeners.add(listener);
+    return () => {
+      this.noticeListeners.delete(listener);
+    };
+  }
+
+  /** 对外(状态桥): 订阅运行时状态变化(统计/暂停列表)。 */
+  subscribeState(listener: () => void): () => void {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
+  private emitState(): void {
+    for (const listener of this.stateListeners) listener();
+  }
+
+  /** 对外(状态桥): 消费待展示的通知。 */
+  drainNotices(): HostNotice[] {
+    return this.notices.splice(0, this.notices.length);
+  }
+
+  /** 通知动作(browser 通知按钮回传): 立即续跑 / 暂停该会话 / 解除暂停 / 清零统计。 */
+  handleNoticeAction(sessionId: SessionId | undefined, action: string): void {
+    if (action === 'unpause') {
+      if (sessionId !== undefined) this.pauseUntil.delete(sessionId);
+      this.log(`解除暂停 ${sessionId ?? '?'}`);
+    } else if (action === 'reset-stats') {
+      this.dayStats = emptyDayStats();
+      this.log('清零今日统计');
+    } else if (sessionId !== undefined) {
+      this.onNotifyAction(sessionId, action);
+    }
+    this.emitState();
+  }
+
   dispose(): void {
     this.disposed = true;
-    this.muxAbort.abort();
-    this.hostAbort.abort();
     for (const state of this.states.values()) {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
       if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
@@ -859,85 +646,53 @@ export class AutoContinueRunner {
     return state;
   }
 
-  private runMux(): Promise<void> {
-    return pumpStream<MuxFrame>(
-      (signal) => this.api.events.mux({}, signal),
-      (payload) => this.onMuxFrame(payload),
-      () => this.scheduleReconnectScan(),
-      () => this.getConfig().reconnectBackoffMs,
-      (m) => this.log(m),
-      this.muxAbort.signal,
-    );
-  }
-
-  private runHost(): Promise<void> {
-    return pumpStream<HostFrame>(
-      (signal) => this.api.events.host({}, signal),
-      (payload) => this.onHostFrame(payload),
-      () => this.scheduleReconnectScan(),
-      () => this.getConfig().reconnectBackoffMs,
-      (m) => this.log(m),
-      this.hostAbort.signal,
-    );
-  }
-
-  // ---------- mux 帧 ----------
-
-  private onMuxFrame(frame: MuxFrame): void {
-    switch (frame.type) {
-      case 'session/event':
-        if (frame.event.type === 'tool/call') {
-          const name = frame.event.data.name;
-          if (typeof name === 'string') {
-            const state = this.state(frame.sessionId);
-            state.lastTool = name;
-            state.lastToolResult = 'pending'; // 已发起, 尚未见结果
-            // loop guard 信号 2: 同工具+同参数才可能是循环; 参数变化 = 有进展
-            // (工具调用本身也重置短句信号)。计数在结果确认后才推进。
-            state.shortRun = 0;
-            const key = `${name}\n${frame.event.data.arguments}`;
-            if (state.toolRun?.key === key) {
-              state.toolRun.waiting = true; // 结果到达时与上次结果比较
-            } else {
-              state.toolRun = { key, count: 1, lastResult: undefined, waiting: false };
-            }
-          }
-        } else if (frame.event.type === 'tool/result') {
-          const state = this.state(frame.sessionId);
-          if (state.lastToolResult === 'pending') {
-            const facts = toolResultFacts(frame.event.data);
-            state.lastToolResult = facts;
-            // 结果确认: 与上次相同 → 计数推进; 不同 → 有进展, 重置
-            const run = state.toolRun;
-            if (run !== undefined && run.waiting) {
-              run.waiting = false;
-              if (run.lastResult !== undefined && run.lastResult === facts.excerpt) {
-                run.count += 1;
-                this.checkLoop(frame.sessionId, state);
-              } else {
-                run.lastResult = facts.excerpt;
-                run.count = 1;
-              }
-            } else if (run !== undefined && !run.waiting) {
-              run.lastResult = facts.excerpt;
-            }
-          }
-        } else if (frame.event.type === 'assistant/message') {
-          const state = this.state(frame.sessionId);
-          this.onAssistantMessage(frame.sessionId, state, frame.event);
+  /**
+   * 事件入口(host 单实例): 预处理工具调用/结果/模型消息(护栏与循环信号),
+   * 然后交给回合状态机。
+   */
+  private onHostEvent(session: Session, event: SessionEvent): void {
+    const sessionId = session.id;
+    if (event.type === 'tool/call') {
+      const name = event.data.name;
+      if (typeof name === 'string') {
+        const state = this.state(sessionId);
+        state.lastTool = name;
+        state.lastToolResult = 'pending'; // 已发起, 尚未见结果
+        // loop guard 信号 2: 同工具+同参数才可能是循环; 参数变化 = 有进展
+        // (工具调用本身也重置短句信号)。计数在结果确认后才推进。
+        state.shortRun = 0;
+        const key = `${name}\n${event.data.arguments}`;
+        if (state.toolRun?.key === key) {
+          state.toolRun.waiting = true; // 结果到达时与上次结果比较
+        } else {
+          state.toolRun = { key, count: 1, lastResult: undefined, waiting: false };
         }
-        this.onSessionEvent(frame.sessionId, frame.event);
-        break;
-      case 'session/queue':
-        this.state(frame.sessionId).queued = frame.items.length;
-        if (frame.items.length > 0) this.cancelPending(frame.sessionId, '出现排队消息');
-        break;
-      case 'stream/error':
-        this.log(`mux stream/error: ${frame.error.code} ${frame.error.message}`);
-        break;
-      default:
-        break; // session/subscribed、approval/*、question/*、session/jobs、session/projection 与本插件无关
+      }
+    } else if (event.type === 'tool/result') {
+      const state = this.state(sessionId);
+      if (state.lastToolResult === 'pending') {
+        const facts = toolResultFacts(event.data);
+        state.lastToolResult = facts;
+        // 结果确认: 与上次相同 → 计数推进; 不同 → 有进展, 重置
+        const run = state.toolRun;
+        if (run !== undefined && run.waiting) {
+          run.waiting = false;
+          if (run.lastResult !== undefined && run.lastResult === facts.excerpt) {
+            run.count += 1;
+            this.checkLoop(sessionId, state);
+          } else {
+            run.lastResult = facts.excerpt;
+            run.count = 1;
+          }
+        } else if (run !== undefined && !run.waiting) {
+          run.lastResult = facts.excerpt;
+        }
+      }
+    } else if (event.type === 'assistant/message') {
+      const state = this.state(sessionId);
+      this.onAssistantMessage(sessionId, state, event);
     }
+    this.onSessionEvent(sessionId, event);
   }
 
   /** 从 assistant/message 事件提取纯文本。 */
@@ -950,11 +705,6 @@ export class AutoContinueRunner {
       .join('');
   }
 
-  /**
-   * loop guard 信号 1(空转): 时间窗内连续短句且期间无工具调用。
-   * 短句 = 模型消息文本短于 loopShortChars; 长句、工具调用、或短句间隔超过
-   * loopWindowMs(正常思考的短文本散布在长时间里)都会重置计数。
-   */
   private onAssistantMessage(
     sessionId: SessionId,
     state: SessionState,
@@ -1020,12 +770,16 @@ export class AutoContinueRunner {
     state.loopFired = true;
     state.loopCancelled = true;
     state.lastAttemptAt = Date.now(); // 打断计入冷却, 防反复打断
-    bumpStat({ looped: 1 });
+    this.bumpStat({ looped: 1 });
     try {
-      const response = await this.api.sessions.cancel({ sessionId });
-      this.log(
-        `已打断循环 ${sessionId}: ${response.result.ok ? 'cancel 已受理' : 'cancel 被拒绝'}`,
-      );
+      const agent = this.ctx.agents.get(sessionId);
+      if (agent === undefined) {
+        this.log(`打断循环失败 ${sessionId}: 无 live agent`);
+        state.loopCancelled = false;
+        return;
+      }
+      agent.cancel({ kind: 'user' }, { keepInbox: true });
+      this.log(`已打断循环 ${sessionId}: cancel 已受理`);
     } catch (error) {
       this.log(`打断循环失败 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       state.loopCancelled = false;
@@ -1062,7 +816,6 @@ export class AutoContinueRunner {
           // 成功回合: 恢复健康状态, 并确认上一次自动发送的效果
           state.consecutive = 0;
           state.lastFailure = undefined;
-          clearSendCount(sessionId);
           this.noteRecovery(sessionId, 'completed');
         } else if (reason.kind === 'aborted') {
           if (state.loopCancelled) {
@@ -1094,7 +847,6 @@ export class AutoContinueRunner {
             // 用户主动停止: 不自动继续, 视为用户介入
             state.consecutive = 0;
             state.pendingRecoveryAt = 0;
-            clearSendCount(sessionId);
           }
         } else if (reason.kind === 'blocked') {
           // 策略拒绝: 不自动继续
@@ -1124,11 +876,10 @@ export class AutoContinueRunner {
         break;
       }
       case 'user/message':
-        if (isOurEcho(state, sessionId, event)) break; // 我们自己的回显(跨标签页识别)
+        if (isOurEcho(state, event)) break; // 我们自己的回显(跨标签页识别)
         if (event.data.source.kind === 'user') {
           // 用户手动介入: 清零上限与跨标签页发送计数
           state.consecutive = 0;
-          clearSendCount(sessionId);
           this.cancelPending(sessionId, '用户手动发送消息');
         }
         break;
@@ -1139,57 +890,14 @@ export class AutoContinueRunner {
 
   // ---------- host 帧 ----------
 
-  private onHostFrame(frame: HostFrame): void {
-    switch (frame.type) {
-      case 'host/session-status':
-        this.state(frame.sessionId).running = frame.running;
-        if (frame.running) this.cancelPending(frame.sessionId, '宿主报告会话开始运行');
-        break;
-      case 'host/session-added':
-        this.state(frame.sessionId).subagent = frame.parentSessionId !== undefined;
-        break;
-      case 'host/agent-error':
-        if (this.state(frame.sessionId).subagent) break;
-        this.log(`host/agent-error(${frame.sessionId}): ${frame.message}`);
-        // agent-error 的「仅网络/超时类自动续跑」是无条件安全承诺(与 classify 开关无关):
-        // 序列化失败等永久性 agent 错误(包括用户停止的连带 DOMException)绝不能自动续跑,
-        // 否则会退回「用户停止被误续跑」的场景(issue #2)。
-        if (!isTransientAgentError(frame.message)) {
-          // 永久性 agent 错误(序列化失败/配置错误等): 跳过并通知, 避免把用户停止等
-          // 场景误判为可恢复中断后自动续跑。
-          this.log(`跳过 ${frame.sessionId}: 永久性 agent 错误 — ${frame.message}`);
-          bumpStat({ skipped: 1 });
-          if (this.getConfig().notify) {
-            notify(
-              'dsh-auto-continue: 未自动继续',
-              `${frame.sessionId}: 永久性 agent 错误 ${frame.message.slice(0, 120)}`,
-              this.notifyOptions(frame.sessionId),
-            );
-          }
-          break;
-        }
-        this.schedule(frame.sessionId, 'host/agent-error');
-        break;
-      case 'host/session-removed':
-        this.cancelPending(frame.sessionId, '会话已移除');
-        this.states.delete(frame.sessionId);
-        break;
-      default:
-        break;
-    }
-  }
-
-  // ---------- 调度 ----------
-
-  /** 回合失败入口: 先做错误分类, 永久性失败跳过并通知, 临时性失败走正常调度。 */
   private onTurnFailure(sessionId: SessionId, reason: string, failure: FailureFacts): void {
     const config = this.getConfig();
     if (config.classify && !isTransientFailure(failure)) {
       const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
       this.log(`跳过 ${sessionId}(${reason}): 永久性失败 ${summary} — ${failure.message}`);
-      bumpStat({ skipped: 1, code: failure.code });
+      this.bumpStat({ skipped: 1, code: failure.code });
       if (config.notify) {
-        notify(
+        this.notify(
           'dsh-auto-continue: 未自动继续',
           `${sessionId}: 永久性错误 ${summary}，需要人工处理`,
           this.notifyOptions(sessionId),
@@ -1217,9 +925,49 @@ export class AutoContinueRunner {
       void this.resumeNow(sessionId);
     } else if (action === 'pause1h') {
       this.log(`通知按钮: 暂停 ${sessionId} 1 小时`);
-      pauseSession(sessionId, 60 * 60 * 1000);
+      this.pauseUntil.set(sessionId, Date.now() + 60 * 60 * 1000);
       this.cancelPending(sessionId, '通知按钮暂停该会话');
     }
+  }
+
+
+  /** 内存统计(host 单实例): 按今日桶累计。 */
+  private bumpStat(delta: {
+    sent?: number;
+    skipped?: number;
+    recovered?: number;
+    failed?: number;
+    gaveUp?: number;
+    looped?: number;
+    code?: string;
+  }): void {
+    const today = todayKey();
+    if (this.dayStats.date !== today) this.dayStats = emptyDayStats();
+    if (delta.sent !== undefined) this.dayStats.sent += delta.sent;
+    if (delta.skipped !== undefined) this.dayStats.skipped += delta.skipped;
+    if (delta.recovered !== undefined) this.dayStats.recovered += delta.recovered;
+    if (delta.failed !== undefined) this.dayStats.failed += delta.failed;
+    if (delta.gaveUp !== undefined) this.dayStats.gaveUp += delta.gaveUp;
+    if (delta.looped !== undefined) this.dayStats.looped += delta.looped;
+    if (delta.code !== undefined) {
+      this.dayStats.byCode[delta.code] = (this.dayStats.byCode[delta.code] ?? 0) + 1;
+    }
+  }
+
+  /** 通知桥: 产生一条通知事件, SSE 端点推给 browser 侧展示。 */
+  private notify(title: string, body: string, options?: NotifyOptions): void {
+    const notice: HostNotice = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      title,
+      body,
+      ...(options?.actions !== undefined && options.actions.length > 0
+        ? { actions: options.actions }
+        : { actions: [] }),
+      at: Date.now(),
+    };
+    this.notices.push(notice);
+    for (const listener of this.noticeListeners) listener();
+    this.emitState();
   }
 
   /** 恢复结果记账: 自动发送后窗口内的回合结束, 判定恢复成功或失败。 */
@@ -1231,7 +979,7 @@ export class AutoContinueRunner {
       return;
     }
     state.pendingRecoveryAt = 0;
-    bumpStat(outcome === 'completed' ? { recovered: 1 } : { failed: 1 });
+    this.bumpStat(outcome === 'completed' ? { recovered: 1 } : { failed: 1 });
     this.log(`恢复结果(${sessionId}): ${outcome === 'completed' ? '成功' : '失败'}`);
   }
 
@@ -1266,7 +1014,7 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
       return;
     }
-    if (Date.now() < sessionPauseUntil(sessionId)) {
+    if (Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
       this.log(`跳过 ${sessionId}(${reason}): 会话暂停中`);
       return;
     }
@@ -1278,7 +1026,6 @@ export class AutoContinueRunner {
       );
       return;
     }
-    if (state.queued > 0) return; // 已有排队消息, 宿主会自行唤醒
     const timer = setTimeout(() => {
       if (state.pendingTimer !== timer) return;
       state.pendingTimer = undefined;
@@ -1303,29 +1050,26 @@ export class AutoContinueRunner {
     this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
-  private async fire(sessionId: SessionId, reason: string, force = false): Promise<void> {
+  private fire(sessionId: SessionId, reason: string, force = false): void {
     if (this.disposed) return;
     const state = this.state(sessionId);
     const config = this.getConfig();
-    // 权威 running 检查: 优先用 host 帧, 未知时回退到 session.list
-    if (state.running === undefined) {
-      const running = await this.runningViaList(sessionId);
-      if (running === undefined || running) {
-        this.log(`跳过 ${sessionId}: 无法确认空闲(${running === undefined ? '未知' : '运行中'})`);
-        return;
-      }
-    } else if (state.running) {
-      this.log(`跳过 ${sessionId}: 会话仍在运行`);
+    if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
+    if (config.paused) {
+      this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
       return;
     }
-    if (state.queued > 0) {
-      this.log(`跳过 ${sessionId}: 已有排队消息`);
+    if (Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
+      this.log(`跳过 ${sessionId}(${reason}): 会话暂停中`);
       return;
     }
-    // 跨标签页持久化发送计数: 窗口内达到 maxConsecutive 即硬抑制,
-    // 不依赖回显识别与单 runner 内存(issue #13 的多标签页刷屏防线)。
-    if (!force && readSendCount(sessionId).count >= config.maxConsecutive) {
-      this.log(`跳过 ${sessionId}: 发送计数已达上限 ${config.maxConsecutive}, 等待用户介入或成功回合`);
+    // 冷却(自适应退避)与连续上限; 通知按钮的强制续跑不受约束
+    if (!force && Date.now() - state.lastAttemptAt < this.cooldownFor(state)) {
+      this.log(`跳过 ${sessionId}(${reason}): 处于冷却期`);
+      return;
+    }
+    if (!force && state.consecutive >= config.maxConsecutive) {
+      this.log(`跳过 ${sessionId}(${reason}): 已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`);
       return;
     }
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
@@ -1334,86 +1078,49 @@ export class AutoContinueRunner {
       : reason.includes('max-tokens')
         ? config.continueTextMaxTokens
         : config.continueText;
-    let sessionTitle: string | undefined;
-    if (template.includes('{sessionTitle}')) {
-      sessionTitle = this.titles.get(sessionId);
-      if (sessionTitle === undefined) {
-        const info = await this.fetchSessionInfo(sessionId);
-        sessionTitle = info?.title;
-      }
+    const text = this.buildContinueText(config, state, template);
+    // 发送: agent.followup 是排队语义(运行中会排入 inbox, 不会打断), 天然安全
+    const agent = this.ctx.agents.get(sessionId);
+    if (agent === undefined) {
+      this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
+      return;
     }
-    const text = this.buildContinueText(config, state, template, sessionTitle);
-    const zone = clientTimeZone();
-    // 跨标签页原子发送锁(Web Locks; 回退到互斥戳):
-    // 冷却检查、发送、计数、时间戳全部在锁内, 两个标签页不会同时放行。
-    await withSendLock(sessionId, async () => {
-      if (this.disposed) return;
-      if (state.queued > 0) {
-        this.log(`跳过 ${sessionId}: 已有排队消息`);
-        return;
-      }
-      // 跨标签页冷却(自适应退避); 通知按钮的强制续跑不受冷却约束
-      if (!force && Date.now() - readLastSend(sessionId) < this.cooldownFor(state)) {
-        this.log(`跳过 ${sessionId}: 其他标签页刚发送过`);
-        return;
-      }
-      if (!force && readSendCount(sessionId).count >= config.maxConsecutive) {
-        this.log(`跳过 ${sessionId}: 发送计数已达上限 ${config.maxConsecutive}, 等待用户介入或成功回合`);
-        return;
-      }
-      // 宿主权威兜底: 历史里最后一条事件若正是同一文本的 user 消息, 说明它还在
-      // 排队未被处理——不再叠加发送(issue #13 的 13 条排队场景)。
-      // 若最后一条是回合结束等其他事件, 说明之前的同文本消息已被处理, 正常放行
-      // (连续续跑不被误挡)。查询失败时放行(本地防线仍在)。
-      if (!force && (await this.hostHasPendingSameText(sessionId, text))) {
-        this.log(`跳过 ${sessionId}: 宿主队列里已有相同文本消息在排队`);
-        return;
-      }
-      state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
-      try {
-        const response = await this.api.sessions.prompt({
-          sessionId,
-          mode: 'queue',
+    state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
+    try {
+      agent.followup(
+        createUserMessage({
           content: [{ type: 'text', text }],
-          ...(zone === undefined ? {} : { clientTimeZone: zone }),
-        });
-        if (response.result.ok) {
-          const now = Date.now();
-          state.consecutive += 1;
-          state.lastAutoAt = now;
-          state.lastSentText = text;
-          state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
-          writeLastSend(sessionId, now, text); // 记录文本: 跨标签页回显识别
-          bumpSendCount(sessionId); // 跨标签页持久化计数(硬上限)
-          bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
-          this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
-          if (config.notify) {
-            notify(
-              'dsh-auto-continue: 已自动继续',
-              `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`,
-              this.notifyOptions(sessionId),
-            );
-          }
-          if (state.consecutive >= config.maxConsecutive) {
-            bumpStat({ gaveUp: 1 });
-            this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
-            if (config.notify) {
-              notify(
-                'dsh-auto-continue: 已停止自动继续',
-                `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`,
-                this.notifyOptions(sessionId),
-              );
-            }
-          }
-        } else {
-          this.log(
-            `发送失败 ${sessionId}: ${response.result.error.code} ${response.result.error.message}`,
+          source: { kind: 'user' },
+        }),
+      );
+      const now = Date.now();
+      state.consecutive += 1;
+      state.lastAutoAt = now;
+      state.lastSentText = text;
+      state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
+      this.bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
+      this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
+      if (config.notify) {
+        this.notify(
+          'dsh-auto-continue: 已自动继续',
+          `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`,
+          this.notifyOptions(sessionId),
+        );
+      }
+      if (state.consecutive >= config.maxConsecutive) {
+        this.bumpStat({ gaveUp: 1 });
+        this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
+        if (config.notify) {
+          this.notify(
+            'dsh-auto-continue: 已停止自动继续',
+            `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`,
+            this.notifyOptions(sessionId),
           );
         }
-      } catch (error) {
-        this.log(`发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
-    });
+    } catch (error) {
+      this.log(`发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -1427,14 +1134,12 @@ export class AutoContinueRunner {
     config: AutoContinueConfig,
     state: SessionState,
     template: string,
-    sessionTitle: string | undefined,
   ): string {
     let text = fillTemplate(template, {
       facts: state.lastFailure,
       tool: state.lastTool,
       turn: state.lastTurn,
       errorCount: state.consecutive + 1,
-      sessionTitle,
       elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
     });
     if (!config.guardTools) return text;
@@ -1459,67 +1164,6 @@ export class AutoContinueRunner {
       return { kind: 'done', tool: state.lastTool, result: state.lastToolResult.excerpt };
     }
     return { kind: 'failed', tool: state.lastTool };
-  }
-
-  /**
-   * 宿主权威兜底: 历史里最后一条事件是否就是同一文本的 user 消息。
-   * 是 = 它还在排队未被处理, 不应再叠加发送; 否(回合结束等其他事件)= 放行。
-   * 查询失败时返回 false(放行, 本地防线仍在)。
-   */
-  private async hostHasPendingSameText(sessionId: SessionId, text: string): Promise<boolean> {
-    try {
-      const response = await this.api.sessions.history({ sessionId, maxMessages: 10 });
-      if (!response.result.ok) return false;
-      const events = response.result.value.events;
-      const last = events[events.length - 1]?.event;
-      if (last === undefined || last.type !== 'user/message') return false;
-      if (last.data.source?.kind !== 'user') return false;
-      const lastText = (last.data.content ?? [])
-        .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
-        .map((part) => part.text)
-        .join('');
-      return lastText === text;
-    } catch {
-      return false;
-    }
-  }
-
-  /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */  private readonly titles = new Map<SessionId, string>();
-
-  /** 查一次 session.list, 顺带缓存该会话的标题。 */
-  private async fetchSessionInfo(
-    sessionId: SessionId,
-  ): Promise<{ running: boolean | undefined; title: string | undefined } | undefined> {
-    try {
-      const response = await this.api.sessions.list({});
-      if (!response.result.ok) return undefined;
-      const item = response.result.value.items.find(
-        (summary: SessionSummary) => summary.sessionId === sessionId,
-      );
-      if (item === undefined) return undefined;
-      // `title` 投影由 @deepseek-ai/dsh-session-title 声明; 此处用局部断言避免引入额外依赖。
-      const title = (item.projections?.values as { title?: string | null } | undefined)?.title;
-      if (typeof title === 'string' && title !== '') this.titles.set(sessionId, title);
-      return { running: item.running, title: typeof title === 'string' ? title : undefined };
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async runningViaList(sessionId: SessionId): Promise<boolean | undefined> {
-    const info = await this.fetchSessionInfo(sessionId);
-    return info?.running;
-  }
-
-  // ---------- 启动/重连扫描 ----------
-
-  private scheduleReconnectScan(): void {
-    this.reconnectScans += 1;
-    const scan = this.reconnectScans;
-    setTimeout(() => {
-      if (scan !== this.reconnectScans || this.disposed) return;
-      void this.scanLoop(6, this.getConfig().reconnectScanDelayMs);
-    }, this.getConfig().reconnectScanDelayMs);
   }
 
   private async bootScanLoop(): Promise<void> {
@@ -1553,39 +1197,26 @@ export class AutoContinueRunner {
   private async scanInterrupted(): Promise<boolean> {
     const config = this.getConfig();
     if (config.paused) return true; // 全局暂停: 不做任何扫描
-    const response = await this.api.sessions.list({});
-    if (!response.result.ok) return false;
-    const items = response.result.value.items;
-    for (const summary of items) {
-      const title = (summary.projections?.values as { title?: string | null } | undefined)?.title;
-      if (typeof title === 'string' && title !== '') this.titles.set(summary.sessionId, title);
-    }
-    const candidates = items
-      .filter((summary) => !summary.running && summary.parentSessionId === undefined)
-      .slice(0, config.scanLimit);
+    // 只扫 live agents(host 重启后 agent-loop 会 resume 崩溃会话, 冷会话无需处理)
     const now = Date.now();
-    for (const summary of candidates) {
+    const candidates: { sessionId: SessionId; events: readonly SessionEvent[] }[] = [];
+    for (const agent of this.ctx.agents.list()) {
+      const session = agent.session;
+      if (session.header.origin === 'subagent') continue; // 子代理由父代理处理
+      candidates.push({ sessionId: session.id, events: session.events });
+    }
+    for (const candidate of candidates.slice(0, config.scanLimit)) {
       if (this.disposed) return true;
-      const state = this.state(summary.sessionId);
+      const state = this.state(candidate.sessionId);
       if (state.pendingTimer !== undefined) continue;
       if (state.consecutive >= config.maxConsecutive) continue;
       if (now - state.lastAttemptAt < this.cooldownFor(state)) continue;
-      if (now < sessionPauseUntil(summary.sessionId)) continue; // 会话暂停中
-      let events;
-      try {
-        const page = await this.api.sessions.history({
-          sessionId: summary.sessionId,
-          maxMessages: 30,
-        });
-        if (!page.result.ok) continue;
-        events = page.result.value.events;
-      } catch {
-        continue; // 会话可能刚被移除
-      }
-      // 从尾部找最后一个 turn/end(在分支内完成收窄)
+      if (now < (this.pauseUntil.get(candidate.sessionId) ?? 0)) continue; // 会话暂停中
+      const events = candidate.events;
+      // 从尾部找最后一个 turn/end
       let lastEnd: SessionEvent<'turn/end'> | undefined;
       for (let i = events.length - 1; i >= 0; i -= 1) {
-        const event = events[i]?.event;
+        const event = events[i];
         if (event !== undefined && event.type === 'turn/end') {
           lastEnd = event;
           break;
@@ -1597,8 +1228,7 @@ export class AutoContinueRunner {
       if (lastEnd.time < now - config.freshMs) continue; // 太久远, 不翻旧账
       // 该 turn/end 之后不能有新回合或用户消息(说明已被处理)
       let superseded = false;
-      for (const entry of events) {
-        const event = entry.event;
+      for (const event of events) {
         if (event.seq <= lastEnd.seq) continue;
         if (event.type === 'turn/start') superseded = true;
         if (event.type === 'user/message' && event.data.source.kind === 'user') superseded = true;
@@ -1607,8 +1237,8 @@ export class AutoContinueRunner {
       if (superseded) continue;
       // 幂等护栏: 从历史事件里重建上一步工具调用的执行状态
       this.applyGuardFromEvents(state, events, lastEnd.seq);
-      this.log(`扫描发现中断 ${summary.sessionId}(turn/end:${reason.kind}), 安排自动继续`);
-      this.schedule(summary.sessionId, `scan:turn/end:${reason.kind}`);
+      this.log(`扫描发现中断 ${candidate.sessionId}(turn/end:${reason.kind}), 安排自动继续`);
+      this.schedule(candidate.sessionId, `scan:turn/end:${reason.kind}`);
     }
     return true;
   }
@@ -1616,22 +1246,20 @@ export class AutoContinueRunner {
   /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
   private applyGuardFromEvents(
     state: SessionState,
-    events: { event: SessionEvent }[],
+    events: readonly SessionEvent[],
     untilSeq: number,
   ): void {
     state.lastTool = undefined;
     state.lastToolResult = undefined;
     let call: SessionEvent<'tool/call'> | undefined;
-    for (const entry of events) {
-      const event = entry.event;
+    for (const event of events) {
       if (event.seq >= untilSeq) continue;
       if (event.type === 'tool/call') call = event;
     }
     if (call === undefined) return;
     state.lastTool = call.data.name;
     state.lastToolResult = 'pending';
-    for (const entry of events) {
-      const event = entry.event;
+    for (const event of events) {
       if (event.seq <= call.seq || event.seq >= untilSeq) continue;
       if (event.type === 'tool/result') {
         state.lastToolResult = toolResultFacts(event.data);

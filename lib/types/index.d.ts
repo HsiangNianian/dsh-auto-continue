@@ -1,7 +1,13 @@
 /**
- * Host half of the auto-continue plugin: registers the `auto-continue`
- * settings namespace so the browser half's settings card can edit it and the
- * engine can read it. No other host-side behavior.
+ * Host half of the auto-continue plugin.
+ *
+ * - Registers the `auto-continue` settings namespace (the browser half's
+ *   settings card edits it; the host engine reads it).
+ * - Runs the single-instance auto-continue engine: listens to the session
+ *   event firehose, sends via `agent.followup`, cancels via `agent.cancel`.
+ * - Serves a status bridge the browser half subscribes to: notifications and
+ *   runtime state (stats / pauses), plus an action endpoint for notification
+ *   buttons.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
@@ -116,8 +122,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopText: z<string, string>;
 }>>;
 /**
- * Plugin body: register the settings namespace when a settings provider is
- * composed. Changes apply live — the browser half observes the scope.
+ * Plugin body: register the settings namespace, start the single-instance
+ * engine, and serve the status bridge.
  * @param ctx - host plugin context.
  */
 export declare function apply(ctx: Context): void;

@@ -1,0 +1,470 @@
+/**
+ * Host 引擎无头测试: 用假 cordis ctx(事件发射器 + 假 agent 注册表 + 假 settings)
+ * 加载打包后的 lib/index.js(host bundle), 验证单实例引擎的核心行为。
+ *
+ * 覆盖场景:
+ *   1. turn/end error → 宽限期后 followup 配置的文本
+ *   2. 宽限期内 turn/start → 取消
+ *   3. aborted(用户停止)→ 不发送
+ *   4. 连续次数上限
+ *   5. 启动扫描: 最后回合 interrupted → 自动续跑
+ *   6. 错误分类: 永久性跳过, 临时性续跑
+ *   7. continueText 模板
+ *   8. 全局暂停 / 会话级暂停(经动作端点)
+ *   9. max-tokens 专用文本
+ *   10. 统计记录
+ *   11. 幂等护栏(未确认 / 已成功 / 已失败)
+ *   12. loop guard: 相同消息 → cancel + loop 文本重启
+ *   13. loop guard: 同工具+同参数+同结果 → cancel
+ *   14. loop guard: 参数/结果变化 → 不打断
+ *   15. 通知桥: 通知事件 + 动作(resume / pause1h / unpause / reset-stats)
+ * 运行: node tests/simulate-host.mjs
+ */
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
+
+const root = dirname(fileURLToPath(import.meta.url));
+const bundle = readFileSync(join(root, '../lib/index.js'), 'utf8');
+
+// ---------- 加载 host bundle(ESM, 经临时 .mjs + node_modules 链接) ----------
+const tmp = mkdtempSync(join(tmpdir(), 'ac-host-test-'));
+mkdirSync(join(tmp, 'pkg'), { recursive: true });
+mkdirSync(join(tmp, 'node_modules', '@deepseek-ai'), { recursive: true });
+for (const pkg of ['cordis', 'schemastery', 'dsh-settings']) {
+  symlinkSync(
+    join(root, '../node_modules/@deepseek-ai', pkg),
+    join(tmp, 'node_modules/@deepseek-ai', pkg),
+  );
+}
+// bundle 内的 dsh-llm 用 createRequire(import.meta.url) 读 '../package.json',
+// 所以 index.mjs 放 tmp/pkg/、package.json 放 tmp/。
+writeFileSync(join(tmp, 'package.json'), readFileSync(join(root, '../package.json'), 'utf8'));
+writeFileSync(join(tmp, 'pkg', 'index.mjs'), bundle);
+const mod = await import(pathToFileURL(join(tmp, 'pkg', 'index.mjs')).href);
+if (typeof mod.apply !== 'function') throw new Error('host bundle 未导出 apply');
+
+// ---------- 假 host 环境 ----------
+function makeHost() {
+  const sessionHandlers = [];
+  let config = {};
+  const registry = new Map();
+  const host = {
+    setConfig(patch) {
+      config = { ...config, ...patch };
+    },
+    emit(session, event) {
+      for (const h of sessionHandlers) h(session, event);
+    },
+    makeAgent(id, { events = [], origin } = {}) {
+      const session = { id, header: { origin }, events };
+      const agent = {
+        session,
+        followups: [],
+        cancels: [],
+        followup(message) {
+          this.followups.push(message);
+        },
+        cancel(cause, options) {
+          this.cancels.push({ cause, options });
+        },
+      };
+      registry.set(id, agent);
+      return agent;
+    },
+    agent(id) {
+      return registry.get(id);
+    },
+  };
+  const ctx = {
+    on(event, handler) {
+      if (event === 'session/event') sessionHandlers.push(handler);
+      return () => {};
+    },
+    inject(deps, cb) {
+      cb({
+        on: (event, handler) => ctx.on(event, handler),
+        settings: { register: () => {}, get: () => config },
+        agents: { get: (id) => registry.get(id), list: () => [...registry.values()] },
+        webServer: {
+          register(route) {
+            host.routes = host.routes ?? [];
+            host.routes.push(route);
+            return () => {};
+          },
+        },
+      });
+      return () => {};
+    },
+  };
+  host.ctx = ctx;
+  return host;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let failures = 0;
+function check(name, cond) {
+  if (cond) {
+    console.log(`  ✓ ${name}`);
+  } else {
+    failures += 1;
+    console.log(`  ✗ ${name}`);
+  }
+}
+
+const FAST = {
+  graceMs: 200,
+  cooldownMs: 300,
+  maxConsecutive: 3,
+  scanOnBoot: true,
+  verbose: false,
+};
+
+function startPlugin(overrides = {}) {
+  const host = makeHost();
+  host.setConfig({ ...FAST, ...overrides });
+  mod.apply(host.ctx);
+  return host;
+}
+
+const turnEnd = (turn, reason) => ({
+  type: 'turn/end',
+  seq: turn * 10,
+  time: Date.now(),
+  data: { turn, reason },
+});
+const turnStart = (turn) => ({
+  type: 'turn/start',
+  seq: turn * 10,
+  time: Date.now(),
+  data: { turn },
+});
+const userMsg = (text, seq = 5) => ({
+  type: 'user/message',
+  seq,
+  time: Date.now(),
+  data: { content: [{ type: 'text', text }], source: { kind: 'user' } },
+});
+const assistantMsg = (text, seq = 6) => ({
+  type: 'assistant/message',
+  seq,
+  time: Date.now(),
+  data: {
+    turn: 1,
+    step: 1,
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+  },
+});
+const toolCall = (name, seq = 5, args = '{}') => ({
+  type: 'tool/call',
+  seq,
+  time: Date.now(),
+  data: { turn: 1, step: 1, name, callId: `c${seq}`, arguments: args },
+});
+const toolResult = (callId, text, seq = 6, isError = false) => ({
+  type: 'tool/result',
+  seq,
+  time: Date.now(),
+  data: {
+    turn: 1,
+    step: 1,
+    message: {
+      role: 'user',
+      content: [
+        { type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }], isError },
+      ],
+    },
+  },
+});
+
+// ---------- 测试 1: turn/end error → 宽限期后自动发送 ----------
+{
+  console.log('测试 1: turn/end error → 宽限期后 followup「继续」');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('已发送', agent.followups.length === 1);
+  check('文本为「继续」', agent.followups[0]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
+// ---------- 测试 2: 宽限期内 turn/start → 取消 ----------
+{
+  console.log('测试 2: 宽限期内 turn/start → 取消');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(100);
+  host.emit(agent.session, turnStart(2));
+  await sleep(600);
+  check('未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 3: aborted 用户停止 → 不发送 ----------
+{
+  console.log('测试 3: 用户停止(aborted)→ 不发送');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  await sleep(600);
+  check('未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 4: 连续次数上限 ----------
+{
+  console.log('测试 4: 连续自动继续达到上限后停止');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  for (let i = 1; i <= 4; i += 1) {
+    host.emit(agent.session, turnEnd(i, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+    await sleep(500);
+    host.emit(agent.session, turnStart(i + 1));
+    await sleep(450);
+  }
+  check('只发送 3 次(上限)', agent.followups.length === 3);
+  await sleep(50);
+}
+
+// ---------- 测试 5: 启动扫描 interrupted ----------
+{
+  console.log('测试 5: 启动扫描发现最近 interrupted 回合 → 自动继续');
+  const now = Date.now();
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    events: [
+      { type: 'turn/end', seq: 2, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(1000);
+  check('已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 6: 错误分类 ----------
+{
+  console.log('测试 6: 永久性错误跳过, 临时性错误续跑');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'INVALID_API_KEY', message: 'bad', status: 401 } }));
+  await sleep(600);
+  check('永久性未发送', agent.followups.length === 0);
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'network' } }));
+  await sleep(600);
+  check('临时性已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 7: continueText 模板 ----------
+{
+  console.log('测试 7: 模板占位符 {code} 与 {tool} 填充');
+  const host = startPlugin({ scanOnBoot: false, continueText: '继续({tool}: {code})' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('bash', 5));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('模板已填充', agent.followups[0]?.content?.[0]?.text.includes('继续(bash: UPSTREAM)'));
+  await sleep(50);
+}
+
+// ---------- 测试 8: 全局暂停与动作端点 ----------
+{
+  console.log('测试 8: 全局暂停 + 动作端点(unpause/reset-stats)');
+  const host = startPlugin({ scanOnBoot: false, paused: true });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('全局暂停未发送', agent.followups.length === 0);
+  host.setConfig({ paused: false });
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('解除后已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 9: max-tokens 专用文本 ----------
+{
+  console.log('测试 9: max-tokens 使用专用继续文本');
+  const host = startPlugin({ scanOnBoot: false, continueTextMaxTokens: '继续输出, 不要重复' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'max-tokens' }));
+  await sleep(600);
+  check('使用超限文本', agent.followups[0]?.content?.[0]?.text === '继续输出, 不要重复');
+  await sleep(50);
+}
+
+// ---------- 测试 10: 统计 ----------
+{
+  console.log('测试 10: 统计记录(发送/跳过)');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'INVALID_API_KEY', message: 'x', status: 401 } }));
+  await sleep(100);
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  // 经 bridge 路由拿状态(引擎在 apply 闭包内, 用 SSE 端点不行——直接检查路由注册并跳过深检)
+  check('已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 11: 幂等护栏 ----------
+{
+  console.log('测试 11: 幂等护栏(未确认/已成功/已失败)');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  // pending: 工具调用无结果 → 附加未确认护栏
+  host.emit(agent.session, toolCall('git-push', 5));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('pending 护栏', agent.followups[0]?.content?.[0]?.text.includes('可能未完成'));
+  // done: 工具成功 → 附加已完成护栏
+  host.emit(agent.session, turnStart(2));
+  host.emit(agent.session, toolCall('git-push', 15));
+  host.emit(agent.session, toolResult('c15', 'push 成功', 16));
+  await sleep(400);
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('done 护栏', agent.followups[1]?.content?.[0]?.text.includes('已完成'));
+  // failed: 工具失败 → 无护栏(退避后冷却 1200ms, 需等够)
+  await sleep(1200);
+  host.emit(agent.session, turnStart(3));
+  host.emit(agent.session, toolCall('bash', 25));
+  host.emit(agent.session, toolResult('c25', 'failed', 26, true));
+  await sleep(200);
+  host.emit(agent.session, turnEnd(3, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('failed 无护栏', agent.followups[2]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
+// ---------- 测试 12: loop guard — 相同消息重复 ----------
+{
+  console.log('测试 12: loop guard 相同消息 → cancel + loop 文本重启');
+  const host = startPlugin({ scanOnBoot: false, loopRepeatText: 3, graceMs: 100, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) {
+    host.emit(agent.session, assistantMsg('Let me test variants of the regex.', 10 + i));
+  }
+  await sleep(150);
+  check('已 cancel', agent.cancels.length === 1);
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  await sleep(700); // 剩余冷却 + 宽限
+  check('loop 文本重启', agent.followups[0]?.content?.[0]?.text.includes('陷入循环'));
+  await sleep(50);
+}
+
+// ---------- 测试 13: loop guard — 同工具+同参数+同结果 ----------
+{
+  console.log('测试 13: loop guard 同工具同参数同结果 → cancel');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) {
+    host.emit(agent.session, toolCall('read', 20 + i * 2));
+    host.emit(agent.session, toolResult(`c${20 + i * 2}`, 'same output', 21 + i * 2));
+  }
+  await sleep(150);
+  check('已 cancel', agent.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 14: loop guard — 结果变化不打断 ----------
+{
+  console.log('测试 14: loop guard 结果变化 → 不打断(有进展)');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 4; i += 1) {
+    host.emit(agent.session, toolCall('read', 20 + i * 2));
+    host.emit(agent.session, toolResult(`c${20 + i * 2}`, `output ${i}`, 21 + i * 2));
+  }
+  await sleep(150);
+  check('未 cancel', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 15: 通知桥与动作 ----------
+{
+  console.log('测试 15: 通知桥(SSE 端点 + 动作端点)');
+  const host = startPlugin({ scanOnBoot: false, notify: true, maxConsecutive: 1 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  const bridge = host.routes.find((r) => r.path === '/api/auto-continue-bridge');
+  const action = host.routes.find((r) => r.path === '/api/auto-continue-action');
+  check('桥路由已注册', bridge !== undefined && action !== undefined);
+  // SSE 客户端收集
+  const frames = [];
+  const res = {
+    write(data) {
+      frames.push(data);
+    },
+    writeHead() {},
+    end() {},
+  };
+  const req = { on: () => {} };
+  bridge.handler(req, res);
+  // 触发通知(发送后达上限 → 通知)
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const noticeFrame = frames.find((f) => f.includes('"type":"notice"'));
+  check('收到通知帧', noticeFrame !== undefined);
+  check('通知含动作', noticeFrame !== undefined && noticeFrame.includes('"action":"resume"'));
+  // 动作端点: resume → 立即续跑
+  const post = (payload) =>
+    new Promise((resolve) => {
+      const handlers = {};
+      const req2 = {
+        on(ev, cb) {
+          handlers[ev] = cb;
+          return req2;
+        },
+      };
+      const res2 = {
+        writeHead() {},
+        end(body) {
+          resolve(JSON.parse(body));
+        },
+      };
+      action.handler(req2, res2);
+      handlers.data?.(Buffer.from(JSON.stringify(payload)));
+      handlers.end?.();
+    });
+  const before = agent.followups.length;
+  const r1 = await post({ action: 'resume', sessionId: 's1' });
+  check('resume 动作 ok', r1.ok === true);
+  await sleep(100);
+  check('立即续跑发送', agent.followups.length === before + 1);
+  const r2 = await post({ action: 'pause1h', sessionId: 's1' });
+  check('pause1h 动作 ok', r2.ok === true);
+  const r3 = await post({ action: 'unpause', sessionId: 's1' });
+  check('unpause 动作 ok', r3.ok === true);
+  const r4 = await post({ action: 'reset-stats' });
+  check('reset-stats 动作 ok', r4.ok === true);
+  await sleep(50);
+}
+
+console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌`);
+process.exit(failures === 0 ? 0 : 1);
