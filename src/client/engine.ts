@@ -1361,6 +1361,14 @@ export class AutoContinueRunner {
         this.log(`跳过 ${sessionId}: 发送计数已达上限 ${config.maxConsecutive}, 等待用户介入或成功回合`);
         return;
       }
+      // 宿主权威兜底: 历史里最后一条事件若正是同一文本的 user 消息, 说明它还在
+      // 排队未被处理——不再叠加发送(issue #13 的 13 条排队场景)。
+      // 若最后一条是回合结束等其他事件, 说明之前的同文本消息已被处理, 正常放行
+      // (连续续跑不被误挡)。查询失败时放行(本地防线仍在)。
+      if (!force && (await this.hostHasPendingSameText(sessionId, text))) {
+        this.log(`跳过 ${sessionId}: 宿主队列里已有相同文本消息在排队`);
+        return;
+      }
       state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
       try {
         const response = await this.api.sessions.prompt({
@@ -1453,8 +1461,30 @@ export class AutoContinueRunner {
     return { kind: 'failed', tool: state.lastTool };
   }
 
-  /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */
-  private readonly titles = new Map<SessionId, string>();
+  /**
+   * 宿主权威兜底: 历史里最后一条事件是否就是同一文本的 user 消息。
+   * 是 = 它还在排队未被处理, 不应再叠加发送; 否(回合结束等其他事件)= 放行。
+   * 查询失败时返回 false(放行, 本地防线仍在)。
+   */
+  private async hostHasPendingSameText(sessionId: SessionId, text: string): Promise<boolean> {
+    try {
+      const response = await this.api.sessions.history({ sessionId, maxMessages: 10 });
+      if (!response.result.ok) return false;
+      const events = response.result.value.events;
+      const last = events[events.length - 1]?.event;
+      if (last === undefined || last.type !== 'user/message') return false;
+      if (last.data.source?.kind !== 'user') return false;
+      const lastText = (last.data.content ?? [])
+        .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+        .map((part) => part.text)
+        .join('');
+      return lastText === text;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */  private readonly titles = new Map<SessionId, string>();
 
   /** 查一次 session.list, 顺带缓存该会话的标题。 */
   private async fetchSessionInfo(

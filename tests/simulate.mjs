@@ -1130,4 +1130,80 @@ console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌
   await sleep(50);
 }
 
+
+// ---------- 测试 41: issue #13 — 宿主最后一条是相同文本 user 消息(排队中)→ 不叠加发送 ----------
+{
+  console.log('测试 41: 宿主队列里已有相同文本消息在排队 → 不发送');
+  const api = new FakeApi();
+  const now = Date.now();
+  api.addSession('s1', {
+    events: [
+      {
+        event: {
+          type: 'user/message', seq: 1, time: now - 5000,
+          data: { content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } },
+        },
+      },
+    ],
+  });
+  startPlugin(api, { scanOnBoot: false, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 42: issue #13 — 同文本消息已被处理(最后是 turn/end)→ 连续续跑不被误挡 ----------
+{
+  console.log('测试 42: 同文本消息已处理(最后是 turn/end)→ 允许再发');
+  const api = new FakeApi();
+  const now = Date.now();
+  api.addSession('s1', {
+    events: [
+      {
+        event: {
+          type: 'user/message', seq: 1, time: now - 10000,
+          data: { content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } },
+        },
+      },
+      {
+        event: {
+          type: 'turn/end', seq: 2, time: now - 5000,
+          data: { turn: 1, reason: { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } } },
+        },
+      },
+    ],
+  });
+  startPlugin(api, { scanOnBoot: false, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('已发送(连续续跑未误挡)', api.prompts.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 43: issue #13 — 宿主最后一条 user 消息文本不同 → 放行 ----------
+{
+  console.log('测试 43: 宿主最后一条 user 消息文本不同 → 正常发送');
+  const api = new FakeApi();
+  const now = Date.now();
+  api.addSession('s1', {
+    events: [
+      {
+        event: {
+          type: 'user/message', seq: 1, time: now - 5000,
+          data: { content: [{ type: 'text', text: '我自己来' }], source: { kind: 'user' } },
+        },
+      },
+    ],
+  });
+  startPlugin(api, { scanOnBoot: false, cooldownMs: 300 });
+  await sleep(50);
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('已发送', api.prompts.length === 1);
+  await sleep(50);
+}
+
 process.exit(failures === 0 ? 0 : 1);

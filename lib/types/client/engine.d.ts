@@ -229,8 +229,13 @@ export declare class AutoContinueRunner {
     private buildContinueText;
     /** 上一步工具调用的护栏状态(实时路径, 由 mux 帧维护)。 */
     private currentGuard;
-    /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */
-    private readonly titles;
+    /**
+     * 宿主权威兜底: 历史里最后一条事件是否就是同一文本的 user 消息。
+     * 是 = 它还在排队未被处理, 不应再叠加发送; 否(回合结束等其他事件)= 放行。
+     * 查询失败时返回 false(放行, 本地防线仍在)。
+     */
+    private hostHasPendingSameText;
+    /** 会话标题缓存(来自 session.list 投影, {sessionTitle} 占位符用)。 */ private readonly titles;
     /** 查一次 session.list, 顺带缓存该会话的标题。 */
     private fetchSessionInfo;
     private runningViaList;

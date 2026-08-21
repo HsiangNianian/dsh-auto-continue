@@ -64,7 +64,7 @@ It watches the live event streams and reacts to:
 
 The plugin opens two extra SSE streams in the browser — `events.mux` (session events) and `events.host` (host events). The host supports multiple consumers, so this never interferes with the built-in runtime. On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then calls `sessions.prompt` in `queue` mode with the configured text.
 
-On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed).
+On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed). Before every send the plugin also asks the host one authoritative question — is the latest session event already this exact message? If the same text is still queued (the last event is that `user/message`), it skips; once the message has been processed (the last event is a turn end or anything else), a fresh send is allowed, so legitimate consecutive resumes are never blocked.
 
 With the page open in several tabs, a cross-tab atomic send lock (Web Locks API with a mutex-stamp fallback), a shared per-session cooldown stamp, and a shared send counter that hard-caps consecutive sends at `maxConsecutive` guarantee exactly one tab sends — no duplicated 「继续」, even when several tabs watch the same session.
 
@@ -243,7 +243,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 40 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 43 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.
