@@ -232,7 +232,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 
 - It opens the same two read-only event streams the web UI already uses (no extra server, no third-party endpoints)
 - The engine's **only automatic write** is `sessions.prompt` — the same call the Send button makes — with the text you configured (saving the settings card writes the `auto-continue` section of `~/.dsh/settings.yaml` through the normal settings API, exactly like any other setting)
-- Browser storage is limited to small `localStorage` keys: cross-tab coordination stamps, per-session pauses, and the daily stats counters
+- Browser storage is limited to small `localStorage` keys: cross-tab send locks and counts (a hard cap that stops duplicate sends even with several tabs open), per-session pauses, and the daily stats counters
 - Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
 
 ---
@@ -243,7 +243,7 @@ The plugin is browser-only and touches **no files, credentials, or network beyon
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # rebuild on change; host HMR hot-reloads without a page refresh
-npm run test        # node tests/simulate.mjs — 38 behavioral scenarios
+npm run test        # node tests/simulate.mjs — 40 behavioral scenarios
 ```
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.

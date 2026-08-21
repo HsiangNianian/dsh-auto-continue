@@ -847,9 +847,9 @@ console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌
   await sleep(150); // cancel 异步落定
   check('已调用 cancel', api.cancels.length === 1);
   check('cancel 目标会话', api.cancels[0] === 's1');
-  // 打断后的 aborted 带来源标记 → 用 loop 文本重启
+  // 打断后的 aborted 带来源标记 → 等冷却(300ms)结束后用 loop 文本重启
   api.pushMux(turnEnd('s1', 1, { kind: 'aborted', reason: { kind: 'human' } }));
-  await sleep(400); // 宽限 100ms + 余量
+  await sleep(700); // 剩余冷却 + 宽限 100ms + 余量
   check('已重启发送', api.prompts.length === 1);
   check('使用 loop 文本', api.prompts[0]?.content?.[0]?.text.includes('陷入循环'));
   check('looped 统计=1', exports.readTodayStats().looped === 1);
@@ -1061,6 +1061,72 @@ console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌
   api.pushMux(short(12, 'Let me read it now.'));
   await sleep(150);
   check('未调用 cancel', api.cancels.length === 0);
+  await sleep(50);
+}
+
+
+// ---------- 测试 38: issue #13 — 跨标签页持久化发送计数硬上限 ----------
+{
+  console.log('测试 38: 持久化发送计数达到上限 → 不再发送');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, maxConsecutive: 3, cooldownMs: 300 });
+  await sleep(50);
+  // 模拟其他标签页已发送 3 次(窗口内): 本标签页即使没发过也要被硬抑制
+  storage.set('dsh-auto-continue:count:s1', JSON.stringify({ at: Date.now(), count: 3 }));
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('未发送', api.prompts.length === 0);
+  // 成功回合清零计数 → 恢复发送
+  api.pushMux(turnEnd('s1', 2, { kind: 'completed' }));
+  await sleep(50);
+  check('计数已清零', storage.get('dsh-auto-continue:count:s1') === undefined);
+  api.pushMux(turnEnd('s1', 3, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('清零后恢复发送', api.prompts.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 39: issue #13 — 排队回显延迟超过旧 30s 窗口仍识别为自己 ----------
+{
+  console.log('测试 39: 延迟 5 分钟的排队回显 → 不误判为用户介入');
+  const api = new FakeApi();
+  api.addSession('s1');
+  startPlugin(api, { scanOnBoot: false, maxConsecutive: 1, cooldownMs: 300 });
+  await sleep(50);
+  // 第一次发送(consecutive=1, 达上限)
+  api.pushMux(turnEnd('s1', 1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(500);
+  check('已发送 1 次', api.prompts.length === 1);
+  // 排队消息 5 分钟后才被模型处理: 把发送记录时间拨回 5 分钟前
+  storage.set('dsh-auto-continue:last:s1', JSON.stringify({ at: Date.now() - 300000, text: '继续' }));
+  // 我们的回显到达(相同文本)——若误判为用户介入, consecutive/计数会清零并再次发送
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: {
+      type: 'user/message', seq: 30, time: Date.now(),
+      data: { content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } },
+    },
+  });
+  await sleep(100);
+  // 再推一次错误: 上限保持 → 不应发送第 2 次
+  api.pushMux(turnEnd('s1', 2, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('仍只有 1 次发送(回显未被误判)', api.prompts.length === 1);
+  // 真正的用户介入消息(不同文本)→ 清零 → 可再发
+  api.pushMux({
+    type: 'session/event',
+    sessionId: 's1',
+    event: {
+      type: 'user/message', seq: 40, time: Date.now(),
+      data: { content: [{ type: 'text', text: '我自己来' }], source: { kind: 'user' } },
+    },
+  });
+  await sleep(100);
+  api.pushMux(turnEnd('s1', 3, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  check('用户介入后恢复发送', api.prompts.length === 2);
   await sleep(50);
 }
 

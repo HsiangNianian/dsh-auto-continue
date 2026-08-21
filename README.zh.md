@@ -232,7 +232,7 @@ auto-continue:
 
 - 只复用 webui 本身就在用的两条只读事件流(无额外服务、无第三方端点)
 - 引擎**唯一会自动执行的写入**是 `sessions.prompt`——与点「发送」按钮完全相同的调用, 内容为你配置的文本(设置卡片里保存配置会通过常规设置 API 写入 `~/.dsh/settings.yaml` 的 `auto-continue` 段落, 与任何其他设置一样)
-- 浏览器存储仅限于少量 `localStorage` 键: 跨标签页协调时间戳、会话级暂停、每日统计计数
+- 浏览器存储仅限于少量 `localStorage` 键: 跨标签页发送锁与发送计数(多标签页同时打开时也绝不重复刷屏的硬上限)、会话级暂停、每日统计计数
 - 浏览器通知是可选开启的(`notify` 设置), 仅在首次使用时请求一次权限
 
 ---
@@ -243,7 +243,7 @@ auto-continue:
 npm run typecheck   # tsc --noEmit
 npm run build       # lib/client.js + lib/index.js + lib/types
 npm run watch       # 监听变更自动重建; 宿主 HMR 免刷新热重载
-npm run test        # node tests/simulate.mjs — 38 个行为场景
+npm run test        # node tests/simulate.mjs — 40 个行为场景
 ```
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。

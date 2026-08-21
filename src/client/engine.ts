@@ -390,8 +390,105 @@ function clientTimeZone(): string | undefined {
 const lockPrefix = 'dsh-auto-continue:';
 const lockKey = (sessionId: SessionId) => `${lockPrefix}lock:${sessionId}`;
 const stampKey = (sessionId: SessionId) => `${lockPrefix}last:${sessionId}`;
+const countKey = (sessionId: SessionId) => `${lockPrefix}count:${sessionId}`;
 
-/** 尝试独占本次发送: 两个标签页同时触发时只有一个成功。 */
+/**
+ * 上次自动发送的完整记录(跨标签页): 时间戳 + 文本。
+ * 回显识别用它而不是单 runner 内存, 所以任何标签页发出的消息都能被所有标签页认出。
+ */
+function readLastSent(sessionId: SessionId): { at: number; text: string } {
+  try {
+    const raw = localStorage.getItem(stampKey(sessionId));
+    if (raw === null) return { at: 0, text: '' };
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.text === 'string') {
+      return { at: Number(parsed.at) || 0, text: parsed.text };
+    }
+    return { at: Number(raw) || 0, text: '' }; // 兼容旧格式(纯时间戳)
+  } catch {
+    return { at: 0, text: '' };
+  }
+}
+
+/** 读「上次自动发送」时间戳(跨标签页冷却)。 */
+function readLastSend(sessionId: SessionId): number {
+  return readLastSent(sessionId).at;
+}
+
+function writeLastSend(sessionId: SessionId, at: number, text: string): void {
+  try {
+    localStorage.setItem(stampKey(sessionId), JSON.stringify({ at, text }));
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------- 跨标签页发送计数(硬上限, 不依赖回显识别) ----------
+
+/** 发送计数窗口: 超过该时长无新发送, 计数自动失效。 */
+const SEND_COUNT_WINDOW_MS = 10 * 60 * 1000;
+
+interface SendCount {
+  at: number;
+  count: number;
+}
+
+function readSendCount(sessionId: SessionId): SendCount {
+  try {
+    const raw = localStorage.getItem(countKey(sessionId));
+    if (raw === null) return { at: 0, count: 0 };
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.count === 'number') {
+      const at = Number(parsed.at) || 0;
+      if (Date.now() - at > SEND_COUNT_WINDOW_MS) return { at: 0, count: 0 }; // 窗口过期
+      return { at, count: parsed.count };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { at: 0, count: 0 };
+}
+
+function bumpSendCount(sessionId: SessionId): void {
+  try {
+    const current = readSendCount(sessionId);
+    localStorage.setItem(
+      countKey(sessionId),
+      JSON.stringify({ at: Date.now(), count: current.count + 1 }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 用户介入或成功回合后清零发送计数(跨标签页共享)。 */
+function clearSendCount(sessionId: SessionId): void {
+  try {
+    localStorage.removeItem(countKey(sessionId));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Web Locks: 跨标签页原子发送锁; 不可用(旧浏览器/测试环境)时回退到互斥戳。 */
+async function withSendLock(sessionId: SessionId, body: () => Promise<void>): Promise<void> {
+  const nav = (globalThis as { navigator?: unknown }).navigator as
+    | { locks?: { request: (name: string, cb: () => Promise<void>) => Promise<void> } }
+    | undefined;
+  if (nav?.locks !== undefined) {
+    await nav.locks.request(`dsh-auto-continue:send:${sessionId}`, body);
+    return;
+  }
+  // 回退: 尽力互斥(单标签页下可靠; 旧浏览器无 Web Locks)
+  if (!claimSend(sessionId)) return;
+  try {
+    await body();
+  } finally {
+    releaseSend(sessionId);
+  }
+}
+
+/** 尝试独占本次发送: 两个标签页同时触发时只有一个成功(Web Locks 的回退方案)。 */
 function claimSend(sessionId: SessionId): boolean {
   try {
     const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -405,23 +502,6 @@ function claimSend(sessionId: SessionId): boolean {
 function releaseSend(sessionId: SessionId): void {
   try {
     localStorage.removeItem(lockKey(sessionId));
-  } catch {
-    /* ignore */
-  }
-}
-
-/** 读/写「上次自动发送」时间戳(跨标签页冷却)。 */
-function readLastSend(sessionId: SessionId): number {
-  try {
-    return Number(localStorage.getItem(stampKey(sessionId)) ?? 0) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function writeLastSend(sessionId: SessionId, at: number): void {
-  try {
-    localStorage.setItem(stampKey(sessionId), String(at));
   } catch {
     /* ignore */
   }
@@ -628,6 +708,8 @@ interface SessionState {
     | undefined;
   /** 本回合已触发过 loop guard(防重复打断)。 */
   loopFired: boolean;
+  /** loop 重启的延迟定时器(冷却结束后再 schedule)。 */
+  loopRetryTimer: number | undefined;
   /** 我们主动 cancel 过本回合(区分用户停止)。 */
   loopCancelled: boolean;
 }
@@ -654,23 +736,32 @@ const freshState = (): SessionState => ({
   toolRun: undefined,
   loopFired: false,
   loopCancelled: false,
+  loopRetryTimer: undefined,
 });
 
 /** 自动发送后, 在该窗口内出现的回合结束才计入恢复统计。 */
 const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 
-/** 判定一条 user/message 是否是我们自己自动发送的回显。 */
-function isOurEcho(state: SessionState, event: SessionEvent): boolean {
+/** 回显识别窗口: 排队消息可能几分钟后才被模型处理到, 窗口必须远大于排队延迟。 */
+const ECHO_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * 判定一条 user/message 是否是我们自己自动发送的回显。
+ * 用 localStorage 里的上次发送记录(跨标签页): 任何标签页发出的消息,
+ * 所有标签页都能认出——排队回显不会误判为「用户介入」而清零上限。
+ */
+function isOurEcho(state: SessionState, sessionId: SessionId, event: SessionEvent): boolean {
   if (event.type !== 'user/message') return false;
   const message = event.data;
   if (message.source.kind !== 'user') return false;
-  if (state.lastSentText === '') return false;
-  if (Date.now() - state.lastAutoAt > 30000) return false;
+  const last = readLastSent(sessionId);
+  if (last.at === 0 || last.text === '') return false;
+  if (Date.now() - last.at > ECHO_WINDOW_MS) return false;
   const text = message.content
     .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
     .map((part) => part.text)
     .join('');
-  return text === state.lastSentText;
+  return text === last.text;
 }
 
 /** SSE 帧外壳: `{ rpcId, payload }`。 */
@@ -754,6 +845,7 @@ export class AutoContinueRunner {
     this.hostAbort.abort();
     for (const state of this.states.values()) {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
+      if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
     }
     this.states.clear();
   }
@@ -956,6 +1048,10 @@ export class AutoContinueRunner {
         state.toolRun = undefined;
         state.loopFired = false;
         state.loopCancelled = false;
+        if (state.loopRetryTimer !== undefined) {
+          clearTimeout(state.loopRetryTimer);
+          state.loopRetryTimer = undefined;
+        }
         this.cancelPending(sessionId, '宿主自行开启新回合');
         break;
       case 'turn/end': {
@@ -966,26 +1062,39 @@ export class AutoContinueRunner {
           // 成功回合: 恢复健康状态, 并确认上一次自动发送的效果
           state.consecutive = 0;
           state.lastFailure = undefined;
+          clearSendCount(sessionId);
           this.noteRecovery(sessionId, 'completed');
         } else if (reason.kind === 'aborted') {
           if (state.loopCancelled) {
             // 我们自己的 loop guard 打断: 视为可恢复中断, 用循环提示文本重启回合。
-            // 重启不受冷却限制(冷却约束的是"再次打断")。
+            // 不清 consecutive / lastAttemptAt: 冷却与连续上限在 loop 路径同样生效,
+            // 防止无限打断重发(issue #13); 打断本身受冷却约束, 重启也要等冷却。
             state.loopCancelled = false;
             state.loopFired = false;
-            state.consecutive = 0;
             state.pendingRecoveryAt = 0;
             state.shortRun = 0;
             state.lastShortAt = 0;
             state.lastAssistantText = '';
             state.sameTextRun = 0;
             state.toolRun = undefined;
-            state.lastAttemptAt = 0;
-            this.schedule(sessionId, 'loop:aborted');
+            // 重启受冷却约束(防紧密打断循环): 等剩余冷却结束后再调度
+            const cooldown = this.cooldownFor(state);
+            const remaining = cooldown - (Date.now() - state.lastAttemptAt);
+            if (remaining > 0) {
+              if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
+              state.loopRetryTimer = setTimeout(() => {
+                state.loopRetryTimer = undefined;
+                this.schedule(sessionId, 'loop:aborted');
+              }, remaining);
+              this.log(`loop 重启延迟 ${remaining}ms(冷却期) ${sessionId}`);
+            } else {
+              this.schedule(sessionId, 'loop:aborted');
+            }
           } else {
             // 用户主动停止: 不自动继续, 视为用户介入
             state.consecutive = 0;
             state.pendingRecoveryAt = 0;
+            clearSendCount(sessionId);
           }
         } else if (reason.kind === 'blocked') {
           // 策略拒绝: 不自动继续
@@ -1015,10 +1124,11 @@ export class AutoContinueRunner {
         break;
       }
       case 'user/message':
-        if (isOurEcho(state, event)) break; // 我们自己的回显
+        if (isOurEcho(state, sessionId, event)) break; // 我们自己的回显(跨标签页识别)
         if (event.data.source.kind === 'user') {
-          // 用户手动介入
+          // 用户手动介入: 清零上限与跨标签页发送计数
           state.consecutive = 0;
+          clearSendCount(sessionId);
           this.cancelPending(sessionId, '用户手动发送消息');
         }
         break;
@@ -1212,13 +1322,10 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}: 已有排队消息`);
       return;
     }
-    // 跨标签页冷却(自适应退避); 通知按钮的强制续跑不受冷却约束
-    if (!force && Date.now() - readLastSend(sessionId) < this.cooldownFor(state)) {
-      this.log(`跳过 ${sessionId}: 其他标签页刚发送过`);
-      return;
-    }
-    if (!claimSend(sessionId)) {
-      this.log(`跳过 ${sessionId}: 其他标签页正在发送`);
+    // 跨标签页持久化发送计数: 窗口内达到 maxConsecutive 即硬抑制,
+    // 不依赖回显识别与单 runner 内存(issue #13 的多标签页刷屏防线)。
+    if (!force && readSendCount(sessionId).count >= config.maxConsecutive) {
+      this.log(`跳过 ${sessionId}: 发送计数已达上限 ${config.maxConsecutive}, 等待用户介入或成功回合`);
       return;
     }
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
@@ -1237,51 +1344,68 @@ export class AutoContinueRunner {
     }
     const text = this.buildContinueText(config, state, template, sessionTitle);
     const zone = clientTimeZone();
-    state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
-    try {
-      const response = await this.api.sessions.prompt({
-        sessionId,
-        mode: 'queue',
-        content: [{ type: 'text', text }],
-        ...(zone === undefined ? {} : { clientTimeZone: zone }),
-      });
-      if (response.result.ok) {
-        const now = Date.now();
-        state.consecutive += 1;
-        state.lastAutoAt = now;
-        state.lastSentText = text;
-        state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
-        writeLastSend(sessionId, now);
-        bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
-        this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
-        if (config.notify) {
-          notify(
-            'dsh-auto-continue: 已自动继续',
-            `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`,
-            this.notifyOptions(sessionId),
-          );
-        }
-        if (state.consecutive >= config.maxConsecutive) {
-          bumpStat({ gaveUp: 1 });
-          this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
+    // 跨标签页原子发送锁(Web Locks; 回退到互斥戳):
+    // 冷却检查、发送、计数、时间戳全部在锁内, 两个标签页不会同时放行。
+    await withSendLock(sessionId, async () => {
+      if (this.disposed) return;
+      if (state.queued > 0) {
+        this.log(`跳过 ${sessionId}: 已有排队消息`);
+        return;
+      }
+      // 跨标签页冷却(自适应退避); 通知按钮的强制续跑不受冷却约束
+      if (!force && Date.now() - readLastSend(sessionId) < this.cooldownFor(state)) {
+        this.log(`跳过 ${sessionId}: 其他标签页刚发送过`);
+        return;
+      }
+      if (!force && readSendCount(sessionId).count >= config.maxConsecutive) {
+        this.log(`跳过 ${sessionId}: 发送计数已达上限 ${config.maxConsecutive}, 等待用户介入或成功回合`);
+        return;
+      }
+      state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
+      try {
+        const response = await this.api.sessions.prompt({
+          sessionId,
+          mode: 'queue',
+          content: [{ type: 'text', text }],
+          ...(zone === undefined ? {} : { clientTimeZone: zone }),
+        });
+        if (response.result.ok) {
+          const now = Date.now();
+          state.consecutive += 1;
+          state.lastAutoAt = now;
+          state.lastSentText = text;
+          state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
+          writeLastSend(sessionId, now, text); // 记录文本: 跨标签页回显识别
+          bumpSendCount(sessionId); // 跨标签页持久化计数(硬上限)
+          bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
+          this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
           if (config.notify) {
             notify(
-              'dsh-auto-continue: 已停止自动继续',
-              `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`,
+              'dsh-auto-continue: 已自动继续',
+              `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`,
               this.notifyOptions(sessionId),
             );
           }
+          if (state.consecutive >= config.maxConsecutive) {
+            bumpStat({ gaveUp: 1 });
+            this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
+            if (config.notify) {
+              notify(
+                'dsh-auto-continue: 已停止自动继续',
+                `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`,
+                this.notifyOptions(sessionId),
+              );
+            }
+          }
+        } else {
+          this.log(
+            `发送失败 ${sessionId}: ${response.result.error.code} ${response.result.error.message}`,
+          );
         }
-      } else {
-        this.log(
-          `发送失败 ${sessionId}: ${response.result.error.code} ${response.result.error.message}`,
-        );
+      } catch (error) {
+        this.log(`发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
-    } catch (error) {
-      this.log(`发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      releaseSend(sessionId);
-    }
+    });
   }
 
   /**
