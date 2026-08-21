@@ -66,7 +66,7 @@ The plugin opens two extra SSE streams in the browser — `events.mux` (session 
 
 On page load / reconnect it also scans the most recently updated sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed).
 
-With the page open in several tabs, a localStorage mutex plus a shared per-session cooldown stamp guarantee exactly one tab sends — no duplicated 「继续」.
+With the page open in several tabs, a cross-tab atomic send lock (Web Locks API with a mutex-stamp fallback), a shared per-session cooldown stamp, and a shared send counter that hard-caps consecutive sends at `maxConsecutive` guarantee exactly one tab sends — no duplicated 「继续」, even when several tabs watch the same session.
 
 All knobs live in the plugin's settings card — see [Configuration](#configuration).
 
