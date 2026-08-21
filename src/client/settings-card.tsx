@@ -48,8 +48,6 @@ export interface AutoContinueSettingsCardState extends CardShell {
   scanOnBoot: CardFieldState;
   scanLimit: CardFieldState;
   freshMs: CardFieldState;
-  reconnectScanDelayMs: CardFieldState;
-  reconnectBackoffMs: CardFieldState;
   verbose: CardFieldState;
   classify: CardFieldState;
   backoffFactor: CardFieldState;
@@ -94,8 +92,6 @@ export class AutoContinueSettingsCardController {
       booleanField('scanOnBoot'),
       numberField('scanLimit', 1),
       numberField('freshMs', 0),
-      numberField('reconnectScanDelayMs', 0),
-      numberField('reconnectBackoffMs', 0),
       booleanField('verbose'),
       booleanField('classify'),
       numberField('backoffFactor', 1),
@@ -127,8 +123,6 @@ export class AutoContinueSettingsCardController {
       scanOnBoot: this.form.field('scanOnBoot'),
       scanLimit: this.form.field('scanLimit'),
       freshMs: this.form.field('freshMs'),
-      reconnectScanDelayMs: this.form.field('reconnectScanDelayMs'),
-      reconnectBackoffMs: this.form.field('reconnectBackoffMs'),
       verbose: this.form.field('verbose'),
       classify: this.form.field('classify'),
       backoffFactor: this.form.field('backoffFactor'),
@@ -541,26 +535,6 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.freshMs}
         onEdit={(text) => props.edit('freshMs', text)}
         onReset={() => props.resetField('freshMs')}
-      />
-      <ValueField
-        id="auto-continue-reconnect-scan-delay"
-        label={t('field.reconnectScanDelayMs')}
-        hint={t('field.reconnectScanDelayMsHint')}
-        numeric
-        {...shared}
-        {...state.reconnectScanDelayMs}
-        onEdit={(text) => props.edit('reconnectScanDelayMs', text)}
-        onReset={() => props.resetField('reconnectScanDelayMs')}
-      />
-      <ValueField
-        id="auto-continue-reconnect-backoff"
-        label={t('field.reconnectBackoffMs')}
-        hint={t('field.reconnectBackoffMsHint')}
-        numeric
-        {...shared}
-        {...state.reconnectBackoffMs}
-        onEdit={(text) => props.edit('reconnectBackoffMs', text)}
-        onReset={() => props.resetField('reconnectBackoffMs')}
       />
       <BooleanField
         id="auto-continue-verbose"

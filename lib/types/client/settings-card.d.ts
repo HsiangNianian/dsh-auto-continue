@@ -16,8 +16,6 @@ export interface AutoContinueSettingsCardState extends CardShell {
     scanOnBoot: CardFieldState;
     scanLimit: CardFieldState;
     freshMs: CardFieldState;
-    reconnectScanDelayMs: CardFieldState;
-    reconnectBackoffMs: CardFieldState;
     verbose: CardFieldState;
     classify: CardFieldState;
     backoffFactor: CardFieldState;

@@ -162,8 +162,6 @@ auto-continue:
   scanOnBoot: true
   scanLimit: 8
   freshMs: 900000
-  reconnectScanDelayMs: 5000
-  reconnectBackoffMs: 3000
   verbose: true
   classify: true
   backoffFactor: 2
@@ -210,8 +208,6 @@ auto-continue:
 | 启动/重连扫描 | 开 | 页面启动 / 重连时扫描最近中断的会话 |
 | 扫描会话数 | `8` | 扫描最多检查的会话数(不含运行中 / 子代理会话) |
 | 扫描时间窗 (ms) | `900000` | 扫描只处理该时间窗内的中断 |
-| 重连扫描延迟 (ms) | `5000` | 遗留字段 — 引擎迁入宿主后不再使用(仅为配置兼容保留) |
-| 重连退避 (ms) | `3000` | 遗留字段 — 引擎迁入宿主后不再使用(仅为配置兼容保留) |
 | 详细日志 | 开 | 控制台输出 `[auto-continue]` 日志 |
 | 错误分类 | 开 | 仅自动恢复临时性错误; 认证 / 余额 / 模型等永久性错误跳过并通知 |
 | 退避系数 | `2` | 连续失败时冷却间隔的倍率(2 = 20s → 40s → 80s…) |

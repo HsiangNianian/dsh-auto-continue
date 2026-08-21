@@ -162,8 +162,6 @@ auto-continue:
   scanOnBoot: true
   scanLimit: 8
   freshMs: 900000
-  reconnectScanDelayMs: 5000
-  reconnectBackoffMs: 3000
   verbose: true
   classify: true
   backoffFactor: 2
@@ -210,8 +208,6 @@ auto-continue:
 | Scan on load / reconnect | `on` | Scan recently interrupted sessions on load / reconnect |
 | Scan limit | `8` | Max sessions scanned (running / subagent sessions excluded) |
 | Scan window (ms) | `900000` | Scan only considers interruptions inside this window |
-| Reconnect scan delay (ms) | `5000` | Legacy — unused since the engine moved into the host (kept for config compatibility) |
-| Reconnect backoff (ms) | `3000` | Legacy — unused since the engine moved into the host (kept for config compatibility) |
 | Verbose logs | `on` | `[auto-continue]` console logs |
 | Classify errors | `on` | Auto-resume transient failures only; auth / balance / model errors are skipped and notified |
 | Backoff factor | `2` | Cooldown multiplier per consecutive failure (2 = 20s → 40s → 80s…) |

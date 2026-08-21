@@ -37,10 +37,6 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     scanLimit: z<number, number>;
     /** Scan only considers interruptions inside this window (ms). */
     freshMs: z<number, number>;
-    /** Delay before scanning after a reconnect (ms). */
-    reconnectScanDelayMs: z<number, number>;
-    /** SSE reconnect backoff (ms). */
-    reconnectBackoffMs: z<number, number>;
     /** Log `[auto-continue]` lines to the browser console. */
     verbose: z<boolean, boolean>;
     /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
@@ -90,10 +86,6 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     scanLimit: z<number, number>;
     /** Scan only considers interruptions inside this window (ms). */
     freshMs: z<number, number>;
-    /** Delay before scanning after a reconnect (ms). */
-    reconnectScanDelayMs: z<number, number>;
-    /** SSE reconnect backoff (ms). */
-    reconnectBackoffMs: z<number, number>;
     /** Log `[auto-continue]` lines to the browser console. */
     verbose: z<boolean, boolean>;
     /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */

@@ -31,10 +31,6 @@ export declare const zh: {
     'field.scanLimitHint': string;
     'field.freshMs': string;
     'field.freshMsHint': string;
-    'field.reconnectScanDelayMs': string;
-    'field.reconnectScanDelayMsHint': string;
-    'field.reconnectBackoffMs': string;
-    'field.reconnectBackoffMsHint': string;
     'field.verbose': string;
     'field.verboseHint': string;
     'field.classify': string;

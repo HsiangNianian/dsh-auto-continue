@@ -12,7 +12,8 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import { settingsNamespace } from '@deepseek-ai/dsh-settings';
-import { AutoContinueRunner, resolveConfig, type AutoContinueSettings } from './host/engine.ts';
+import { AutoContinueRunner } from './host/engine.ts';
+import { resolveConfig, type AutoContinueSettings } from './shared/core.ts';
 // Type-only: pulls the `ctx.settings` Context augmentation from dsh-settings.
 import type {} from '@deepseek-ai/dsh-settings';
 // Type-only: pulls the `ctx.webServer` Context augmentation.
@@ -51,10 +52,6 @@ export const AutoContinueSchema = z.object({
   scanLimit: z.natural().min(1).default(8),
   /** Scan only considers interruptions inside this window (ms). */
   freshMs: z.natural().default(15 * 60 * 1000),
-  /** Delay before scanning after a reconnect (ms). */
-  reconnectScanDelayMs: z.natural().default(5000),
-  /** SSE reconnect backoff (ms). */
-  reconnectBackoffMs: z.natural().default(3000),
   /** Log `[auto-continue]` lines to the browser console. */
   verbose: z.boolean().default(true),
   /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
