@@ -72,7 +72,7 @@ The browser half is a thin shell: the settings card, plus a status bridge that s
 
 DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, restart `dsh web`, done.
 
-> **Requires DSH ≥ 0.1.0-rc.7** — newer versions register the settings card through the keyed `settings.plugin.item` slot; on rc.6 and earlier the plugin fails to load (`list slot ... requires options.id`). Upgrade dsh first.
+> **Use the latest DSH (recommended: 0.1.2-alpha.1 or newer).** Run `dsh --version` before installing. Plugin v0.8.2 supports the new 0.1.2 client-store module layout and retains a fallback for DSH 0.1.0-rc.7 through 0.1.1; rc.6 and earlier remain unsupported (`list slot ... requires options.id`). Preview releases may appear on the [official DSH releases page](https://github.com/deepseek-ai/deepseek-harness/releases) before the public npm tag catches up.
 
 ### From npm (recommended)
 
@@ -240,7 +240,7 @@ npm run test        # node tests/simulate-host.mjs — 15 host-side behavioral s
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.
 
-CI runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check) on every push to `main` and every pull request, and gates releases — the tag workflow refuses to publish while the check fails.
+CI installs from the lockfile, typechecks, rebuilds and verifies committed artifacts, runs the host and dual-layout client simulations, then runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check). The same health check gates releases.
 
 ---
 

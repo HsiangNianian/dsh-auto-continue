@@ -18,6 +18,21 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install plugin dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Verify committed build artifacts
+        run: git diff --exit-code -- lib
+
       - name: Clone dsh-plugin-check (pinned)
         run: |
           git clone --depth 1 https://github.com/omdsh-dev/dsh-plugin-check /tmp/dsh-plugin-check
@@ -27,7 +42,7 @@ jobs:
 
       - name: Install checker dependencies
         working-directory: /tmp/dsh-plugin-check
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run plugin_check
         run: node scripts/ci-plugin-check.mjs

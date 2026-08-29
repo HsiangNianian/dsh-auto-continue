@@ -10,8 +10,7 @@
  * default — and whether the user layer carries it (presence, not value
  * equality, marks an override).
  */
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings';
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-store';
+import type { SettingsScope, SnapshotStore } from './dsh-store-compat.ts';
 /** The write one field's staged text performs when the card is saved. */
 export type FieldWrite = {
     kind: 'set';
