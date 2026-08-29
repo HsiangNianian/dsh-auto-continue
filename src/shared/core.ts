@@ -456,4 +456,3 @@ export function isOurEcho(state: SessionState, event: SessionEvent): boolean {
     .join('');
   return text === state.lastSentText;
 }
-
