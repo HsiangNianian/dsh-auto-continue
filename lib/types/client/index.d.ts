@@ -9,7 +9,7 @@
  *   action endpoint,
  * - feeds the card's stats / paused-sessions panels from the bridge state.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import { type SettingsCardKey } from './locales.ts';
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {

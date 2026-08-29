@@ -9,7 +9,7 @@
  *   action endpoint,
  * - feeds the card's stats / paused-sessions panels from the bridge state.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client';
 // Type-only: pulls the settings-surface SlotMap merge and ctx.settingsScope.

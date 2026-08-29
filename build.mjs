@@ -49,8 +49,6 @@ const EXTERNALS = [
   // graph-row packages (resolved through the module loader)
   "@deepseek-ai/dsh-client-connection",
   "@deepseek-ai/dsh-client-connection/client",
-  "@deepseek-ai/dsh-client-runtime",
-  "@deepseek-ai/dsh-client-runtime/client",
   "@deepseek-ai/dsh-client-locale",
   "@deepseek-ai/dsh-api-remotes",
   "@deepseek-ai/dsh-api-remotes/client",

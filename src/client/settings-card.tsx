@@ -8,9 +8,9 @@
  * tokens so the card follows the active theme.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { createSnapshotStore, type SettingsScope, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client';
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
+import { createSnapshotStore, type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
 import {
   pausedSessions,
   readTodayStats,
