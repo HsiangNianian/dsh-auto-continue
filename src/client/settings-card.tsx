@@ -50,6 +50,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
   freshMs: CardFieldState;
   verbose: CardFieldState;
   classify: CardFieldState;
+  retryableErrorPatterns: CardFieldState;
   backoffFactor: CardFieldState;
   backoffMaxMs: CardFieldState;
   notify: CardFieldState;
@@ -94,6 +95,7 @@ export class AutoContinueSettingsCardController {
       numberField('freshMs', 0),
       booleanField('verbose'),
       booleanField('classify'),
+      textField('retryableErrorPatterns'),
       numberField('backoffFactor', 1),
       numberField('backoffMaxMs', 0),
       booleanField('notify'),
@@ -125,6 +127,7 @@ export class AutoContinueSettingsCardController {
       freshMs: this.form.field('freshMs'),
       verbose: this.form.field('verbose'),
       classify: this.form.field('classify'),
+      retryableErrorPatterns: this.form.field('retryableErrorPatterns'),
       backoffFactor: this.form.field('backoffFactor'),
       backoffMaxMs: this.form.field('backoffMaxMs'),
       notify: this.form.field('notify'),
@@ -230,7 +233,8 @@ interface FieldProps {
 }
 
 /** A staged value field; `numeric` only hints the keypad, which drafts a field accepts is decided by its spec. */
-function ValueField(props: FieldProps & { numeric?: boolean; placeholder?: string }) {
+function ValueField(props: FieldProps & { numeric?: boolean; multiline?: boolean; placeholder?: string }) {
+  const className = props.invalid ? 'dshAcInput dshAcInputInvalid' : 'dshAcInput';
   return (
     <div className="dshAcField">
       <div className="dshAcHead">
@@ -244,17 +248,30 @@ function ValueField(props: FieldProps & { numeric?: boolean; placeholder?: strin
           </span>
         ) : null}
       </div>
-      <input
-        id={props.id}
-        className={props.invalid ? 'dshAcInput dshAcInputInvalid' : 'dshAcInput'}
-        type="text"
-        inputMode={props.numeric === true ? 'numeric' : undefined}
-        aria-invalid={props.invalid || undefined}
-        value={props.text}
-        placeholder={props.placeholder ?? ''}
-        disabled={props.disabled}
-        onChange={(event) => props.onEdit(event.target.value)}
-      />
+      {props.multiline === true ? (
+        <textarea
+          id={props.id}
+          className={`${className} dshAcTextArea`}
+          aria-invalid={props.invalid || undefined}
+          value={props.text}
+          placeholder={props.placeholder ?? ''}
+          disabled={props.disabled}
+          rows={4}
+          onChange={(event) => props.onEdit(event.target.value)}
+        />
+      ) : (
+        <input
+          id={props.id}
+          className={className}
+          type="text"
+          inputMode={props.numeric === true ? 'numeric' : undefined}
+          aria-invalid={props.invalid || undefined}
+          value={props.text}
+          placeholder={props.placeholder ?? ''}
+          disabled={props.disabled}
+          onChange={(event) => props.onEdit(event.target.value)}
+        />
+      )}
       <p className={props.invalid ? 'dshAcInvalid' : 'dshAcHint'}>
         {props.invalid ? props.t('chrome.invalidNumber') : props.hint}
       </p>
@@ -553,6 +570,17 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...state.classify}
         onEdit={(text) => props.edit('classify', text)}
         onReset={() => props.resetField('classify')}
+      />
+      <ValueField
+        id="auto-continue-retryable-error-patterns"
+        label={t('field.retryableErrorPatterns')}
+        hint={t('field.retryableErrorPatternsHint')}
+        multiline
+        {...shared}
+        {...state.retryableErrorPatterns}
+        onEdit={(text) => props.edit('retryableErrorPatterns', text)}
+        placeholder="Upstream rejected the request as invalid"
+        onReset={() => props.resetField('retryableErrorPatterns')}
       />
       <ValueField
         id="auto-continue-backoff-factor"

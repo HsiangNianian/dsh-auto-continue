@@ -18,6 +18,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
     freshMs: CardFieldState;
     verbose: CardFieldState;
     classify: CardFieldState;
+    retryableErrorPatterns: CardFieldState;
     backoffFactor: CardFieldState;
     backoffMaxMs: CardFieldState;
     notify: CardFieldState;

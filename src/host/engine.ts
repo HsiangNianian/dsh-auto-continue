@@ -459,7 +459,7 @@ export class AutoContinueRunner {
 
   private onTurnFailure(sessionId: SessionId, reason: string, failure: FailureFacts): void {
     const config = this.getConfig();
-    if (config.classify && !isTransientFailure(failure)) {
+    if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
       const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
       this.log(`跳过 ${sessionId}(${reason}): 永久性失败 ${summary} — ${failure.message}`);
       this.bumpStat({ skipped: 1, code: failure.code });

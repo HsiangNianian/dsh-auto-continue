@@ -9,6 +9,7 @@
  *   4. 连续次数上限
  *   5. 启动扫描: 最后回合 interrupted → 自动续跑
  *   6. 错误分类: 永久性跳过, 临时性续跑
+ *   6b. provider 专属错误的用户自定义可恢复匹配
  *   7. continueText 模板
  *   8. 全局暂停 / 会话级暂停(经动作端点)
  *   9. max-tokens 专用文本
@@ -263,6 +264,36 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'network' } }));
   await sleep(600);
   check('临时性已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 6b: 用户自定义可恢复错误 ----------
+{
+  console.log('测试 6b: 用户匹配的 provider 专属错误覆盖内置分类');
+  const failure = {
+    kind: 'error',
+    error: {
+      code: 'INVALID_REQUEST',
+      status: 500,
+      message: '{"error":{"message":"Upstream rejected the request as invalid","type":"invalid_request_error"},"type":"error"}',
+    },
+  };
+  const defaultHost = startPlugin({ scanOnBoot: false });
+  const defaultAgent = defaultHost.makeAgent('default');
+  await sleep(50);
+  defaultHost.emit(defaultAgent.session, turnEnd(1, failure));
+  await sleep(600);
+  check('未配置时仍按内置分类跳过', defaultAgent.followups.length === 0);
+
+  const host = startPlugin({
+    scanOnBoot: false,
+    retryableErrorPatterns: 'another provider message\nupstream rejected the request as invalid',
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, failure));
+  await sleep(600);
+  check('多行中任一项大小写不敏感匹配后已发送', agent.followups.length === 1);
   await sleep(50);
 }
 

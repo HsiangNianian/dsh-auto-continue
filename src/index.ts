@@ -56,6 +56,8 @@ export const AutoContinueSchema = z.object({
   verbose: z.boolean().default(true),
   /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
   classify: z.boolean().default(true),
+  /** Provider-specific message/code/status fragments that explicitly count as retryable, one literal per line. */
+  retryableErrorPatterns: z.string().default(''),
   /** Cooldown multiplier per consecutive failure (adaptive backoff). */
   backoffFactor: z.natural().min(1).default(2),
   /** Cap on the effective backoff interval (ms). */

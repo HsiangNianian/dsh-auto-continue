@@ -35,6 +35,8 @@ export declare const zh: {
     'field.verboseHint': string;
     'field.classify': string;
     'field.classifyHint': string;
+    'field.retryableErrorPatterns': string;
+    'field.retryableErrorPatternsHint': string;
     'field.backoffFactor': string;
     'field.backoffFactorHint': string;
     'field.backoffMaxMs': string;
