@@ -1,6 +1,6 @@
 {
   "name": "dsh-client-auto-continue",
-  "description": "DSH Web UI plugin: automatically sends \"继续\" (continue) when a request is interrupted by network errors or other non-human causes",
+  "description": "DSH Web UI plugin: automatically sends a localized continue prompt when a request is interrupted by network errors or other non-human causes",
   "version": "0.9.0",
   "type": "module",
   "main": "lib/index.js",

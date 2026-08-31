@@ -1,8 +1,3 @@
-/**
- * `auto-continue` namespace dictionaries: copy for the plugin settings card
- * registered into the `settings.plugin.item` seat of the plugin-configuration
- * section. Includes the card-chrome keys the card component reads.
- */
 /** 简体中文词典(键集的事实来源)。 */
 export declare const zh: {
     'card.title': string;
@@ -11,14 +6,18 @@ export declare const zh: {
     'field.pausedHint': string;
     'field.continueText': string;
     'field.continueTextHint': string;
+    'default.continueText': "继续";
     'field.continueTextMaxTokens': string;
     'field.continueTextMaxTokensHint': string;
+    'default.continueTextMaxTokens': "继续";
     'field.guardTools': string;
     'field.guardToolsHint': string;
     'field.guardPendingText': string;
     'field.guardPendingTextHint': string;
+    'default.guardPendingText': "(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)";
     'field.guardDoneText': string;
     'field.guardDoneTextHint': string;
+    'default.guardDoneText': "(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)";
     'field.graceMs': string;
     'field.graceMsHint': string;
     'field.cooldownMs': string;
@@ -64,6 +63,7 @@ export declare const zh: {
     'field.loopToolRepeatHint': string;
     'field.loopText': string;
     'field.loopTextHint': string;
+    'default.loopText': "(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)";
     'stats.byCode': string;
     'stats.empty': string;
     'stats.reset': string;

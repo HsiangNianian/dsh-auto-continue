@@ -34,6 +34,7 @@ import {
   todayKey,
   toolResultFacts,
   type AutoContinueConfig,
+  type AutoContinueLocale,
   type DayStats,
   type FailureFacts,
   type SessionState,
@@ -41,6 +42,35 @@ import {
   type NotifyOptions,
   type TemplateContext,
 } from '../shared/core.ts';
+
+const NOTICE_COPY = {
+  zh: {
+    notContinuedTitle: 'dsh-auto-continue: 未自动继续',
+    permanentErrorBody: (sessionId: SessionId, summary: string) =>
+      `${sessionId}: 永久性错误 ${summary}，需要人工处理`,
+    resumeAction: '立即续跑',
+    pauseAction: '暂停该会话 1 小时',
+    continuedTitle: 'dsh-auto-continue: 已自动继续',
+    continuedBody: (sessionId: SessionId, text: string, count: number) =>
+      `${sessionId}: 已发送「${text}」(第 ${count} 次连续)`,
+    stoppedTitle: 'dsh-auto-continue: 已停止自动继续',
+    stoppedBody: (sessionId: SessionId, count: number) =>
+      `${sessionId}: 连续失败 ${count} 次, 需要人工介入`,
+  },
+  en: {
+    notContinuedTitle: 'dsh-auto-continue: Not continued',
+    permanentErrorBody: (sessionId: SessionId, summary: string) =>
+      `${sessionId}: Permanent error ${summary}; manual intervention required`,
+    resumeAction: 'Resume now',
+    pauseAction: 'Pause this session for 1 hour',
+    continuedTitle: 'dsh-auto-continue: Continued automatically',
+    continuedBody: (sessionId: SessionId, text: string, count: number) =>
+      `${sessionId}: Sent "${text}" (consecutive attempt ${count})`,
+    stoppedTitle: 'dsh-auto-continue: Auto-continue stopped',
+    stoppedBody: (sessionId: SessionId, count: number) =>
+      `${sessionId}: ${count} consecutive failures; manual intervention required`,
+  },
+} as const satisfies Record<AutoContinueLocale, Record<string, unknown>>;
 
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
@@ -460,14 +490,15 @@ export class AutoContinueRunner {
   private onTurnFailure(sessionId: SessionId, reason: string, failure: FailureFacts): void {
     const config = this.getConfig();
     if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
+      const copy = NOTICE_COPY[config.locale];
       const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
       this.log(`跳过 ${sessionId}(${reason}): 永久性失败 ${summary} — ${failure.message}`);
       this.bumpStat({ skipped: 1, code: failure.code });
       if (config.notify) {
         this.notify(
-          'dsh-auto-continue: 未自动继续',
-          `${sessionId}: 永久性错误 ${summary}，需要人工处理`,
-          this.notifyOptions(sessionId),
+          copy.notContinuedTitle,
+          copy.permanentErrorBody(sessionId, summary),
+          this.notifyOptions(sessionId, config.locale),
         );
       }
       return;
@@ -476,11 +507,12 @@ export class AutoContinueRunner {
   }
 
   /** 通知操作按钮与回调(「立即续跑」/「暂停该会话 1 小时」)。 */
-  private notifyOptions(sessionId: SessionId): NotifyOptions {
+  private notifyOptions(sessionId: SessionId, locale: AutoContinueLocale): NotifyOptions {
+    const copy = NOTICE_COPY[locale];
     return {
       actions: [
-        { action: 'resume', title: '立即续跑' },
-        { action: 'pause1h', title: '暂停该会话 1 小时' },
+        { action: 'resume', title: copy.resumeAction },
+        { action: 'pause1h', title: copy.pauseAction },
       ],
       onAction: (action) => this.onNotifyAction(sessionId, action),
     };
@@ -668,20 +700,22 @@ export class AutoContinueRunner {
       this.bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
       this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
       if (config.notify) {
+        const copy = NOTICE_COPY[config.locale];
         this.notify(
-          'dsh-auto-continue: 已自动继续',
-          `${sessionId}: 已发送「${text}」(第 ${state.consecutive} 次连续)`,
-          this.notifyOptions(sessionId),
+          copy.continuedTitle,
+          copy.continuedBody(sessionId, text, state.consecutive),
+          this.notifyOptions(sessionId, config.locale),
         );
       }
       if (state.consecutive >= config.maxConsecutive) {
         this.bumpStat({ gaveUp: 1 });
         this.log(`达到连续上限 ${config.maxConsecutive} 次, 停止自动继续 ${sessionId}`);
         if (config.notify) {
+          const copy = NOTICE_COPY[config.locale];
           this.notify(
-            'dsh-auto-continue: 已停止自动继续',
-            `${sessionId}: 连续失败 ${state.consecutive} 次, 需要人工介入`,
-            this.notifyOptions(sessionId),
+            copy.stoppedTitle,
+            copy.stoppedBody(sessionId, state.consecutive),
+            this.notifyOptions(sessionId, config.locale),
           );
         }
       }

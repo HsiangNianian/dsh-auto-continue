@@ -5,8 +5,29 @@
  * 以及回显识别。引擎迁入 host 后(0.8.0), 浏览器半侧只 re-export 本模块。
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
+/** Supported UI/config locales. Any unknown browser locale falls back to Chinese. */
+export type AutoContinueLocale = 'en' | 'zh';
+/** Locale-owned defaults for the user-editable text fields. */
+export declare const LOCALIZED_TEXT_DEFAULTS: {
+    readonly zh: {
+        readonly continueText: "继续";
+        readonly continueTextMaxTokens: "继续";
+        readonly guardPendingText: "(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)";
+        readonly guardDoneText: "(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)";
+        readonly loopText: "(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)";
+    };
+    readonly en: {
+        readonly continueText: "Continue";
+        readonly continueTextMaxTokens: "Continue";
+        readonly guardPendingText: "(The previous tool \"{tool}\" may not have completed. Check its state before continuing and do not run it again.)";
+        readonly guardDoneText: "(The previous tool \"{tool}\" completed successfully. Result: {result}; do not run it again. Continue from there.)";
+        readonly loopText: "(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)";
+    };
+};
 /** The `auto-continue` settings section (all fields optional on the wire; the host schema carries defaults). */
 export interface AutoContinueSettings {
+    /** Active browser/UI locale mirrored by the client. */
+    locale?: AutoContinueLocale;
     /** Text automatically sent after an interruption. */
     continueText?: string;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -60,7 +81,7 @@ export interface AutoContinueSettings {
 }
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;
-/** Built-in defaults — must match the host schema defaults in src/index.ts. */
+/** Effective built-in defaults; localized text fields use Chinese until a browser locale is mirrored. */
 export declare const DEFAULT_CONFIG: AutoContinueConfig;
 /** Resolve a (possibly partial / not-yet-loaded) settings section to a full config. */
 export declare function resolveConfig(section: AutoContinueSettings | undefined): AutoContinueConfig;

@@ -6,8 +6,34 @@
  */
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
 
+/** Supported UI/config locales. Any unknown browser locale falls back to Chinese. */
+export type AutoContinueLocale = 'en' | 'zh';
+
+/** Locale-owned defaults for the user-editable text fields. */
+export const LOCALIZED_TEXT_DEFAULTS = {
+  zh: {
+    continueText: '继续',
+    continueTextMaxTokens: '继续',
+    guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)',
+    guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)',
+    loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
+  },
+  en: {
+    continueText: 'Continue',
+    continueTextMaxTokens: 'Continue',
+    guardPendingText:
+      '(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)',
+    guardDoneText:
+      '(The previous tool "{tool}" completed successfully. Result: {result}; do not run it again. Continue from there.)',
+    loopText:
+      '(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)',
+  },
+} as const satisfies Record<AutoContinueLocale, Record<string, string>>;
+
 /** The `auto-continue` settings section (all fields optional on the wire; the host schema carries defaults). */
 export interface AutoContinueSettings {
+  /** Active browser/UI locale mirrored by the client. */
+  locale?: AutoContinueLocale;
   /** Text automatically sent after an interruption. */
   continueText?: string;
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -63,13 +89,11 @@ export interface AutoContinueSettings {
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;
 
-/** Built-in defaults — must match the host schema defaults in src/index.ts. */
+/** Effective built-in defaults; localized text fields use Chinese until a browser locale is mirrored. */
 export const DEFAULT_CONFIG: AutoContinueConfig = {
-  continueText: '继续',
-  continueTextMaxTokens: '继续',
+  locale: 'zh',
+  ...LOCALIZED_TEXT_DEFAULTS.zh,
   guardTools: true,
-  guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)',
-  guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)',
   graceMs: 3000,
   cooldownMs: 20000,
   maxConsecutive: 3,
@@ -89,7 +113,6 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   loopShortCount: 12,
   loopRepeatText: 4,
   loopToolRepeat: 5,
-  loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
 };
 
 function numberOr(value: unknown, fallback: number): number {
@@ -103,23 +126,26 @@ function booleanOr(value: unknown, fallback: boolean): boolean {
 /** Resolve a (possibly partial / not-yet-loaded) settings section to a full config. */
 export function resolveConfig(section: AutoContinueSettings | undefined): AutoContinueConfig {
   const value = section ?? {};
+  const locale: AutoContinueLocale = value.locale === 'en' ? 'en' : 'zh';
+  const localized = LOCALIZED_TEXT_DEFAULTS[locale];
   const text =
     typeof value.continueText === 'string' && value.continueText.trim() !== ''
       ? value.continueText
-      : DEFAULT_CONFIG.continueText;
+      : localized.continueText;
   const maxTokensText =
     typeof value.continueTextMaxTokens === 'string' && value.continueTextMaxTokens.trim() !== ''
       ? value.continueTextMaxTokens
-      : DEFAULT_CONFIG.continueTextMaxTokens;
+      : localized.continueTextMaxTokens;
   const guardPendingText =
     typeof value.guardPendingText === 'string' && value.guardPendingText.trim() !== ''
       ? value.guardPendingText
-      : DEFAULT_CONFIG.guardPendingText;
+      : localized.guardPendingText;
   const guardDoneText =
     typeof value.guardDoneText === 'string' && value.guardDoneText.trim() !== ''
       ? value.guardDoneText
-      : DEFAULT_CONFIG.guardDoneText;
+      : localized.guardDoneText;
   return {
+    locale,
     continueText: text,
     continueTextMaxTokens: maxTokensText,
     guardTools: booleanOr(value.guardTools, DEFAULT_CONFIG.guardTools),
@@ -150,7 +176,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     loopText:
       typeof value.loopText === 'string' && value.loopText.trim() !== ''
         ? value.loopText
-        : DEFAULT_CONFIG.loopText,
+        : localized.loopText,
   };
 }
 

@@ -3,6 +3,7 @@
  * registered into the `settings.plugin.item` seat of the plugin-configuration
  * section. Includes the card-chrome keys the card component reads.
  */
+import { LOCALIZED_TEXT_DEFAULTS } from '../shared/core.ts';
 
 /** 简体中文词典(键集的事实来源)。 */
 export const zh = {
@@ -12,14 +13,18 @@ export const zh = {
   'field.pausedHint': '全局暂停: 实时与扫描都不会再自动发送, 已排队的待发送也会取消。',
   'field.continueText': '继续文本',
   'field.continueTextHint': '中断后自动发送的消息内容。',
+  'default.continueText': LOCALIZED_TEXT_DEFAULTS.zh.continueText,
   'field.continueTextMaxTokens': '超限时的继续文本',
   'field.continueTextMaxTokensHint': '达到输出 token 上限时自动发送的文本, 支持与继续文本相同的占位符。',
+  'default.continueTextMaxTokens': LOCALIZED_TEXT_DEFAULTS.zh.continueTextMaxTokens,
   'field.guardTools': '幂等护栏',
   'field.guardToolsHint': '续跑前检查上一步工具调用: 结果未确认时提示先确认状态, 已成功时提示不要重复执行, 避免重复 commit/调 API。',
   'field.guardPendingText': '结果未确认时的护栏文本',
   'field.guardPendingTextHint': '上一步工具可能已部分执行时附加到继续文本之后, 支持 {tool} 占位符。',
+  'default.guardPendingText': LOCALIZED_TEXT_DEFAULTS.zh.guardPendingText,
   'field.guardDoneText': '工具已成功时的护栏文本',
   'field.guardDoneTextHint': '上一步工具已确认成功时附加到继续文本之后, 支持 {tool} 与 {result}(结果摘要)占位符。',
+  'default.guardDoneText': LOCALIZED_TEXT_DEFAULTS.zh.guardDoneText,
   'field.graceMs': '宽限期 (ms)',
   'field.graceMsHint': '检测到中断后等待的时长; 期间宿主自行恢复则取消。',
   'field.cooldownMs': '冷却时间 (ms)',
@@ -65,6 +70,7 @@ export const zh = {
   'field.loopToolRepeatHint': '同工具+同参数+同结果的连续调用多少次时判定死循环; 参数或结果有变化视为有进展。',
   'field.loopText': '循环提示文本',
   'field.loopTextHint': '打断后重启回合时发送的文本, 支持 {tool} 占位符。',
+  'default.loopText': LOCALIZED_TEXT_DEFAULTS.zh.loopText,
   'stats.byCode': '按错误码统计',
   'stats.empty': '今天还没有自动继续记录。',
   'stats.reset': '清零',
@@ -95,19 +101,23 @@ export type SettingsCardKey = keyof typeof zh;
 /** English dictionary, checked complete against the zh key set. */
 export const en: Record<SettingsCardKey, string> = {
   'card.title': 'Auto continue',
-  'card.description': 'When a request is interrupted by a non-human cause, automatically send 「继续」 to resume.',
+  'card.description': 'When a request is interrupted by a non-human cause, automatically send "Continue" to resume.',
   'field.paused': 'Pause auto-continue',
   'field.pausedHint': 'Globally pause: no live or scan auto-send fires, and queued pending sends are cancelled.',
   'field.continueText': 'Continue text',
   'field.continueTextHint': 'Message automatically sent after an interruption.',
+  'default.continueText': LOCALIZED_TEXT_DEFAULTS.en.continueText,
   'field.continueTextMaxTokens': 'Continue text (max tokens)',
   'field.continueTextMaxTokensHint': 'Text sent when the output token ceiling is reached; same placeholders as the continue text.',
+  'default.continueTextMaxTokens': LOCALIZED_TEXT_DEFAULTS.en.continueTextMaxTokens,
   'field.guardTools': 'Idempotency guard',
   'field.guardToolsHint': 'Before resuming, inspect the last tool call: if its result is unconfirmed, tell the model to check state first; if it succeeded, tell it not to rerun — avoids duplicate commits / API calls.',
   'field.guardPendingText': 'Guard text (unconfirmed result)',
   'field.guardPendingTextHint': 'Appended when the last tool may have partially executed; supports the {tool} placeholder.',
+  'default.guardPendingText': LOCALIZED_TEXT_DEFAULTS.en.guardPendingText,
   'field.guardDoneText': 'Guard text (tool succeeded)',
   'field.guardDoneTextHint': 'Appended when the last tool is confirmed done; supports {tool} and {result} (result excerpt).',
+  'default.guardDoneText': LOCALIZED_TEXT_DEFAULTS.en.guardDoneText,
   'field.graceMs': 'Grace period (ms)',
   'field.graceMsHint': 'Wait after an interruption; cancelled if the host recovers on its own.',
   'field.cooldownMs': 'Cooldown (ms)',
@@ -153,6 +163,7 @@ export const en: Record<SettingsCardKey, string> = {
   'field.loopToolRepeatHint': 'How many consecutive calls of the same tool with identical arguments and results trip the loop guard; a changed argument or result counts as progress.',
   'field.loopText': 'Loop text',
   'field.loopTextHint': 'Text sent after the loop guard restarts a turn; supports the {tool} placeholder.',
+  'default.loopText': LOCALIZED_TEXT_DEFAULTS.en.loopText,
   'stats.byCode': 'By error code',
   'stats.empty': 'No auto-continue activity today.',
   'stats.reset': 'Reset',

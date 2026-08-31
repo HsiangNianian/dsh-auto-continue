@@ -24,22 +24,24 @@ import type {} from '@deepseek-ai/dsh-session';
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export const AUTO_CONTINUE_NS = 'auto-continue';
 
-/** Wire schema of the auto-continue section; defaults are the plugin's built-in values. */
+/** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
 export const AutoContinueSchema = z.object({
+  /** Active browser/UI locale mirrored by the client. */
+  locale: z.string().default('zh'),
   /** Text automatically sent after an interruption. */
-  continueText: z.string().default('继续'),
+  continueText: z.string().default(''),
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
-  continueTextMaxTokens: z.string().default('继续'),
+  continueTextMaxTokens: z.string().default(''),
   /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
   guardTools: z.boolean().default(true),
   /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
   guardPendingText: z
     .string()
-    .default('(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)'),
+    .default(''),
   /** Guard text appended when the last tool call completed successfully (don't rerun it). */
   guardDoneText: z
     .string()
-    .default('(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)'),
+    .default(''),
   /** Grace period after an interruption before auto-sending (ms). */
   graceMs: z.natural().default(3000),
   /** Minimum interval between two auto-continues per session (ms). */
@@ -81,7 +83,7 @@ export const AutoContinueSchema = z.object({
   /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
   loopText: z
     .string()
-    .default('(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)'),
+    .default(''),
 });
 
 /**

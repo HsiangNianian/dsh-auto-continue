@@ -9,7 +9,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
+import { type AutoContinueSettings } from './engine.ts';
 import { createSnapshotStore, type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
 import {
   pausedSessions,
@@ -452,7 +452,7 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...shared}
         {...state.continueText}
         onEdit={(text) => props.edit('continueText', text)}
-        placeholder={DEFAULT_CONFIG.continueText}
+        placeholder={t('default.continueText')}
         onReset={() => props.resetField('continueText')}
       />
       <ValueField
@@ -462,7 +462,7 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...shared}
         {...state.continueTextMaxTokens}
         onEdit={(text) => props.edit('continueTextMaxTokens', text)}
-        placeholder={DEFAULT_CONFIG.continueTextMaxTokens}
+        placeholder={t('default.continueTextMaxTokens')}
         onReset={() => props.resetField('continueTextMaxTokens')}
       />
       <BooleanField
@@ -481,7 +481,7 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...shared}
         {...state.guardPendingText}
         onEdit={(text) => props.edit('guardPendingText', text)}
-        placeholder={DEFAULT_CONFIG.guardPendingText}
+        placeholder={t('default.guardPendingText')}
         onReset={() => props.resetField('guardPendingText')}
       />
       <ValueField
@@ -491,7 +491,7 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...shared}
         {...state.guardDoneText}
         onEdit={(text) => props.edit('guardDoneText', text)}
-        placeholder={DEFAULT_CONFIG.guardDoneText}
+        placeholder={t('default.guardDoneText')}
         onReset={() => props.resetField('guardDoneText')}
       />
       <ValueField
@@ -677,7 +677,7 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
         {...shared}
         {...state.loopText}
         onEdit={(text) => props.edit('loopText', text)}
-        placeholder={DEFAULT_CONFIG.loopText}
+        placeholder={t('default.loopText')}
         onReset={() => props.resetField('loopText')}
       />
       <LivePanels t={t} />

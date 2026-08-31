@@ -13,8 +13,10 @@ import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export declare const AUTO_CONTINUE_NS = "auto-continue";
-/** Wire schema of the auto-continue section; defaults are the plugin's built-in values. */
+/** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
 export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
+    /** Active browser/UI locale mirrored by the client. */
+    locale: z<string, string>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -66,6 +68,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
 }>, Schemastery.ObjectT<{
+    /** Active browser/UI locale mirrored by the client. */
+    locale: z<string, string>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */

@@ -4,6 +4,9 @@
  *
  * 覆盖场景:
  *   1. turn/end error → 宽限期后 followup 配置的文本
+ *   1b. English locale → 默认发送 "Continue"
+ *   1c. 本地化只替换默认值, 不覆盖用户自定义文本
+ *   1d. 未支持的 locale → 回落中文
  *   2. 宽限期内 turn/start → 取消
  *   3. aborted(用户停止)→ 不发送
  *   4. 连续次数上限
@@ -13,12 +16,17 @@
  *   7. continueText 模板
  *   8. 全局暂停 / 会话级暂停(经动作端点)
  *   9. max-tokens 专用文本
+ *   9b. English locale → max-tokens 默认文本本地化
  *   10. 统计记录
  *   11. 幂等护栏(未确认 / 已成功 / 已失败)
+ *   11b. English locale → 默认幂等护栏本地化
+ *   11c. English locale → 已成功工具护栏本地化
  *   12. loop guard: 相同消息 → cancel + loop 文本重启
+ *   12b. English locale → loop guard 默认重启文本本地化
  *   13. loop guard: 同工具+同参数+同结果 → cancel
  *   14. loop guard: 参数/结果变化 → 不打断
  *   15. 通知桥: 通知事件 + 动作(resume / pause1h / unpause / reset-stats)
+ *   15b. English locale → 浏览器通知与动作本地化
  * 运行: node tests/simulate-host.mjs
  */
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
@@ -193,6 +201,42 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
+// ---------- 测试 1b: English locale 默认文本 ----------
+{
+  console.log('测试 1b: English locale → 默认 followup "Continue"');
+  const host = startPlugin({ scanOnBoot: false, locale: 'en' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('英文默认文本为 "Continue"', agent.followups[0]?.content?.[0]?.text === 'Continue');
+  await sleep(50);
+}
+
+// ---------- 测试 1c: 用户文本优先于本地化默认值 ----------
+{
+  console.log('测试 1c: English locale + 自定义文本 → 保留用户文本');
+  const host = startPlugin({ scanOnBoot: false, locale: 'en', continueText: 'Keep going, carefully' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('未覆盖用户自定义文本', agent.followups[0]?.content?.[0]?.text === 'Keep going, carefully');
+  await sleep(50);
+}
+
+// ---------- 测试 1d: 未支持语言回落中文 ----------
+{
+  console.log('测试 1d: 未支持的 locale → 回落中文默认文本');
+  const host = startPlugin({ scanOnBoot: false, locale: 'fr' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(600);
+  check('默认文本回落为「继续」', agent.followups[0]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
 // ---------- 测试 2: 宽限期内 turn/start → 取消 ----------
 {
   console.log('测试 2: 宽限期内 turn/start → 取消');
@@ -340,6 +384,18 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
 
 // ---------- 测试 10: 统计 ----------
 {
+  console.log('测试 9b: English locale → max-tokens 默认 followup "Continue"');
+  const host = startPlugin({ scanOnBoot: false, locale: 'en' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'max-tokens' }));
+  await sleep(600);
+  check('英文超限默认文本为 "Continue"', agent.followups[0]?.content?.[0]?.text === 'Continue');
+  await sleep(50);
+}
+
+// ---------- 测试 10: 统计 ----------
+{
   console.log('测试 10: 统计记录(发送/跳过)');
   const host = startPlugin({ scanOnBoot: false });
   const agent = host.makeAgent('s1');
@@ -384,6 +440,35 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
+// ---------- 测试 11c: English locale 已成功工具护栏 ----------
+{
+  console.log('测试 11c: English locale → done 护栏使用英文默认文本');
+  const host = startPlugin({ scanOnBoot: false, locale: 'en' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('git-push', 5));
+  host.emit(agent.session, toolResult('c5', 'push succeeded', 6));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('英文 done 护栏', text.startsWith('Continue ') && text.includes('completed successfully'));
+  await sleep(50);
+}
+
+// ---------- 测试 11b: English locale 未确认工具护栏 ----------
+{
+  console.log('测试 11b: English locale → pending 护栏使用英文默认文本');
+  const host = startPlugin({ scanOnBoot: false, locale: 'en' });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('git-push', 5));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('英文 pending 护栏', text.startsWith('Continue ') && text.includes('may not have completed'));
+  await sleep(50);
+}
+
 // ---------- 测试 12: loop guard — 相同消息重复 ----------
 {
   console.log('测试 12: loop guard 相同消息 → cancel + loop 文本重启');
@@ -400,6 +485,33 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
   await sleep(700); // 剩余冷却 + 宽限
   check('loop 文本重启', agent.followups[0]?.content?.[0]?.text.includes('陷入循环'));
+  await sleep(50);
+}
+
+// ---------- 测试 12b: English locale loop guard 文本 ----------
+{
+  console.log('测试 12b: English locale → loop guard 使用英文默认文本');
+  const host = startPlugin({
+    scanOnBoot: false,
+    locale: 'en',
+    loopRepeatText: 3,
+    graceMs: 100,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) {
+    host.emit(agent.session, assistantMsg('Let me test variants of the regex.', 10 + i));
+  }
+  await sleep(150);
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  await sleep(700);
+  check(
+    '英文 loop guard 文本',
+    agent.followups[0]?.content?.[0]?.text.includes('You may be stuck in a loop'),
+  );
   await sleep(50);
 }
 
@@ -494,6 +606,46 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   check('unpause 动作 ok', r3.ok === true);
   const r4 = await post({ action: 'reset-stats' });
   check('reset-stats 动作 ok', r4.ok === true);
+  await sleep(50);
+}
+
+// ---------- 测试 15b: English locale 通知文本 ----------
+{
+  console.log('测试 15b: English locale → 通知标题、正文与动作使用英文');
+  const host = startPlugin({ scanOnBoot: false, locale: 'en', notify: true, maxConsecutive: 1 });
+  const transient = host.makeAgent('transient');
+  const permanent = host.makeAgent('permanent');
+  await sleep(50);
+  const bridge = host.routes.find((route) => route.path === '/api/auto-continue-bridge');
+  const frames = [];
+  bridge.handler(
+    { on: () => {} },
+    {
+      write: (data) => frames.push(data),
+      writeHead() {},
+      end() {},
+    },
+  );
+  host.emit(
+    transient.session,
+    turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'network' } }),
+  );
+  await sleep(600);
+  host.emit(
+    permanent.session,
+    turnEnd(1, { kind: 'error', error: { code: 'INVALID_API_KEY', message: 'bad', status: 401 } }),
+  );
+  await sleep(100);
+  const notices = frames.filter((frame) => frame.includes('"type":"notice"')).join('\n');
+  check(
+    '英文通知完整',
+    notices.includes('Continued automatically') &&
+      notices.includes('Auto-continue stopped') &&
+      notices.includes('Not continued') &&
+      notices.includes('manual intervention required') &&
+      notices.includes('Resume now') &&
+      notices.includes('Pause this session for 1 hour'),
+  );
   await sleep(50);
 }
 

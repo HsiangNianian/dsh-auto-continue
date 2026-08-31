@@ -8,7 +8,7 @@
 <h1 align="center">dsh-auto-continue</h1>
 
 <p align="center">
-  <em>DSH Web UI plugin — when a request is interrupted by a network error or any other non-human cause, it automatically types 「继续」 and sends it for you.</em>
+  <em>DSH Web UI plugin — when a request is interrupted by a network error or any other non-human cause, it automatically sends “Continue” for you.</em>
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
 
 ## What It Does
 
-For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh web`): whenever a request in the web GUI gets interrupted by a **non-human cause**, the plugin simulates the user typing **「继续」** and sends it, so the agent keeps working without manual intervention. The message enters the session log exactly like a manual prompt — the model sees it, and the interrupted work resumes. Since 0.8.0 the engine runs **inside the host process** (single instance), so it keeps watching even with every browser tab closed, and multiple open tabs can never double-send.
+For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh web`): whenever a request in the web GUI gets interrupted by a **non-human cause**, the plugin simulates the user typing **“Continue”** and sends it, so the agent keeps working without manual intervention. The message enters the session log exactly like a manual prompt — the model sees it, and the interrupted work resumes. Since 0.8.0 the engine runs **inside the host process** (single instance), so it keeps watching even with every browser tab closed, and multiple open tabs can never double-send.
 
 ![demo](docs/demo.svg)
 
@@ -39,7 +39,8 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Provider-specific exceptions can be opted into with literal custom retryable patterns; turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
-- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)"); a **separate template** fires on `max-tokens` (e.g. "继续输出, 不要重复已生成的内容")
+- **English / Chinese localization** — the settings card, built-in resume / guard / loop text, and browser notifications follow DSH's active UI language (initially selected from the browser language). Only `en` and `zh` are supported; other languages fall back to Chinese. Switching languages updates built-in defaults without overwriting custom text
+- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("Continue ({tool} failed: {code})"); a **separate template** fires on `max-tokens` (e.g. "Continue the output without repeating anything already generated")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
@@ -146,16 +147,19 @@ dsh web
 
 Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugins** and find the **dsh-client-auto-continue** configuration card, right where every other plugin's config lives. Besides the fields below, the card shows a live **stats panel** (today's activity with a reset button) and the list of **paused sessions** (each with a per-session resume button).
 
-**Or skip the GUI and edit the config file directly** — the engine reads the plugin's section from `~/.dsh/settings.yaml` (one shared file for every plugin's sections), so this works in any install, patched or not. The file is watched and re-read automatically, so changes apply live; restart `dsh web` if a page that was already open doesn't pick them up. Fields you leave out fall back to the defaults in the table below:
+**Or skip the GUI and edit the config file directly** — the engine reads the plugin's section from `~/.dsh/settings.yaml` (one shared file for every plugin's sections), so this works in any install, patched or not. The file is watched and re-read automatically, so changes apply live; restart `dsh web` if a page that was already open doesn't pick them up. Fields you leave out fall back to the defaults in the table below.
+
+The browser mirrors DSH's active language into the internal `locale` field. Leave the five localized text fields empty or omit them to follow that language automatically; any non-empty value is treated as your own template and is never rewritten when the language changes:
 
 ```yaml
 auto-continue:
+  locale: 'en' # normally managed by the browser
   paused: false
-  continueText: '继续'
-  continueTextMaxTokens: '继续'
+  continueText: ''
+  continueTextMaxTokens: ''
   guardTools: true
-  guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)'
-  guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)'
+  guardPendingText: ''
+  guardDoneText: ''
   graceMs: 3000
   cooldownMs: 20000
   maxConsecutive: 3
@@ -174,7 +178,7 @@ auto-continue:
   loopShortCount: 12
   loopRepeatText: 4
   loopToolRepeat: 5
-  loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)'
+  loopText: ''
 ```
 
 **How the card works:**
@@ -191,8 +195,8 @@ auto-continue:
 | Field | Default | Description |
 | --- | --- | --- |
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
-| Continue text | `继续` | Text automatically sent after an interruption |
-| Continue text (max tokens) | `继续` | Text sent when the output token ceiling is reached (same placeholders) |
+| Continue text | `Continue` | Text automatically sent after an interruption |
+| Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
 | Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
 | Loop guard | `on` | Detect a running turn spinning in place and restart it (see What It Does) |
 | Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |
@@ -200,9 +204,9 @@ auto-continue:
 | Short-sentence threshold | `12` | Consecutive short sentences inside the window, with no tool call in between, trip the loop guard |
 | Identical message count | `4` | Consecutive identical messages (any length) trip the loop guard — the strongest spinning signal |
 | Same-tool repeat count | `5` | Consecutive calls of the same tool with identical arguments and results trip the loop guard |
-| Loop text | `(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)` | Text sent after the loop guard restarts a turn; `{tool}` placeholder |
-| Guard text (unconfirmed result) | `(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
-| Guard text (tool succeeded) | `(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
+| Loop text | `(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)` | Text sent after the loop guard restarts a turn; `{tool}` placeholder |
+| Guard text (unconfirmed result) | `(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)` | Appended when the last tool may have partially executed; `{tool}` placeholder |
+| Guard text (tool succeeded) | `(The previous tool "{tool}" completed successfully. Result: {result}; do not run it again. Continue from there.)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
 | Cooldown (ms) | `20000` | Min interval between auto-continues per session (failed attempts count too) |
 | Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
@@ -226,7 +230,7 @@ auto-continue:
 
 Patterns are literal substrings, not regular expressions. Blank lines are ignored; any matching line wins before the built-in permanent-error rules. Cooldown and consecutive-attempt limits still apply.
 
-`continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
+`continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
 
 ---
 

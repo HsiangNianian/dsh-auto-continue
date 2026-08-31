@@ -56,6 +56,18 @@ export {
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'auto-continue: dictionaries');
 
+  const scope = ctx.settingsScope.bind<AutoContinueSettings>({ namespace: SETTINGS_NS });
+  const syncLocale = (): void => {
+    const active = ctx.locale.getLocale().active;
+    const snapshot = scope.getSnapshot();
+    if (snapshot.status !== 'ready' || !snapshot.writable || snapshot.mode !== 'host') return;
+    if (snapshot.value?.locale === active) return;
+    void scope.set('locale', active);
+  };
+  ctx.effect(() => scope.subscribe(syncLocale), 'auto-continue: locale settings sync');
+  ctx.on('locale/change', syncLocale);
+  syncLocale();
+
   // 状态桥: 订阅 host 的通知与运行时状态, 弹浏览器通知并驱动卡片面板。
   ctx.effect(() => startBridge(), 'auto-continue: host bridge');
 
@@ -64,7 +76,6 @@ export function apply(ctx: ClientContext): void {
   // (Settings → Plugins). Since DSH 0.1.0-rc.7 `settings.plugin.item` is a
   // keyed slot dispatched by the settings namespace it edits, so the entry
   // registers with `key` (the namespace), like the official cards.
-  const scope = ctx.settingsScope.bind<AutoContinueSettings>({ namespace: SETTINGS_NS });
   const controller = new AutoContinueSettingsCardController(scope);
   ctx.slots.inject('settings.plugin.item', () =>
     ctx.slots.register(
