@@ -37,7 +37,7 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 
 **Smart recovery** (all configurable):
 
-- **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Turn classification off to resume everything
+- **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Provider-specific exceptions can be opted into with literal custom retryable patterns; turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("继续 (git push failed: UPSTREAM)"); a **separate template** fires on `max-tokens` (e.g. "继续输出, 不要重复已生成的内容")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
@@ -164,6 +164,7 @@ auto-continue:
   freshMs: 900000
   verbose: true
   classify: true
+  retryableErrorPatterns: ''
   backoffFactor: 2
   backoffMaxMs: 300000
   notify: false
@@ -210,9 +211,20 @@ auto-continue:
 | Scan window (ms) | `900000` | Scan only considers interruptions inside this window |
 | Verbose logs | `on` | `[auto-continue]` console logs |
 | Classify errors | `on` | Auto-resume transient failures only; auth / balance / model errors are skipped and notified |
+| Custom retryable errors | empty | One case-insensitive literal per line; matching the error code, HTTP status, or message explicitly overrides the built-in classifier |
 | Backoff factor | `2` | Cooldown multiplier per consecutive failure (2 = 20s → 40s → 80s…) |
 | Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
 | Browser notifications | `off` | Notify when auto-continue fires, gives up, or hits a permanent error |
+
+For a provider-specific error that is safe to resume (confirm first that manually sending "continue" recovers), add a narrow, stable fragment rather than disabling classification globally:
+
+```yaml
+auto-continue:
+  retryableErrorPatterns: |-
+    Upstream rejected the request as invalid
+```
+
+Patterns are literal substrings, not regular expressions. Blank lines are ignored; any matching line wins before the built-in permanent-error rules. Cooldown and consecutive-attempt limits still apply.
 
 `continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `继续 ({tool}: {code})` becomes `继续 (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
 

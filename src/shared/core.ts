@@ -34,6 +34,8 @@ export interface AutoContinueSettings {
   verbose?: boolean;
   /** Classify failures: auto-continue transient errors only; permanent ones (auth/balance/model) are skipped and notified. */
   classify?: boolean;
+  /** Provider-specific message/code/status fragments that explicitly count as retryable, one literal per line. */
+  retryableErrorPatterns?: string;
   /** Cooldown multiplier per consecutive failure (adaptive backoff). */
   backoffFactor?: number;
   /** Cap on the effective backoff interval (ms). */
@@ -76,6 +78,7 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   freshMs: 15 * 60 * 1000,
   verbose: true,
   classify: true,
+  retryableErrorPatterns: '',
   backoffFactor: 2,
   backoffMaxMs: 300000,
   notify: false,
@@ -130,6 +133,10 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     freshMs: numberOr(value.freshMs, DEFAULT_CONFIG.freshMs),
     verbose: booleanOr(value.verbose, DEFAULT_CONFIG.verbose),
     classify: booleanOr(value.classify, DEFAULT_CONFIG.classify),
+    retryableErrorPatterns:
+      typeof value.retryableErrorPatterns === 'string'
+        ? value.retryableErrorPatterns.trim()
+        : DEFAULT_CONFIG.retryableErrorPatterns,
     backoffFactor: Math.max(1, numberOr(value.backoffFactor, DEFAULT_CONFIG.backoffFactor)),
     backoffMaxMs: numberOr(value.backoffMaxMs, DEFAULT_CONFIG.backoffMaxMs),
     notify: booleanOr(value.notify, DEFAULT_CONFIG.notify),
@@ -171,11 +178,18 @@ export interface FailureFacts {
 
 /**
  * 错误分类: 该失败是否值得自动继续。
+ * 用户填写的 provider 专属文本片段优先覆盖内置结果; 未命中时,
  * 永久性失败(认证/余额/模型不存在/上下文超限等)重试也不会成功, 应跳过并通知用户;
  * 其余(网络、超时、5xx、429 等)视为临时性失败, 允许自动恢复。
  */
-export function isTransientFailure(failure: FailureFacts): boolean {
-  const haystack = `${failure.code} ${failure.message}`.toLowerCase();
+export function isTransientFailure(failure: FailureFacts, retryableErrorPatterns = ''): boolean {
+  const haystack = `${failure.code} ${failure.status ?? ''} ${failure.message}`.toLowerCase();
+  const explicitlyRetryable = retryableErrorPatterns
+    .split(/\r?\n/)
+    .map((pattern) => pattern.trim().toLowerCase())
+    .filter((pattern) => pattern !== '')
+    .some((pattern) => haystack.includes(pattern));
+  if (explicitlyRetryable) return true;
   const status = failure.status;
   if (status !== undefined && (status === 401 || status === 403)) return false;
   const permanent =

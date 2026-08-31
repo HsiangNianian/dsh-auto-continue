@@ -33,6 +33,8 @@ export interface AutoContinueSettings {
     verbose?: boolean;
     /** Classify failures: auto-continue transient errors only; permanent ones (auth/balance/model) are skipped and notified. */
     classify?: boolean;
+    /** Provider-specific message/code/status fragments that explicitly count as retryable, one literal per line. */
+    retryableErrorPatterns?: string;
     /** Cooldown multiplier per consecutive failure (adaptive backoff). */
     backoffFactor?: number;
     /** Cap on the effective backoff interval (ms). */
@@ -81,10 +83,11 @@ export interface FailureFacts {
 }
 /**
  * 错误分类: 该失败是否值得自动继续。
+ * 用户填写的 provider 专属文本片段优先覆盖内置结果; 未命中时,
  * 永久性失败(认证/余额/模型不存在/上下文超限等)重试也不会成功, 应跳过并通知用户;
  * 其余(网络、超时、5xx、429 等)视为临时性失败, 允许自动恢复。
  */
-export declare function isTransientFailure(failure: FailureFacts): boolean;
+export declare function isTransientFailure(failure: FailureFacts, retryableErrorPatterns?: string): boolean;
 /**
  * host/agent-error 消息分类: 仅明确属于网络/传输类的临时错误才自动继续。
  * 其余(序列化失败、配置/宿主内部错误等)视为永久性——重试无益, 且用户停止导致的

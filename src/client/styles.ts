@@ -117,6 +117,7 @@ const css = `
 .dshAcInput:focus-visible { border-color: var(--dsw-alias-brand-primary); outline: none; }
 .dshAcInput:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 .dshAcInputInvalid { border-color: var(--dsw-alias-label-error); }
+.dshAcTextArea { box-sizing: border-box; height: auto; min-height: 84px; padding: 8px 12px; resize: vertical; }
 .dshAcSelect {
   border: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-layer-3);

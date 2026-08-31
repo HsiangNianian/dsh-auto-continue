@@ -41,6 +41,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     verbose: z<boolean, boolean>;
     /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
     classify: z<boolean, boolean>;
+    /** Provider-specific message/code/status fragments that explicitly count as retryable, one literal per line. */
+    retryableErrorPatterns: z<string, string>;
     /** Cooldown multiplier per consecutive failure (adaptive backoff). */
     backoffFactor: z<number, number>;
     /** Cap on the effective backoff interval (ms). */
@@ -90,6 +92,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     verbose: z<boolean, boolean>;
     /** Classify failures: auto-continue transient errors only; permanent ones are skipped and notified. */
     classify: z<boolean, boolean>;
+    /** Provider-specific message/code/status fragments that explicitly count as retryable, one literal per line. */
+    retryableErrorPatterns: z<string, string>;
     /** Cooldown multiplier per consecutive failure (adaptive backoff). */
     backoffFactor: z<number, number>;
     /** Cap on the effective backoff interval (ms). */
