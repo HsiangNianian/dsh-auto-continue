@@ -91,9 +91,17 @@ function makeHost() {
       if (event === 'session/event') sessionHandlers.push(handler);
       return () => {};
     },
+    effect(cb) {
+      // 模拟 fiber 级 effect: 收集 disposer, 供 host.dispose() 模拟热重载卸载
+      const disposer = cb();
+      host.effects = host.effects ?? [];
+      if (typeof disposer === 'function') host.effects.push(disposer);
+      return disposer ?? (() => {});
+    },
     inject(deps, cb) {
       cb({
         on: (event, handler) => ctx.on(event, handler),
+        effect: (cb2) => ctx.effect(cb2),
         settings: { register: () => {}, get: () => config },
         agents: { get: (id) => registry.get(id), list: () => [...registry.values()] },
         webServer: {
@@ -108,6 +116,13 @@ function makeHost() {
     },
   };
   host.ctx = ctx;
+  host.dispose = () => {
+    // 模拟 fiber teardown: 依次执行全部 effect disposer(引擎 dispose 清理定时器)
+    for (const disposer of [...(host.effects ?? [])]) {
+      try { disposer(); } catch {}
+    }
+    host.effects = [];
+  };
   return host;
 }
 
@@ -646,6 +661,20 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
       notices.includes('Resume now') &&
       notices.includes('Pause this session for 1 hour'),
   );
+  await sleep(50);
+}
+
+// ---------- 测试 16: 卸载(热重载)清理定时器 — dispose 后不再 fire ----------
+{
+  console.log('测试 16: 卸载(热重载)清理定时器 — dispose 后不再 fire');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(100); // 宽限期(200ms)内卸载, 模拟 config HMR 行替换
+  host.dispose();
+  await sleep(400); // 若定时器未清理, fire 会照常执行并产生 followup
+  check('卸载后未发送', agent.followups.length === 0);
   await sleep(50);
 }
 
