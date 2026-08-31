@@ -434,7 +434,11 @@ export class AutoContinueRunner {
               if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
               state.loopRetryTimer = setTimeout(() => {
                 state.loopRetryTimer = undefined;
-                this.schedule(sessionId, 'loop:aborted');
+                try {
+                  this.schedule(sessionId, 'loop:aborted');
+                } catch (error) {
+                  console.error(`[auto-continue] loop 重启异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+                }
               }, remaining);
               this.log(`loop 重启延迟 ${remaining}ms(冷却期) ${sessionId}`);
             } else {
@@ -591,7 +595,11 @@ export class AutoContinueRunner {
       clearTimeout(state.pendingTimer);
       state.pendingTimer = undefined;
     }
-    await this.fire(sessionId, 'manual:notification', true);
+    try {
+      await this.fire(sessionId, 'manual:notification', true);
+    } catch (error) {
+      console.error(`[auto-continue] 手动续跑异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** 本会话当前生效的冷却间隔(自适应退避)。 */
@@ -628,7 +636,12 @@ export class AutoContinueRunner {
     const timer = setTimeout(() => {
       if (state.pendingTimer !== timer) return;
       state.pendingTimer = undefined;
-      void this.fire(sessionId, reason);
+      // 保险丝: 定时器回调内任何异常(含 inactive context)都不得成为未捕获异常炸掉进程。
+      try {
+        void this.fire(sessionId, reason);
+      } catch (error) {
+        console.error(`[auto-continue] 定时发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }, config.graceMs);
     state.pendingTimer = timer;
     const template = reason.startsWith('loop:')
