@@ -1,0 +1,155 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "dsh-auto-continue 插件流程",
+    "locale": "zh-CN",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "auto_recovery",
+        "label": "自动恢复主链",
+        "focus": ["turn_end", "classify_failure", "safety_gate", "grace_wait", "compose_prompt", "agent_followup", "recovery_feedback"],
+        "note": "从非人为中断判定，到安全调度、自动续跑与恢复记账。"
+      },
+      {
+        "id": "loop_recovery",
+        "label": "循环守卫",
+        "focus": ["turn_end", "agent_cancel", "safety_gate", "compose_prompt", "agent_followup"],
+        "note": "检测空转后取消当前回合，并用 loopText 重新进入受控恢复链。"
+      },
+      {
+        "id": "human_feedback",
+        "label": "人工介入与反馈",
+        "focus": ["safety_gate", "manual_stop", "recovery_feedback"],
+        "note": "查看不自动继续的出口，以及浏览器端的状态、通知与操作入口。"
+      }
+    ],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "messagebus": { "label": "会话事件" },
+        "backend": { "label": "宿主处理" },
+        "security": { "label": "安全判定" },
+        "cloud": { "label": "Agent 队列" },
+        "frontend": { "label": "浏览器反馈" },
+        "external": { "label": "人工介入" }
+      }
+    },
+    "output": "docs/auto-continue-workflow.html"
+  },
+  "lanes": [
+    { "id": "session", "label": "DSH 会话与浏览器" },
+    { "id": "engine", "label": "AutoContinueRunner" },
+    { "id": "agent", "label": "Agent 执行与中断", "variant": "exception" }
+  ],
+  "groups": [
+    { "id": "host_core", "label": "安全恢复链", "lane": "engine", "fromCol": 1, "toCol": 4, "variant": "emphasis" }
+  ],
+  "mainPath": [
+    "turn_end",
+    "classify_failure",
+    "safety_gate",
+    "grace_wait",
+    "compose_prompt",
+    "agent_followup",
+    "recovery_feedback"
+  ],
+  "semanticChecks": {
+    "allowedRoots": ["turn_end"],
+    "allowedTerminals": ["manual_stop", "recovery_feedback"],
+    "requiredPaths": [
+      { "from": "turn_end", "to": "agent_followup" },
+      { "from": "agent_cancel", "to": "agent_followup" },
+      { "from": "agent_followup", "to": "recovery_feedback" }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "turn_end",
+      "lane": "session",
+      "col": 0,
+      "type": "messagebus",
+      "label": "收到会话信号",
+      "sublabel": "turn/end 或启动扫描"
+    },
+    {
+      "id": "classify_failure",
+      "lane": "engine",
+      "col": 1,
+      "type": "backend",
+      "label": "识别中断原因",
+      "sublabel": "错误、令牌上限与扫描"
+    },
+    {
+      "id": "safety_gate",
+      "lane": "engine",
+      "col": 2,
+      "type": "security",
+      "label": "检查恢复条件",
+      "sublabel": "分类、暂停、冷却、上限"
+    },
+    {
+      "id": "grace_wait",
+      "lane": "engine",
+      "col": 3,
+      "type": "backend",
+      "label": "等待宽限期",
+      "sublabel": "新回合或用户消息会取消"
+    },
+    {
+      "id": "compose_prompt",
+      "lane": "engine",
+      "col": 4,
+      "type": "backend",
+      "label": "组装续跑消息",
+      "sublabel": "模板 + 工具幂等护栏"
+    },
+    {
+      "id": "agent_followup",
+      "lane": "agent",
+      "col": 5,
+      "type": "cloud",
+      "label": "agent.followup",
+      "sublabel": "进入 Agent inbox",
+      "tag": "排队发送"
+    },
+    {
+      "id": "recovery_feedback",
+      "lane": "session",
+      "col": 5,
+      "type": "frontend",
+      "label": "恢复与反馈",
+      "sublabel": "清零、退避、SSE 状态"
+    },
+    {
+      "id": "agent_cancel",
+      "lane": "agent",
+      "col": 1,
+      "type": "security",
+      "label": "agent.cancel",
+      "sublabel": "守卫命中，保留 inbox"
+    },
+    {
+      "id": "manual_stop",
+      "lane": "session",
+      "col": 3,
+      "type": "external",
+      "label": "等待人工介入",
+      "sublabel": "停止、永久错误、达上限"
+    }
+  ],
+  "edges": [
+    { "id": "e_event_classify", "from": "turn_end", "to": "classify_failure", "label": "会话事实", "role": "main" },
+    { "id": "e_classify_gate", "from": "classify_failure", "to": "safety_gate", "label": "中断原因", "role": "main", "variant": "emphasis" },
+    { "id": "e_gate_grace", "from": "safety_gate", "to": "grace_wait", "label": "允许恢复", "role": "main", "variant": "emphasis" },
+    { "id": "e_grace_prompt", "from": "grace_wait", "to": "compose_prompt", "label": "宽限期内无新回合", "role": "main", "variant": "emphasis" },
+    { "id": "e_prompt_followup", "from": "compose_prompt", "to": "agent_followup", "label": "排队续跑", "role": "main", "variant": "emphasis" },
+    { "id": "e_followup_result", "from": "agent_followup", "to": "recovery_feedback", "label": "turn/end + SSE", "role": "return" },
+    { "id": "e_loop_cancel", "from": "turn_end", "to": "agent_cancel", "label": "运行中反复输出或工具调用", "role": "branch", "variant": "security" },
+    { "id": "e_cancel_gate", "from": "agent_cancel", "to": "safety_gate", "label": "aborted + loopText", "role": "return", "variant": "security" },
+    { "id": "e_gate_manual", "from": "safety_gate", "to": "manual_stop", "label": "不可自动恢复", "role": "error" }
+  ]
+}
