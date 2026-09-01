@@ -143,6 +143,7 @@ export class AutoContinueRunner {
   private readonly notices: HostNotice[] = [];
   private readonly noticeListeners = new Set<() => void>();
   private readonly stateListeners = new Set<() => void>();
+  private readonly disposeSessionEvents: () => void;
   private disposed = false;
 
   /**
@@ -154,7 +155,9 @@ export class AutoContinueRunner {
     private readonly getConfig: () => AutoContinueConfig,
   ) {
     // 单实例事件源: 宿主进程内的会话事件 firehose, 天然覆盖所有会话。
-    ctx.on('session/event', (session, event) => this.onHostEvent(session, event));
+    this.disposeSessionEvents = ctx.on('session/event', (session, event) =>
+      this.onHostEvent(session, event),
+    );
     const config = this.getConfig();
     if (config.scanOnBoot) {
       void this.bootScanLoop();
@@ -226,7 +229,9 @@ export class AutoContinueRunner {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    this.disposeSessionEvents();
     for (const state of this.states.values()) {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
       if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);

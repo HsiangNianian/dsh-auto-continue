@@ -28,6 +28,7 @@
  *   15. 通知桥: 通知事件 + 动作(resume / pause1h / unpause / reset-stats)
  *   15b. English locale → 浏览器通知与动作本地化
  *   16. 顶层 row replacement → runner disposer 清理待发送定时器
+ *   16b. 顶层 row replacement → runner disposer 注销旧事件监听
  *   17. engine inject 重入 → 旧 runner 释放, 新 runner 单独接管
  *   18. 宽限定时器遇到 inactive settings → 异常被收口
  *   19. loop 冷却定时器遇到 inactive settings → 异常被收口
@@ -755,6 +756,25 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   host.replacePluginRow();
   await sleep(400); // 若定时器未清理, fire 会照常执行并产生 followup
   check('row replacement 后未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 16b: 顶层 row replacement 注销旧 listener ----------
+{
+  console.log('测试 16b: 顶层 row replacement 注销旧 listener — 后续事件不再访问旧 context');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.replacePluginRow();
+  host.setContextActive(false);
+  let eventError;
+  try {
+    host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'late' } }));
+  } catch (error) {
+    eventError = error;
+  }
+  check('旧 listener 未访问 inactive context', eventError === undefined);
+  check('row replacement 后事件未发送', agent.followups.length === 0);
   await sleep(50);
 }
 
