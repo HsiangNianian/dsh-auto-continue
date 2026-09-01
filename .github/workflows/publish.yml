@@ -75,7 +75,7 @@ jobs:
 
       - name: Publish to GitHub Packages
         run: |
-          npm pkg set name="@hsiangnianian/dsh-auto-continue"
+          node scripts/prepare-github-package.mjs
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
