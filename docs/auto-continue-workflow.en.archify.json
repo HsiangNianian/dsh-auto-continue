@@ -1,0 +1,155 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "dsh-auto-continue Plugin Workflow",
+    "locale": "en",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "auto_recovery",
+        "label": "Automatic recovery",
+        "focus": ["turn_end", "classify_failure", "safety_gate", "grace_wait", "compose_prompt", "agent_followup", "recovery_feedback"],
+        "note": "Classify a non-human interruption, apply recovery safeguards, resume the agent, and record the outcome."
+      },
+      {
+        "id": "loop_recovery",
+        "label": "Loop guard",
+        "focus": ["turn_end", "agent_cancel", "safety_gate", "compose_prompt", "agent_followup"],
+        "note": "Cancel a spinning turn, preserve loop context, and re-enter the guarded recovery path."
+      },
+      {
+        "id": "human_feedback",
+        "label": "Human action & feedback",
+        "focus": ["safety_gate", "manual_stop", "recovery_feedback"],
+        "note": "Inspect non-recoverable exits and the browser-side status, notification, and action surface."
+      }
+    ],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "messagebus": { "label": "Session event" },
+        "backend": { "label": "Host processing" },
+        "security": { "label": "Safety gate" },
+        "cloud": { "label": "Agent queue" },
+        "frontend": { "label": "Browser feedback" },
+        "external": { "label": "Human action" }
+      }
+    },
+    "output": "docs/auto-continue-workflow.en.html"
+  },
+  "lanes": [
+    { "id": "session", "label": "DSH session & browser" },
+    { "id": "engine", "label": "AutoContinueRunner" },
+    { "id": "agent", "label": "Agent execution & interrupts", "variant": "exception" }
+  ],
+  "groups": [
+    { "id": "host_core", "label": "Safe recovery path", "lane": "engine", "fromCol": 1, "toCol": 4, "variant": "emphasis" }
+  ],
+  "mainPath": [
+    "turn_end",
+    "classify_failure",
+    "safety_gate",
+    "grace_wait",
+    "compose_prompt",
+    "agent_followup",
+    "recovery_feedback"
+  ],
+  "semanticChecks": {
+    "allowedRoots": ["turn_end"],
+    "allowedTerminals": ["manual_stop", "recovery_feedback"],
+    "requiredPaths": [
+      { "from": "turn_end", "to": "agent_followup" },
+      { "from": "agent_cancel", "to": "agent_followup" },
+      { "from": "agent_followup", "to": "recovery_feedback" }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "turn_end",
+      "lane": "session",
+      "col": 0,
+      "type": "messagebus",
+      "label": "Session signal",
+      "sublabel": "turn/end or boot scan"
+    },
+    {
+      "id": "classify_failure",
+      "lane": "engine",
+      "col": 1,
+      "type": "backend",
+      "label": "Classify cause",
+      "sublabel": "Error / token / scan"
+    },
+    {
+      "id": "safety_gate",
+      "lane": "engine",
+      "col": 2,
+      "type": "security",
+      "label": "Recovery gate",
+      "sublabel": "Pause / backoff / cap"
+    },
+    {
+      "id": "grace_wait",
+      "lane": "engine",
+      "col": 3,
+      "type": "backend",
+      "label": "Grace wait",
+      "sublabel": "New turn cancels"
+    },
+    {
+      "id": "compose_prompt",
+      "lane": "engine",
+      "col": 4,
+      "type": "backend",
+      "label": "Build prompt",
+      "sublabel": "Template + tool guard"
+    },
+    {
+      "id": "agent_followup",
+      "lane": "agent",
+      "col": 5,
+      "type": "cloud",
+      "label": "agent.followup",
+      "sublabel": "Enter Agent inbox",
+      "tag": "Queued"
+    },
+    {
+      "id": "recovery_feedback",
+      "lane": "session",
+      "col": 5,
+      "type": "frontend",
+      "label": "Restore status",
+      "sublabel": "Reset + SSE state"
+    },
+    {
+      "id": "agent_cancel",
+      "lane": "agent",
+      "col": 1,
+      "type": "security",
+      "label": "agent.cancel",
+      "sublabel": "Guard hit; keep inbox"
+    },
+    {
+      "id": "manual_stop",
+      "lane": "session",
+      "col": 3,
+      "type": "external",
+      "label": "Human action",
+      "sublabel": "Pause / error / cap"
+    }
+  ],
+  "edges": [
+    { "id": "e_event_classify", "from": "turn_end", "to": "classify_failure", "label": "Session facts", "role": "main" },
+    { "id": "e_classify_gate", "from": "classify_failure", "to": "safety_gate", "label": "Failure cause", "role": "main", "variant": "emphasis" },
+    { "id": "e_gate_grace", "from": "safety_gate", "to": "grace_wait", "label": "Recovery allowed", "role": "main", "variant": "emphasis" },
+    { "id": "e_grace_prompt", "from": "grace_wait", "to": "compose_prompt", "label": "No new turn", "role": "main", "variant": "emphasis" },
+    { "id": "e_prompt_followup", "from": "compose_prompt", "to": "agent_followup", "label": "Queue followup", "role": "main", "variant": "emphasis" },
+    { "id": "e_followup_result", "from": "agent_followup", "to": "recovery_feedback", "label": "turn/end + SSE", "role": "return" },
+    { "id": "e_loop_cancel", "from": "turn_end", "to": "agent_cancel", "label": "Repeated output or tool calls", "role": "branch", "variant": "security" },
+    { "id": "e_cancel_gate", "from": "agent_cancel", "to": "safety_gate", "label": "aborted + loopText", "role": "return", "variant": "security" },
+    { "id": "e_gate_manual", "from": "safety_gate", "to": "manual_stop", "label": "Manual action required", "role": "error" }
+  ]
+}

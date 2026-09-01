@@ -70,6 +70,12 @@ On host boot it also scans the live sessions: a session whose last turn ended wi
 
 The browser half is a thin shell: the settings card, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
 
+### Recovery workflow
+
+The diagram summarizes the automatic recovery path, the loop-guard restart path, and the exit to human intervention. Click it to open the full-size version.
+
+[![dsh-auto-continue recovery workflow](docs/auto-continue-workflow.en.svg)](docs/auto-continue-workflow.en.svg)
+
 ## Quick Start
 
 DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, restart `dsh web`, done.
