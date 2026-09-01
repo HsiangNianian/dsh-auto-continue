@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   plugin-check:
@@ -64,6 +65,20 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Set up Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@hsiangnianian'
+
+      - name: Publish to GitHub Packages
+        run: |
+          npm pkg set name="@hsiangnianian/dsh-auto-continue"
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
 
       - name: Create GitHub Release with artifacts
         env:
