@@ -27,6 +27,11 @@
  *   14. loop guard: 参数/结果变化 → 不打断
  *   15. 通知桥: 通知事件 + 动作(resume / pause1h / unpause / reset-stats)
  *   15b. English locale → 浏览器通知与动作本地化
+ *   16. 顶层 row replacement → runner disposer 清理待发送定时器
+ *   17. engine inject 重入 → 旧 runner 释放, 新 runner 单独接管
+ *   18. 宽限定时器遇到 inactive settings → 异常被收口
+ *   19. loop 冷却定时器遇到 inactive settings → 异常被收口
+ *   20. 通知 resume 遇到 inactive settings → 路由正常响应, 异常被收口
  * 运行: node tests/simulate-host.mjs
  */
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
@@ -56,12 +61,53 @@ if (typeof mod.apply !== 'function') throw new Error('host bundle 未导出 appl
 
 // ---------- 假 host 环境 ----------
 function makeHost() {
-  const sessionHandlers = [];
+  const sessionHandlers = new Set();
   let config = {};
+  let configReadsBeforeFailure;
+  let contextActive = true;
   const registry = new Map();
+  const topLevelEffects = [];
+  let engineEffects = [];
+  let engineInject;
+
+  const registerEffect = (effects, start) => {
+    const cleanup = start();
+    if (typeof cleanup !== 'function') return () => {};
+    let active = true;
+    const dispose = () => {
+      if (!active) return;
+      active = false;
+      return cleanup();
+    };
+    effects.push(dispose);
+    return dispose;
+  };
+  const disposeEffects = (effects) => {
+    for (const dispose of effects.splice(0).reverse()) dispose();
+  };
+  const getConfig = () => {
+    if (!contextActive) {
+      throw new Error('cannot get required service "settings" in inactive context');
+    }
+    if (configReadsBeforeFailure !== undefined) {
+      if (configReadsBeforeFailure === 0) {
+        configReadsBeforeFailure = undefined;
+        throw new Error('cannot get required service "settings" in inactive context');
+      }
+      configReadsBeforeFailure -= 1;
+    }
+    return config;
+  };
+
   const host = {
     setConfig(patch) {
       config = { ...config, ...patch };
+    },
+    setContextActive(active) {
+      contextActive = active;
+    },
+    failConfigAfterSuccessfulReads(count) {
+      configReadsBeforeFailure = count;
     },
     emit(session, event) {
       for (const h of sessionHandlers) h(session, event);
@@ -85,48 +131,101 @@ function makeHost() {
     agent(id) {
       return registry.get(id);
     },
+    replacePluginRow() {
+      // DSH config HMR 的 row replacement 只保证顶层 fiber effect 被释放。
+      // inject 派生 context 的 effect 刻意留在另一组，避免测试把两种生命周期混为一谈。
+      disposeEffects(topLevelEffects);
+    },
+    reinjectEngine() {
+      if (engineInject === undefined) throw new Error('engine inject callback 未注册');
+      disposeEffects(engineEffects);
+      engineInject(makeEngineContext());
+    },
   };
-  const ctx = {
-    on(event, handler) {
-      if (event === 'session/event') sessionHandlers.push(handler);
-      return () => {};
-    },
-    effect(cb) {
-      // 模拟 fiber 级 effect: 收集 disposer, 供 host.dispose() 模拟热重载卸载
-      const disposer = cb();
-      host.effects = host.effects ?? [];
-      if (typeof disposer === 'function') host.effects.push(disposer);
-      return disposer ?? (() => {});
-    },
-    inject(deps, cb) {
-      cb({
-        on: (event, handler) => ctx.on(event, handler),
-        effect: (cb2) => ctx.effect(cb2),
-        settings: { register: () => {}, get: () => config },
-        agents: { get: (id) => registry.get(id), list: () => [...registry.values()] },
-        webServer: {
-          register(route) {
+
+  const makeEngineContext = () => {
+    const effects = [];
+    engineEffects = effects;
+    return {
+      on(event, handler) {
+        if (event !== 'session/event') return () => {};
+        return registerEffect(effects, () => {
+          sessionHandlers.add(handler);
+          return () => sessionHandlers.delete(handler);
+        });
+      },
+      effect: (cb) => registerEffect(effects, cb),
+      settings: { register: () => {}, get: getConfig },
+      agents: { get: (id) => registry.get(id), list: () => [...registry.values()] },
+      webServer: {
+        register(route) {
+          return registerEffect(effects, () => {
             host.routes = host.routes ?? [];
             host.routes.push(route);
-            return () => {};
-          },
+            return () => {
+              const index = host.routes.indexOf(route);
+              if (index >= 0) host.routes.splice(index, 1);
+            };
+          });
         },
-      });
+      },
+    };
+  };
+
+  const ctx = {
+    effect: (cb) => registerEffect(topLevelEffects, cb),
+    inject(deps, cb) {
+      if (deps.includes('agents')) {
+        engineInject = cb;
+        cb(makeEngineContext());
+      } else {
+        cb({ settings: { register: () => {}, get: getConfig } });
+      }
       return () => {};
     },
   };
   host.ctx = ctx;
-  host.dispose = () => {
-    // 模拟 fiber teardown: 依次执行全部 effect disposer(引擎 dispose 清理定时器)
-    for (const disposer of [...(host.effects ?? [])]) {
-      try { disposer(); } catch {}
-    }
-    host.effects = [];
-  };
   return host;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function captureConsoleErrors(run) {
+  const original = console.error;
+  const errors = [];
+  console.error = (...args) => {
+    errors.push(args.map(String).join(' '));
+  };
+  try {
+    await run();
+  } finally {
+    console.error = original;
+  }
+  return errors;
+}
+
+function postAction(host, payload) {
+  const action = host.routes?.find((route) => route.path === '/api/auto-continue-action');
+  if (action === undefined) throw new Error('动作路由未注册');
+  return new Promise((resolve) => {
+    const handlers = {};
+    const req = {
+      on(event, handler) {
+        handlers[event] = handler;
+        return req;
+      },
+    };
+    const res = {
+      writeHead() {},
+      end(body) {
+        resolve(JSON.parse(body));
+      },
+    };
+    action.handler(req, res);
+    handlers.data?.(Buffer.from(JSON.stringify(payload)));
+    handlers.end?.();
+  });
+}
 
 let failures = 0;
 function check(name, cond) {
@@ -591,35 +690,16 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   check('收到通知帧', noticeFrame !== undefined);
   check('通知含动作', noticeFrame !== undefined && noticeFrame.includes('"action":"resume"'));
   // 动作端点: resume → 立即续跑
-  const post = (payload) =>
-    new Promise((resolve) => {
-      const handlers = {};
-      const req2 = {
-        on(ev, cb) {
-          handlers[ev] = cb;
-          return req2;
-        },
-      };
-      const res2 = {
-        writeHead() {},
-        end(body) {
-          resolve(JSON.parse(body));
-        },
-      };
-      action.handler(req2, res2);
-      handlers.data?.(Buffer.from(JSON.stringify(payload)));
-      handlers.end?.();
-    });
   const before = agent.followups.length;
-  const r1 = await post({ action: 'resume', sessionId: 's1' });
+  const r1 = await postAction(host, { action: 'resume', sessionId: 's1' });
   check('resume 动作 ok', r1.ok === true);
   await sleep(100);
   check('立即续跑发送', agent.followups.length === before + 1);
-  const r2 = await post({ action: 'pause1h', sessionId: 's1' });
+  const r2 = await postAction(host, { action: 'pause1h', sessionId: 's1' });
   check('pause1h 动作 ok', r2.ok === true);
-  const r3 = await post({ action: 'unpause', sessionId: 's1' });
+  const r3 = await postAction(host, { action: 'unpause', sessionId: 's1' });
   check('unpause 动作 ok', r3.ok === true);
-  const r4 = await post({ action: 'reset-stats' });
+  const r4 = await postAction(host, { action: 'reset-stats' });
   check('reset-stats 动作 ok', r4.ok === true);
   await sleep(50);
 }
@@ -664,17 +744,106 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
-// ---------- 测试 16: 卸载(热重载)清理定时器 — dispose 后不再 fire ----------
+// ---------- 测试 16: 顶层 row replacement 清理定时器 ----------
 {
-  console.log('测试 16: 卸载(热重载)清理定时器 — dispose 后不再 fire');
+  console.log('测试 16: 顶层 row replacement 清理定时器 — 替换后不再 fire');
   const host = startPlugin({ scanOnBoot: false });
   const agent = host.makeAgent('s1');
   await sleep(50);
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
   await sleep(100); // 宽限期(200ms)内卸载, 模拟 config HMR 行替换
-  host.dispose();
+  host.replacePluginRow();
   await sleep(400); // 若定时器未清理, fire 会照常执行并产生 followup
-  check('卸载后未发送', agent.followups.length === 0);
+  check('row replacement 后未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 17: inject 重入替换旧 runner ----------
+{
+  console.log('测试 17: inject 重入替换旧 runner — 旧定时器取消且新 runner 接管');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'old' } }));
+  await sleep(100);
+  host.reinjectEngine();
+  await sleep(300);
+  check('重入后旧 runner 未发送', agent.followups.length === 0);
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'new' } }));
+  await sleep(300);
+  check('新 runner 正常接管', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 18: 宽限定时器遇到 inactive context ----------
+{
+  console.log('测试 18: 宽限定时器遇到 inactive context — 记录异常且进程继续');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 100 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  const errors = await captureConsoleErrors(async () => {
+    host.setContextActive(false);
+    await sleep(200);
+  });
+  check(
+    '定时发送异常已记录',
+    errors.some((line) => line.includes('定时发送异常 s1') && line.includes('inactive context')),
+  );
+  check('inactive context 时未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 19: loop 冷却定时器遇到 inactive context ----------
+{
+  console.log('测试 19: loop 冷却定时器遇到 inactive context — 记录异常且进程继续');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 2,
+    graceMs: 100,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  const repeated =
+    'This deliberately repeated assistant response is long enough for exact-text loop detection.';
+  host.emit(agent.session, assistantMsg(repeated, 10));
+  host.emit(agent.session, assistantMsg(repeated, 11));
+  await sleep(50);
+  check('loop guard 已打断', agent.cancels.length === 1);
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  const errors = await captureConsoleErrors(async () => {
+    host.setContextActive(false);
+    await sleep(400);
+  });
+  check(
+    'loop 重启异常已记录',
+    errors.some((line) => line.includes('loop 重启异常 s1') && line.includes('inactive context')),
+  );
+  check('inactive context 时 loop 未重启', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 20: 通知 resume 遇到 inactive context ----------
+{
+  console.log('测试 20: 通知 resume 遇到 inactive context — 路由仍响应且异常被收口');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  // 通知动作先写一条 debug log；让这次读取成功，再让 resumeNow -> fire 的读取失败。
+  host.failConfigAfterSuccessfulReads(1);
+  let response;
+  const errors = await captureConsoleErrors(async () => {
+    response = await postAction(host, { action: 'resume', sessionId: 's1' });
+    await sleep(50);
+  });
+  check('resume 路由仍返回 ok', response?.ok === true);
+  check(
+    '手动续跑异常已记录',
+    errors.some((line) => line.includes('手动续跑异常 s1') && line.includes('inactive context')),
+  );
+  check('inactive context 时 resume 未发送', agent.followups.length === 0);
   await sleep(50);
 }
 
