@@ -1,7 +1,23 @@
 /** 简体中文词典(键集的事实来源)。 */
 export declare const zh: {
     'card.title': string;
+    'card.eyebrow': string;
     'card.description': string;
+    'flow.interrupted': string;
+    'flow.grace': string;
+    'flow.continue': string;
+    'repo.star': string;
+    'repo.aria': string;
+    'section.handoff.title': string;
+    'section.handoff.description': string;
+    'section.safety.title': string;
+    'section.safety.description': string;
+    'section.recovery.title': string;
+    'section.recovery.description': string;
+    'section.loop.title': string;
+    'section.loop.description': string;
+    'section.live.title': string;
+    'section.live.description': string;
     'field.paused': string;
     'field.pausedHint': string;
     'field.continueText': string;
@@ -36,6 +52,7 @@ export declare const zh: {
     'field.classifyHint': string;
     'field.retryableErrorPatterns': string;
     'field.retryableErrorPatternsHint': string;
+    'field.retryableErrorPatternsPlaceholder': string;
     'field.backoffFactor': string;
     'field.backoffFactorHint': string;
     'field.backoffMaxMs': string;
