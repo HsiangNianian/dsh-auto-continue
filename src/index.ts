@@ -98,11 +98,19 @@ export function apply(ctx: Context): void {
     });
   });
 
+  // 引擎引用: inject 回调可能重入(依赖组合变化), 顶层 effect 在 fiber 卸载时必跑。
+  // dispose 绑定必须挂在 apply 的顶层 ctx 上——挂 inject 派生 ctx 的 effect 在 config HMR
+  // 替换行时不会执行, 悬空定时器会撞上 inactive context 炸掉整个进程。
+  let runnerRef: AutoContinueRunner | undefined;
+
   // 单实例引擎: host 进程内监听会话事件, 所有标签页共享同一个引擎。
   ctx.inject(['settings', 'agents', 'webServer'], (engineCtx) => {
+    // 回调重入时先清理旧引擎, 避免定时器与监听器叠加。
+    if (runnerRef !== undefined) runnerRef.dispose();
     const runner = new AutoContinueRunner(engineCtx, () =>
       resolveConfig(engineCtx.settings.get(settingsNamespace(AUTO_CONTINUE_NS)) as AutoContinueSettings | undefined),
     );
+    runnerRef = runner;
 
     // 状态桥: browser 侧订阅通知与运行时状态(SSE)。
     const sseClients = new Set<(data: string) => void>();
@@ -177,5 +185,13 @@ export function apply(ctx: Context): void {
         });
       },
     });
+  });
+
+  // 顶层生命周期绑定: fiber 卸载时清理引擎(定时器/监听器)。
+  // 挂在 apply 的 ctx 上保证 Cordis 一定会调用, 防止 inactive context 崩溃。
+  ctx.effect(() => () => {
+    const runner = runnerRef;
+    runnerRef = undefined;
+    if (runner !== undefined) runner.dispose();
   });
 }
