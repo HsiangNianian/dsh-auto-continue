@@ -690,9 +690,11 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   const noticeFrame = frames.find((f) => f.includes('"type":"notice"'));
   check('收到通知帧', noticeFrame !== undefined);
   check('通知含动作', noticeFrame !== undefined && noticeFrame.includes('"action":"resume"'));
+  const notice = noticeFrame === undefined ? undefined : JSON.parse(noticeFrame.slice(6)).notice;
+  check('通知携带动作目标会话', notice?.sessionId === 's1');
   // 动作端点: resume → 立即续跑
   const before = agent.followups.length;
-  const r1 = await postAction(host, { action: 'resume', sessionId: 's1' });
+  const r1 = await postAction(host, { action: 'resume', sessionId: notice?.sessionId });
   check('resume 动作 ok', r1.ok === true);
   await sleep(100);
   check('立即续跑发送', agent.followups.length === before + 1);

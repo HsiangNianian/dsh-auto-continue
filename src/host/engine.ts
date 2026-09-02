@@ -79,7 +79,7 @@ export interface HostNotice {
   title: string;
   body: string;
   /** 会话 id(通知按钮「立即续跑 / 暂停该会话」作用于它)。 */
-  sessionId?: SessionId;
+  sessionId: SessionId;
   actions: NotifyAction[];
   /** 产生时间。 */
   at: number;
@@ -505,6 +505,7 @@ export class AutoContinueRunner {
       this.bumpStat({ skipped: 1, code: failure.code });
       if (config.notify) {
         this.notify(
+          sessionId,
           copy.notContinuedTitle,
           copy.permanentErrorBody(sessionId, summary),
           this.notifyOptions(sessionId, config.locale),
@@ -563,11 +564,17 @@ export class AutoContinueRunner {
   }
 
   /** 通知桥: 产生一条通知事件, SSE 端点推给 browser 侧展示。 */
-  private notify(title: string, body: string, options?: NotifyOptions): void {
+  private notify(
+    sessionId: SessionId,
+    title: string,
+    body: string,
+    options?: NotifyOptions,
+  ): void {
     const notice: HostNotice = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       title,
       body,
+      sessionId,
       ...(options?.actions !== undefined && options.actions.length > 0
         ? { actions: options.actions }
         : { actions: [] }),
@@ -720,6 +727,7 @@ export class AutoContinueRunner {
       if (config.notify) {
         const copy = NOTICE_COPY[config.locale];
         this.notify(
+          sessionId,
           copy.continuedTitle,
           copy.continuedBody(sessionId, text, state.consecutive),
           this.notifyOptions(sessionId, config.locale),
@@ -731,6 +739,7 @@ export class AutoContinueRunner {
         if (config.notify) {
           const copy = NOTICE_COPY[config.locale];
           this.notify(
+            sessionId,
             copy.stoppedTitle,
             copy.stoppedBody(sessionId, state.consecutive),
             this.notifyOptions(sessionId, config.locale),

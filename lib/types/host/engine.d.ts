@@ -21,7 +21,7 @@ export interface HostNotice {
     title: string;
     body: string;
     /** 会话 id(通知按钮「立即续跑 / 暂停该会话」作用于它)。 */
-    sessionId?: SessionId;
+    sessionId: SessionId;
     actions: NotifyAction[];
     /** 产生时间。 */
     at: number;
