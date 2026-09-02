@@ -243,7 +243,6 @@ function SettingsCard(props: {
         >
           <span className="dshAcRelayMark"><RelayMark /></span>
           <span className="dshAcHeadText">
-            <span className="dshAcEyebrow">{props.t('card.eyebrow')}</span>
             <span className="dshAcName">{title}</span>
             <span className="dshAcDescription">{props.t(props.descriptionKey)}</span>
             <RelayJourney t={props.t} />

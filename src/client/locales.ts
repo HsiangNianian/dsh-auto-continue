@@ -8,7 +8,6 @@ import { LOCALIZED_TEXT_DEFAULTS } from '../shared/core.ts';
 /** 简体中文词典(键集的事实来源)。 */
 export const zh = {
   'card.title': '自动继续',
-  'card.eyebrow': '中断接力器',
   'card.description': '接住意外中断的请求，等现场稳定下来，再把对话交还给 Agent。',
   'flow.interrupted': '检测中断',
   'flow.grace': '安全等待',
@@ -118,7 +117,6 @@ export type SettingsCardKey = keyof typeof zh;
 /** English dictionary, checked complete against the zh key set. */
 export const en: Record<SettingsCardKey, string> = {
   'card.title': 'Auto continue',
-  'card.eyebrow': 'Continuity relay',
   'card.description': 'Catches an interrupted request, waits for things to settle, then hands the thread back to the agent.',
   'flow.interrupted': 'Interrupted',
   'flow.grace': 'Safe pause',

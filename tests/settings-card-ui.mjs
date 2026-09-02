@@ -120,7 +120,7 @@ function render(locale) {
 }
 
 const en = render('en');
-assert.match(en, /Continuity relay/);
+assert.doesNotMatch(en, /Continuity relay/);
 assert.match(en, /Interrupted/);
 assert.match(en, /Safe pause/);
 assert.match(en, />Continue</);
@@ -134,7 +134,7 @@ for (const button of en.matchAll(/<button\b[\s\S]*?<\/button>/g)) {
 }
 
 const zh = render('zh');
-assert.match(zh, /中断接力器/);
+assert.doesNotMatch(zh, /中断接力器/);
 assert.match(zh, /检测中断/);
 assert.match(zh, /安全等待/);
 assert.match(zh, /发送继续/);
@@ -182,4 +182,4 @@ for (const heading of ['接力方式', '安全节奏', '恢复雷达', '循环�
 }
 assert.match(expandedZh, /placeholder="例如：Upstream rejected the request as invalid"/);
 
-console.log('settings card relay + GitHub CTA ✅');
+console.log('settings card UI + GitHub CTA ✅');

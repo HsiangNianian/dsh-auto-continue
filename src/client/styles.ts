@@ -99,15 +99,6 @@ const css = `
   animation: dshAcRelayTravel 1.8s cubic-bezier(.4, 0, .2, 1) infinite;
 }
 .dshAcHeadText { flex-direction: column; flex: 1; gap: 3px; min-width: 0; display: flex; }
-.dshAcEyebrow {
-  color: color-mix(in srgb, var(--dsh-ac-violet) 76%, var(--dsw-alias-label-secondary));
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.4;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
 .dshAcName {
   color: var(--dsw-alias-label-primary);
   font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", sans-serif;

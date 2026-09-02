@@ -1,7 +1,6 @@
 /** 简体中文词典(键集的事实来源)。 */
 export declare const zh: {
     'card.title': string;
-    'card.eyebrow': string;
     'card.description': string;
     'flow.interrupted': string;
     'flow.grace': string;
