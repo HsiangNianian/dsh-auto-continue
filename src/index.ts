@@ -11,11 +11,10 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
-import { settingsNamespace } from '@deepseek-ai/dsh-settings';
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings';
 import { AutoContinueRunner } from './host/engine.ts';
 import { resolveConfig, type AutoContinueSettings } from './shared/core.ts';
-// Type-only: pulls the `ctx.settings` Context augmentation from dsh-settings.
-import type {} from '@deepseek-ai/dsh-settings';
+// The type-only settings import also pulls in the `ctx.settings` Context augmentation.
 // Type-only: pulls the `ctx.webServer` Context augmentation.
 import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-agent';
@@ -23,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-session';
 
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export const AUTO_CONTINUE_NS = 'auto-continue';
+const SETTINGS_NS = AUTO_CONTINUE_NS as SettingsNamespace;
 
 /** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
 export const AutoContinueSchema = z.object({
@@ -93,7 +93,7 @@ export const AutoContinueSchema = z.object({
  */
 export function apply(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.register(settingsNamespace(AUTO_CONTINUE_NS), AutoContinueSchema, {
+    settingsCtx.settings.register(SETTINGS_NS, AutoContinueSchema, {
       applies: 'live',
     });
   });
@@ -108,7 +108,7 @@ export function apply(ctx: Context): void {
     // 回调重入时先清理旧引擎, 避免定时器与监听器叠加。
     if (runnerRef !== undefined) runnerRef.dispose();
     const runner = new AutoContinueRunner(engineCtx, () =>
-      resolveConfig(engineCtx.settings.get(settingsNamespace(AUTO_CONTINUE_NS)) as AutoContinueSettings | undefined),
+      resolveConfig(engineCtx.settings.get(SETTINGS_NS) as AutoContinueSettings | undefined),
     );
     runnerRef = runner;
 

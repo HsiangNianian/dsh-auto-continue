@@ -80,7 +80,7 @@ The diagram summarizes the automatic recovery path, the loop-guard restart path,
 
 DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, restart `dsh web`, done.
 
-> **Use the latest DSH (recommended: 0.1.2-alpha.1 or newer).** Run `dsh --version` before installing. Plugin v0.8.2 supports the new 0.1.2 client-store module layout and retains a fallback for DSH 0.1.0-rc.7 through 0.1.1; rc.6 and earlier remain unsupported (`list slot ... requires options.id`). Preview releases may appear on the [official DSH releases page](https://github.com/deepseek-ai/deepseek-harness/releases) before the public npm tag catches up.
+> **Use the latest DSH (recommended: 0.1.2-alpha.4 or newer).** Run `dsh --version` before installing. Plugin v0.11.1 supports the settings API used by DSH 0.1.2-alpha.2+ (including alpha.3 and alpha.4) while retaining compatibility with DSH 0.1.0-rc.7 through 0.1.1; rc.6 and earlier remain unsupported (`list slot ... requires options.id`). Preview releases may appear on the [official DSH releases page](https://github.com/deepseek-ai/deepseek-harness/releases) before the public npm tag catches up.
 
 ### From npm (recommended)
 

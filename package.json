@@ -46,7 +46,7 @@
     "build": "node build.mjs && tsc -p tsconfig.build.json",
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/simulate-host.mjs && node tests/simulate-client-loader.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
+    "test": "node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
     "prepack": "npm run build"
   },
   "keywords": [

@@ -80,7 +80,7 @@
 
 DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。安装后重启 `dsh web` 即可。
 
-> **请使用最新 DSH(推荐 0.1.2-alpha.1 或更高版本)。** 安装前先运行 `dsh --version`。插件 v0.8.2 已支持 0.1.2 的新 client-store 模块布局, 同时为 DSH 0.1.0-rc.7 至 0.1.1 保留兼容回退; rc.6 及更早版本仍不支持(`list slot ... requires options.id`)。预览版可能先发布在 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases), 公开 npm 标签会稍后跟进。
+> **请使用最新 DSH(推荐 0.1.2-alpha.4 或更高版本)。** 安装前先运行 `dsh --version`。插件 v0.11.1 已支持 DSH 0.1.2-alpha.2+ 使用的设置 API(包括 alpha.3 和 alpha.4), 同时继续兼容 DSH 0.1.0-rc.7 至 0.1.1; rc.6 及更早版本仍不支持(`list slot ... requires options.id`)。预览版可能先发布在 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases), 公开 npm 标签会稍后跟进。
 
 ### 从 npm 安装(推荐)
 
