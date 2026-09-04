@@ -11,7 +11,7 @@
  *   2b. 稳定消息 ID 回显识别(真人同文本、多 pending、一次消费、同步发布、失败回滚、过期与上限)
  *   3. aborted(用户停止)→ 不发送
  *   4. 连续次数上限
- *   5. 启动扫描: 最后回合 interrupted → 自动续跑
+ *   5. 启动扫描: 兼容旧 events 属性与新 snapshotEvents() API
  *   5a. 启动扫描: DSH 0.1.2 snapshotEvents() API
  *   5b. 启动扫描: 永久性错误沿用实时分类
  *   5c. 启动扫描: 恢复错误模板上下文
@@ -127,10 +127,10 @@ function makeHost() {
     emit(session, event) {
       for (const h of sessionHandlers) h(session, event);
     },
-    makeAgent(id, { events = [], origin, sessionApi = 'events', cancel: cancelImpl } = {}) {
+    makeAgent(id, { events = [], origin, eventApi = 'legacy', cancel: cancelImpl } = {}) {
       const session = { id, header: { origin } };
-      if (sessionApi === 'snapshot') {
-        session.snapshotEvents = () => events;
+      if (eventApi === 'snapshot') {
+        session.snapshotEvents = () => Object.freeze([...events]);
       } else {
         session.events = events;
       }
@@ -594,9 +594,9 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
-// ---------- 测试 5: 启动扫描 interrupted ----------
+// ---------- 测试 5: 启动扫描 interrupted(旧 API) ----------
 {
-  console.log('测试 5: 启动扫描发现最近 interrupted 回合 → 自动继续');
+  console.log('测试 5: 启动扫描通过旧 events API 发现最近 interrupted 回合');
   const now = Date.now();
   const host = makeHost();
   const agent = host.makeAgent('s1', {
@@ -617,7 +617,7 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   const now = Date.now();
   const host = makeHost();
   const agent = host.makeAgent('s1', {
-    sessionApi: 'snapshot',
+    eventApi: 'snapshot',
     events: [
       { type: 'turn/end', seq: 2, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
     ],
@@ -634,7 +634,7 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   console.log('测试 5b: 启动扫描跳过永久性错误');
   const host = makeHost();
   const agent = host.makeAgent('s1', {
-    sessionApi: 'snapshot',
+    eventApi: 'snapshot',
     events: [
       turnEnd(4, {
         kind: 'error',
@@ -655,7 +655,7 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   const failedAt = Date.now() - 65_000;
   const host = makeHost();
   const agent = host.makeAgent('s1', {
-    sessionApi: 'snapshot',
+    eventApi: 'snapshot',
     events: [
       {
         ...turnEnd(7, {
@@ -688,19 +688,19 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   const now = Date.now();
   const host = makeHost();
   host.makeAgent('older-a', {
-    sessionApi: 'snapshot',
+    eventApi: 'snapshot',
     events: [
       { type: 'turn/end', seq: 2, time: now - 120_000, data: { turn: 1, reason: { kind: 'completed' } } },
     ],
   });
   host.makeAgent('older-b', {
-    sessionApi: 'snapshot',
+    eventApi: 'snapshot',
     events: [
       { type: 'turn/end', seq: 2, time: now - 90_000, data: { turn: 1, reason: { kind: 'completed' } } },
     ],
   });
   const recent = host.makeAgent('recent', {
-    sessionApi: 'snapshot',
+    eventApi: 'snapshot',
     events: [
       { type: 'turn/end', seq: 2, time: now - 1_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
     ],
