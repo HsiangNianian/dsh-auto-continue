@@ -25,8 +25,12 @@
  *   11. 幂等护栏(未确认 / 已成功 / 已失败)
  *   11b. English locale → 默认幂等护栏本地化
  *   11c. English locale → 已成功工具护栏本地化
- *   12. loop guard: 相同消息 → cancel + loop 文本重启
+ *   12. loop guard: 专属 hook cancel + loop 文本重启
+ *   12a. DSH first-cause: 用户 Stop 不得被插件认领
  *   12b. English locale → loop guard 默认重启文本本地化
+ *   12c. agent 缺失时回滚 guard/stats，保留冷却节流
+ *   12d. cancel 抛错时回滚 guard/stats，冷却后可重试
+ *   12e. parent/disposed/legacy/其他 hook 均不得重启
  *   13. loop guard: 同工具+同参数+同结果 → cancel
  *   14. loop guard: 参数/结果变化 → 不打断
  *   15. 通知桥: 通知事件 + 动作(resume / pause1h / unpause / reset-stats)
@@ -122,7 +126,7 @@ function makeHost() {
     emit(session, event) {
       for (const h of sessionHandlers) h(session, event);
     },
-    makeAgent(id, { events = [], origin, sessionApi = 'events' } = {}) {
+    makeAgent(id, { events = [], origin, sessionApi = 'events', cancel: cancelImpl } = {}) {
       const session = { id, header: { origin } };
       if (sessionApi === 'snapshot') {
         session.snapshotEvents = () => events;
@@ -138,10 +142,17 @@ function makeHost() {
         },
         cancel(cause, options) {
           this.cancels.push({ cause, options });
+          return cancelImpl?.(cause, options);
         },
       };
       registry.set(id, agent);
       return agent;
+    },
+    removeAgent(id) {
+      registry.delete(id);
+    },
+    restoreAgent(agent) {
+      registry.set(agent.session.id, agent);
     },
     agent(id) {
       return registry.get(id);
@@ -240,6 +251,30 @@ function postAction(host, payload) {
     handlers.data?.(Buffer.from(JSON.stringify(payload)));
     handlers.end?.();
   });
+}
+
+function readBridgeState(host) {
+  const bridge = host.routes?.find((route) => route.path === '/api/auto-continue-bridge');
+  if (bridge === undefined) throw new Error('状态桥路由未注册');
+  let state;
+  let close;
+  bridge.handler(
+    {
+      on(event, handler) {
+        if (event === 'close') close = handler;
+      },
+    },
+    {
+      write(data) {
+        const frame = String(data).trim();
+        if (frame.startsWith('data: ')) state = JSON.parse(frame.slice(6));
+      },
+      writeHead() {},
+      end() {},
+    },
+  );
+  close?.();
+  return state;
 }
 
 let failures = 0;
@@ -386,7 +421,7 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   const host = startPlugin({ scanOnBoot: false });
   const agent = host.makeAgent('s1');
   await sleep(50);
-  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'user' } }));
   await sleep(600);
   check('未发送', agent.followups.length === 0);
   await sleep(50);
@@ -701,7 +736,7 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
 
 // ---------- 测试 12: loop guard — 相同消息重复 ----------
 {
-  console.log('测试 12: loop guard 相同消息 → cancel + loop 文本重启');
+  console.log('测试 12: loop guard 相同消息 → 专属 hook cancel + loop 文本重启');
   const host = startPlugin({ scanOnBoot: false, loopRepeatText: 3, graceMs: 100, cooldownMs: 300 });
   const agent = host.makeAgent('s1');
   await sleep(50);
@@ -712,9 +747,39 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   }
   await sleep(150);
   check('已 cancel', agent.cancels.length === 1);
-  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  check(
+    '使用稳定的专属 hook cause',
+    JSON.stringify(agent.cancels[0]?.cause) ===
+      JSON.stringify({ kind: 'hook', reason: 'dsh-auto-continue:loop-guard' }),
+  );
+  check('durable marker 前不计入 looped', readBridgeState(host)?.stats?.looped === 0);
+  const loopEnd = turnEnd(1, { kind: 'aborted', reason: agent.cancels[0]?.cause });
+  host.emit(agent.session, loopEnd);
+  check('durable marker 确认后计入 looped', readBridgeState(host)?.stats?.looped === 1);
+  host.emit(agent.session, loopEnd);
+  check('重复 durable marker 不会重复计数', readBridgeState(host)?.stats?.looped === 1);
   await sleep(700); // 剩余冷却 + 宽限
   check('loop 文本重启', agent.followups[0]?.content?.[0]?.text.includes('陷入循环'));
+  await sleep(50);
+}
+
+// ---------- 测试 12a: 用户 Stop 先赢得 cancel 竞态 ----------
+{
+  console.log('测试 12a: 用户 Stop 先赢得 cancel 竞态 → 不重启');
+  const host = startPlugin({ scanOnBoot: false, loopRepeatText: 2, graceMs: 100, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  const repeated = 'The same long assistant message trips the loop detector.';
+  host.emit(agent.session, assistantMsg(repeated, 10));
+  host.emit(agent.session, assistantMsg(repeated, 11));
+  await sleep(50);
+  check('插件也发出了 cancel', agent.cancels.length === 1);
+  // DSH 保留 first cause: 用户的 cancel 先到达时，durable turn/end 记录 user。
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'user' } }));
+  await sleep(700);
+  check('用户 Stop 不被 loop guard 误认领', agent.followups.length === 0);
+  check('用户先赢的 no-op cancel 不计入 looped', readBridgeState(host)?.stats?.looped === 0);
   await sleep(50);
 }
 
@@ -736,13 +801,105 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
     host.emit(agent.session, assistantMsg('Let me test variants of the regex.', 10 + i));
   }
   await sleep(150);
-  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: agent.cancels[0]?.cause }));
   await sleep(700);
   check(
     '英文 loop guard 文本',
     agent.followups[0]?.content?.[0]?.text.includes('You may be stuck in a loop'),
   );
   await sleep(50);
+}
+
+// ---------- 测试 12c: agent 缺失时回滚 ----------
+{
+  console.log('测试 12c: cancel 时 agent 缺失 → 回滚 guard，冷却后可重试');
+  const host = startPlugin({ scanOnBoot: false, loopRepeatText: 2, cooldownMs: 120 });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  host.removeAgent('s1');
+  const repeated = 'This repeated output detects a loop even if its live agent briefly disappears.';
+  host.emit(agent.session, assistantMsg(repeated, 10));
+  host.emit(agent.session, assistantMsg(repeated, 11));
+  await sleep(20);
+  check('agent 缺失不计入 looped', readBridgeState(host)?.stats?.looped === 0);
+
+  host.restoreAgent(agent);
+  host.emit(agent.session, assistantMsg(repeated, 12));
+  await sleep(20);
+  check('失败后仍受冷却节流', agent.cancels.length === 0);
+
+  await sleep(130);
+  host.emit(agent.session, assistantMsg(repeated, 13));
+  await sleep(30);
+  check('冷却后可再次尝试', agent.cancels.length === 1);
+  check('durable marker 前仍不计入 looped', readBridgeState(host)?.stats?.looped === 0);
+  const loopEnd = turnEnd(1, { kind: 'aborted', reason: agent.cancels[0]?.cause });
+  host.emit(agent.session, loopEnd);
+  check('仅 durable marker 确认的 cancel 计入 looped', readBridgeState(host)?.stats?.looped === 1);
+  host.emit(agent.session, loopEnd);
+  check('重复 marker 不重复计数', readBridgeState(host)?.stats?.looped === 1);
+  host.emit(agent.session, turnStart(2));
+  await sleep(30);
+}
+
+// ---------- 测试 12d: cancel 抛错时回滚 ----------
+{
+  console.log('测试 12d: cancel 抛错 → 回滚 guard 和 stats，冷却后可重试');
+  let cancelAttempts = 0;
+  const host = startPlugin({ scanOnBoot: false, loopRepeatText: 2, cooldownMs: 120 });
+  const agent = host.makeAgent('s1', {
+    cancel() {
+      cancelAttempts += 1;
+      if (cancelAttempts === 1) throw new Error('cancel rejected');
+    },
+  });
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const repeated = 'This repeated output keeps the loop guard active across a transient cancel failure.';
+  host.emit(agent.session, assistantMsg(repeated, 10));
+  host.emit(agent.session, assistantMsg(repeated, 11));
+  await sleep(20);
+  check('cancel 抛错不计入 looped', readBridgeState(host)?.stats?.looped === 0);
+
+  host.emit(agent.session, assistantMsg(repeated, 12));
+  await sleep(20);
+  check('抛错后的立即重试被节流', agent.cancels.length === 1);
+
+  await sleep(130);
+  host.emit(agent.session, assistantMsg(repeated, 13));
+  await sleep(30);
+  check('抛错后冷却到期可重试', agent.cancels.length === 2);
+  check('成功请求但未收到 marker 时不计数', readBridgeState(host)?.stats?.looped === 0);
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: agent.cancels[1]?.cause }));
+  check('抛错后仅 durable marker 确认的 cancel 计入 looped', readBridgeState(host)?.stats?.looped === 1);
+  host.emit(agent.session, turnStart(2));
+  await sleep(30);
+}
+
+// ---------- 测试 12e: 其他 DSH durable cancel cause 不得重启 ----------
+{
+  console.log('测试 12e: parent/disposed/legacy/其他 hook → 不误认领重启');
+  const foreignCauses = [
+    { kind: 'parent' },
+    { kind: 'disposed' },
+    { kind: 'legacy' },
+    { kind: 'hook', reason: 'another-plugin' },
+  ];
+  for (const [index, cause] of foreignCauses.entries()) {
+    const host = startPlugin({ scanOnBoot: false, loopRepeatText: 2, graceMs: 10, cooldownMs: 30 });
+    const agent = host.makeAgent(`foreign-${index}`);
+    await sleep(10);
+    host.emit(agent.session, turnStart(1));
+    const repeated = `Foreign cancellation cause ${index} leaves this turn stopped.`;
+    host.emit(agent.session, assistantMsg(repeated, 10));
+    host.emit(agent.session, assistantMsg(repeated, 11));
+    await sleep(10);
+    host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: cause }));
+    await sleep(60);
+    check(`${cause.kind} cause 不重启`, agent.followups.length === 0);
+  }
+  await sleep(20);
 }
 
 // ---------- 测试 13: loop guard — 同工具+同参数+同结果 ----------
@@ -949,7 +1106,7 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   host.emit(agent.session, assistantMsg(repeated, 11));
   await sleep(50);
   check('loop guard 已打断', agent.cancels.length === 1);
-  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: { kind: 'human' } }));
+  host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: agent.cancels[0]?.cause }));
   const errors = await captureConsoleErrors(async () => {
     host.setContextActive(false);
     await sleep(400);

@@ -248,8 +248,6 @@ export interface SessionState {
     loopFired: boolean;
     /** loop 重启的延迟定时器(冷却结束后再 schedule)。 */
     loopRetryTimer: ReturnType<typeof setTimeout> | undefined;
-    /** 我们主动 cancel 过本回合(区分用户停止)。 */
-    loopCancelled: boolean;
 }
 export declare const freshState: () => SessionState;
 export declare const RECOVERY_WINDOW_MS: number;

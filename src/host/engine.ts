@@ -72,6 +72,12 @@ const NOTICE_COPY = {
   },
 } as const satisfies Record<AutoContinueLocale, Record<string, unknown>>;
 
+/** Durable cancel identity reserved for this plugin's loop guard. */
+const LOOP_GUARD_CANCEL_CAUSE = {
+  kind: 'hook',
+  reason: 'dsh-auto-continue:loop-guard',
+} as const;
+
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
   /** 稳定标识(供 browser 去重)。 */
@@ -367,8 +373,8 @@ export class AutoContinueRunner {
 
   /**
    * 打断运行中的回合: cancel(带来源标记)+ 进冷却。
-   * 随后的 turn/end aborted 会因 loopCancelled 走「可恢复中断」路径,
-   * 用 loopText 重启回合——不会与用户手动停止混淆。
+   * 只有随后持久化的 turn/end 精确携带专属 hook cause 时,
+   * 才会用 loopText 重启回合——DSH 的 first-cause 语义保证用户 Stop 优先。
    */
   private async interruptLoop(sessionId: SessionId, state: SessionState): Promise<void> {
     if (state.loopFired) return;
@@ -378,21 +384,19 @@ export class AutoContinueRunner {
       return;
     }
     state.loopFired = true;
-    state.loopCancelled = true;
     state.lastAttemptAt = Date.now(); // 打断计入冷却, 防反复打断
-    this.bumpStat({ looped: 1 });
     try {
       const agent = this.ctx.agents.get(sessionId);
       if (agent === undefined) {
         this.log(`打断循环失败 ${sessionId}: 无 live agent`);
-        state.loopCancelled = false;
+        state.loopFired = false;
         return;
       }
-      agent.cancel({ kind: 'user' }, { keepInbox: true });
+      agent.cancel(LOOP_GUARD_CANCEL_CAUSE, { keepInbox: true });
       this.log(`已打断循环 ${sessionId}: cancel 已受理`);
     } catch (error) {
       this.log(`打断循环失败 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      state.loopCancelled = false;
+      state.loopFired = false;
     }
   }
 
@@ -411,7 +415,6 @@ export class AutoContinueRunner {
         state.sameTextRun = 0;
         state.toolRun = undefined;
         state.loopFired = false;
-        state.loopCancelled = false;
         if (state.loopRetryTimer !== undefined) {
           clearTimeout(state.loopRetryTimer);
           state.loopRetryTimer = undefined;
@@ -420,6 +423,8 @@ export class AutoContinueRunner {
         break;
       case 'turn/end': {
         state.running = false;
+        const loopCancelPending = state.loopFired;
+        state.loopFired = false;
         this.cancelPending(sessionId, '收到新的 turn/end');
         const reason = event.data.reason;
         if (
@@ -438,12 +443,14 @@ export class AutoContinueRunner {
           state.lastFailure = undefined;
           this.noteRecovery(sessionId, 'completed');
         } else if (reason.kind === 'aborted') {
-          if (state.loopCancelled) {
+          if (
+            reason.reason.kind === LOOP_GUARD_CANCEL_CAUSE.kind &&
+            reason.reason.reason === LOOP_GUARD_CANCEL_CAUSE.reason
+          ) {
             // 我们自己的 loop guard 打断: 视为可恢复中断, 用循环提示文本重启回合。
             // 不清 consecutive / lastAttemptAt: 冷却与连续上限在 loop 路径同样生效,
             // 防止无限打断重发(issue #13); 打断本身受冷却约束, 重启也要等冷却。
-            state.loopCancelled = false;
-            state.loopFired = false;
+            if (loopCancelPending) this.bumpStat({ looped: 1 });
             state.pendingRecoveryAt = 0;
             state.shortRun = 0;
             state.lastShortAt = 0;

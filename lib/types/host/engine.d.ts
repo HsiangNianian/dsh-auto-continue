@@ -74,8 +74,8 @@ export declare class AutoContinueRunner {
     private checkLoop;
     /**
      * 打断运行中的回合: cancel(带来源标记)+ 进冷却。
-     * 随后的 turn/end aborted 会因 loopCancelled 走「可恢复中断」路径,
-     * 用 loopText 重启回合——不会与用户手动停止混淆。
+     * 只有随后持久化的 turn/end 精确携带专属 hook cause 时,
+     * 才会用 loopText 重启回合——DSH 的 first-cause 语义保证用户 Stop 优先。
      */
     private interruptLoop;
     private onSessionEvent;
