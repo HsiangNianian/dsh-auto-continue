@@ -196,12 +196,10 @@ export declare function emptyDayStats(): DayStats;
 export interface SessionState {
     /** 连续自动「继续」次数; 成功回合或用户手动介入后归零。 */
     consecutive: number;
-    /** 上次自动「继续」时间戳。 */
-    lastAutoAt: number;
     /** 上次自动「继续」尝试(成功或失败)时间戳; 防止失败场景下的快速重试循环。 */
     lastAttemptAt: number;
-    /** 我们上次自动发送的文本(用于识别自己的回显)。 */
-    lastSentText: string;
+    /** 尚未回显到会话事件流的自动发送消息 ID。 */
+    pendingEchoMessageIds: Map<string, number>;
     /** 宽限期定时器(进行中的待发送)。 */
     pendingTimer: ReturnType<typeof setTimeout> | undefined;
     /** 宿主权威 running 位(来自 host/session-status 与回合事件)。 */
@@ -252,5 +250,10 @@ export interface SessionState {
 export declare const freshState: () => SessionState;
 export declare const RECOVERY_WINDOW_MS: number;
 export declare const ECHO_WINDOW_MS: number;
+/** Track an identified plugin message before handing it to the host queue. */
+export declare function trackPendingEcho(state: SessionState, messageId: string): void;
+/** Roll back tracking when the host rejects a queued message. */
+export declare function forgetPendingEcho(state: SessionState, messageId: string): void;
+/** Match and consume one plugin-owned `user/message` event by stable message ID. */
 export declare function isOurEcho(state: SessionState, event: SessionEvent): boolean;
 export {};

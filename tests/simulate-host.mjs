@@ -8,6 +8,7 @@
  *   1c. 本地化只替换默认值, 不覆盖用户自定义文本
  *   1d. 未支持的 locale → 回落中文
  *   2. 宽限期内 turn/start → 取消
+ *   2b. 稳定消息 ID 回显识别(真人同文本、多 pending、一次消费、同步发布、失败回滚、过期与上限)
  *   3. aborted(用户停止)→ 不发送
  *   4. 连续次数上限
  *   5. 启动扫描: 最后回合 interrupted → 自动续跑
@@ -135,10 +136,18 @@ function makeHost() {
       }
       const agent = {
         session,
+        followupAttempts: [],
         followups: [],
         cancels: [],
         followup(message) {
+          this.followupAttempts.push(message);
+          if (this.followupError !== undefined) {
+            const error = this.followupError;
+            this.followupError = undefined;
+            throw error;
+          }
           this.followups.push(message);
+          this.onFollowup?.(message);
         },
         cancel(cause, options) {
           this.cancels.push({ cause, options });
@@ -314,11 +323,17 @@ const turnStart = (turn) => ({
   time: Date.now(),
   data: { turn },
 });
-const userMsg = (text, seq = 5) => ({
+const userMsg = (text, id = `user-${Date.now()}`, seq = 5) => ({
   type: 'user/message',
   seq,
   time: Date.now(),
-  data: { content: [{ type: 'text', text }], source: { kind: 'user' } },
+  data: { id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } },
+});
+const userMessageEvent = (message, seq = 5, time = Date.now()) => ({
+  type: 'user/message',
+  seq,
+  time,
+  data: message,
 });
 const assistantMsg = (text, seq = 6) => ({
   type: 'assistant/message',
@@ -412,6 +427,142 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   host.emit(agent.session, turnStart(2));
   await sleep(600);
   check('未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 2b: 真人相同文本不是插件回显 ----------
+{
+  console.log('测试 2b: 真人发送相同继续文本 → 仍算用户介入并取消待发送');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 2 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(100);
+  check('首次自动继续已发送', agent.followups.length === 1);
+
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+  host.emit(agent.session, userMsg('继续', 'human-same-text'));
+  await sleep(100);
+  check('真人相同文本取消待发送', agent.followups.length === 1);
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  host.emit(agent.session, turnEnd(3, { kind: 'error', error: { code: 'UPSTREAM', message: 'once-more' } }));
+  await sleep(100);
+  check('真人相同文本重置连续次数', agent.followups.length === 3);
+  await sleep(50);
+}
+
+// ---------- 测试 2c: 待处理 ID 上限 ----------
+{
+  console.log('测试 2c: 待处理插件消息 ID 有上限');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 100 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  for (let i = 0; i < 65; i += 1) {
+    await postAction(host, { action: 'resume', sessionId: 's1' });
+  }
+  check('已完成 65 次强制发送', agent.followups.length === 65);
+  const oldestMessage = agent.followups[0];
+  host.emit(agent.session, turnEnd(1, { kind: 'completed' }));
+  host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+  host.emit(agent.session, userMessageEvent(oldestMessage, 30));
+  await sleep(100);
+  check('超出上限的最旧 ID 已淘汰', agent.followups.length === 65);
+  await sleep(50);
+}
+
+// ---------- 测试 2d: 待处理 ID 过期 ----------
+{
+  console.log('测试 2d: 旧插件消息 ID 超时 → 不会被新发送重新激活');
+  const realNow = Date.now;
+  let now = realNow();
+  try {
+    Date.now = () => now;
+    const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0 });
+    const agent = host.makeAgent('s1');
+    await sleep(50);
+    await postAction(host, { action: 'resume', sessionId: 's1' });
+    const expiredMessage = agent.followups[0];
+    now += 10 * 60 * 1000 + 1;
+    await postAction(host, { action: 'resume', sessionId: 's1' });
+
+    host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+    host.emit(agent.session, userMessageEvent(expiredMessage, 10, now));
+    await sleep(100);
+    check('过期 ID 按用户介入处理并取消待发送', agent.followups.length === 2);
+  } finally {
+    Date.now = realNow;
+  }
+  await sleep(50);
+}
+
+// ---------- 测试 2e: followup 失败回滚 ----------
+{
+  console.log('测试 2e: followup 失败 → 不保留幽灵回显 ID');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0 });
+  const agent = host.makeAgent('s1');
+  agent.followupError = new Error('queue unavailable');
+  await sleep(50);
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  check('失败尝试未入队', agent.followups.length === 0 && agent.followupAttempts.length === 1);
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  check('后续发送成功', agent.followups.length === 1);
+
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+  host.emit(agent.session, userMessageEvent(agent.followupAttempts[0], 10));
+  await sleep(100);
+  check('失败消息 ID 未吞掉后续用户介入', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 2f: followup 同步发布回显 ----------
+{
+  console.log('测试 2f: followup 同步回显 → 发送前已登记消息 ID');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 2 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  agent.onFollowup = (message) => {
+    host.emit(agent.session, userMessageEvent(message, 10));
+  };
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  agent.onFollowup = undefined;
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+  await sleep(100);
+  check('同步回显未重置连续次数', agent.followups.length === 2);
+  await sleep(50);
+}
+
+// ---------- 测试 2g: 回显 ID 一次性消费 ----------
+{
+  console.log('测试 2g: 插件消息 ID 只消费一次');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 1 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  const echo = userMessageEvent(agent.followups[0], 10);
+  host.emit(agent.session, echo);
+  host.emit(agent.session, { ...echo, seq: 11 });
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+  await sleep(100);
+  check('重复 ID 的第二次事件算作用户介入', agent.followups.length === 2);
+  await sleep(50);
+}
+
+// ---------- 测试 2h: 多条待处理 ID ----------
+{
+  console.log('测试 2h: 多条待处理插件消息 → 每个 ID 都能被识别');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 2 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  check('强制续跑排入两条消息', agent.followups.length === 2);
+
+  host.emit(agent.session, userMessageEvent(agent.followups[0], 10));
+  host.emit(agent.session, userMessageEvent(agent.followups[1], 11));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
+  await sleep(100);
+  check('两个插件 ID 都未被误算作真人介入', agent.followups.length === 2);
   await sleep(50);
 }
 

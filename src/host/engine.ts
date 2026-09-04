@@ -19,11 +19,11 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
 import type { Session } from '@deepseek-ai/dsh-session';
 import {
   DEFAULT_CONFIG,
-  ECHO_WINDOW_MS,
   RECOVERY_WINDOW_MS,
   effectiveCooldown,
   emptyDayStats,
   fillTemplate,
+  forgetPendingEcho,
   freshState,
   isNonHumanReason,
   isOurEcho,
@@ -32,6 +32,7 @@ import {
   resolveConfig,
   sleep,
   todayKey,
+  trackPendingEcho,
   toolResultFacts,
   type AutoContinueConfig,
   type AutoContinueLocale,
@@ -93,12 +94,6 @@ export interface HostNotice {
 
 /** 自动发送后, 在该窗口内出现的回合结束才计入恢复统计。 */
 
-/** 回显识别窗口: 排队消息可能几分钟后才被模型处理到, 窗口必须远大于排队延迟。 */
-
-/**
- * 判定一条 user/message 是否是我们自己自动发送的回显。
- * 单实例引擎: 内存态即可; 排队消息可能几分钟后才被模型处理, 窗口保持 10 分钟。
- */
 /** SSE 帧外壳: `{ rpcId, payload }`。 */
 type FrameEnvelope<T> = { payload: T };
 
@@ -753,16 +748,20 @@ export class AutoContinueRunner {
     }
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
     try {
-      agent.followup(
-        createUserMessage({
-          content: [{ type: 'text', text }],
-          source: { kind: 'user' },
-        }),
-      );
+      const message = createUserMessage({
+        content: [{ type: 'text', text }],
+        source: { kind: 'user' },
+      });
+      // `followup` may publish the matching session event synchronously.
+      trackPendingEcho(state, message.id);
+      try {
+        agent.followup(message);
+      } catch (error) {
+        forgetPendingEcho(state, message.id);
+        throw error;
+      }
       const now = Date.now();
       state.consecutive += 1;
-      state.lastAutoAt = now;
-      state.lastSentText = text;
       state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
       this.bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
       this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
