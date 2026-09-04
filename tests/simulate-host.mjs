@@ -37,6 +37,11 @@
  *   18. 宽限定时器遇到 inactive settings → 异常被收口
  *   19. loop 冷却定时器遇到 inactive settings → 异常被收口
  *   20. 通知 resume 遇到 inactive settings → 路由正常响应, 异常被收口
+ *   21. turn/end error 缺失 failure details → 记录并跳过
+ *   22. turn/end error 不可解释的 failure details → 记录并跳过
+ *   23. turn/end reason 结构无效 → 记录并跳过
+ *   24. session/event listener 收口异常且后续事件继续处理
+ *   25. 未知 turn/end reason kind → 安静忽略
  * 运行: node tests/simulate-host.mjs
  */
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
@@ -976,6 +981,139 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
     errors.some((line) => line.includes('手动续跑异常 s1') && line.includes('inactive context')),
   );
   check('inactive context 时 resume 未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 21: turn/end error 缺失 failure details ----------
+{
+  console.log('测试 21: turn/end error 缺失 failure details — 记录并跳过');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('malformed-failure');
+  await sleep(50);
+  let eventError;
+  const errors = await captureConsoleErrors(async () => {
+    try {
+      host.emit(agent.session, turnEnd(1, { kind: 'error' }));
+    } catch (error) {
+      eventError = error;
+    }
+    await sleep(300);
+  });
+  check(
+    '畸形 failure 被记录并安全跳过',
+    eventError === undefined &&
+      agent.followups.length === 0 &&
+      errors.some(
+        (line) => line.includes('忽略畸形 turn/end') && line.includes('malformed-failure'),
+      ),
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 22: turn/end error 不可解释的 failure details ----------
+{
+  console.log('测试 22: turn/end error 不可解释的 failure details — 记录并跳过');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('unreadable-failure');
+  await sleep(50);
+  const invalidDetails = [null, {}, [], 'boom', { code: 503, message: false }, { status: '503' }];
+  const eventErrors = [];
+  const errors = await captureConsoleErrors(async () => {
+    invalidDetails.forEach((error, index) => {
+      try {
+        host.emit(agent.session, turnEnd(index + 1, { kind: 'error', error }));
+      } catch (eventError) {
+        eventErrors.push(eventError);
+      }
+    });
+    await sleep(300);
+  });
+  check(
+    '不可解释的 failure 全部被记录并安全跳过',
+    eventErrors.length === 0 &&
+      agent.followups.length === 0 &&
+      errors.filter(
+        (line) => line.includes('忽略畸形 turn/end') && line.includes('unreadable-failure'),
+      ).length === invalidDetails.length,
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 23: turn/end reason 结构无效 ----------
+{
+  console.log('测试 23: turn/end reason 结构无效 — 记录并跳过');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('malformed-reason');
+  await sleep(50);
+  const invalidReasons = [undefined, null, {}, [], 'error', { kind: 503 }];
+  const eventErrors = [];
+  const errors = await captureConsoleErrors(async () => {
+    invalidReasons.forEach((reason, index) => {
+      try {
+        host.emit(agent.session, turnEnd(index + 1, reason));
+      } catch (eventError) {
+        eventErrors.push(eventError);
+      }
+    });
+    await sleep(300);
+  });
+  check(
+    '无效 reason 全部被记录并安全跳过',
+    eventErrors.length === 0 &&
+      agent.followups.length === 0 &&
+      errors.filter(
+        (line) => line.includes('忽略畸形 turn/end') && line.includes('malformed-reason'),
+      ).length === invalidReasons.length,
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 24: session/event listener 收口异常 ----------
+{
+  console.log('测试 24: session/event listener 收口异常 — 后续合法事件仍能处理');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('listener-boundary');
+  await sleep(50);
+  let eventError;
+  const errors = await captureConsoleErrors(async () => {
+    try {
+      host.emit(agent.session, {
+        type: 'tool/call',
+        seq: 10,
+        time: Date.now(),
+        data: undefined,
+      });
+    } catch (error) {
+      eventError = error;
+    }
+    host.emit(
+      agent.session,
+      turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'retry me' } }),
+    );
+    await sleep(300);
+  });
+  check(
+    'listener 异常已记录且合法后续事件照常处理',
+    eventError === undefined &&
+      errors.some(
+        (line) => line.includes('会话事件处理异常') && line.includes('listener-boundary'),
+      ) &&
+      agent.followups.length === 1,
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 25: 未知 turn/end reason kind ----------
+{
+  console.log('测试 25: 未知 turn/end reason kind — 安静忽略');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('future-reason');
+  await sleep(50);
+  const errors = await captureConsoleErrors(async () => {
+    host.emit(agent.session, turnEnd(1, { kind: 'future-provider-outcome', detail: 'new' }));
+    await sleep(300);
+  });
+  check('未知 reason 未发送且未记录错误', agent.followups.length === 0 && errors.length === 0);
   await sleep(50);
 }
 

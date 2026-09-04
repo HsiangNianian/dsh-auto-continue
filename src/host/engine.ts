@@ -155,9 +155,17 @@ export class AutoContinueRunner {
     private readonly getConfig: () => AutoContinueConfig,
   ) {
     // 单实例事件源: 宿主进程内的会话事件 firehose, 天然覆盖所有会话。
-    this.disposeSessionEvents = ctx.on('session/event', (session, event) =>
-      this.onHostEvent(session, event),
-    );
+    this.disposeSessionEvents = ctx.on('session/event', (session, event) => {
+      try {
+        this.onHostEvent(session, event);
+      } catch (error) {
+        console.error(
+          `[auto-continue] 会话事件处理异常 ${session.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    });
     const config = this.getConfig();
     if (config.scanOnBoot) {
       void this.bootScanLoop();
@@ -414,6 +422,16 @@ export class AutoContinueRunner {
         state.running = false;
         this.cancelPending(sessionId, '收到新的 turn/end');
         const reason = event.data.reason;
+        if (
+          typeof reason !== 'object' ||
+          reason === null ||
+          Array.isArray(reason) ||
+          typeof reason.kind !== 'string' ||
+          reason.kind.trim() === ''
+        ) {
+          console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: reason 无法解释`);
+          break;
+        }
         if (reason.kind === 'completed') {
           // 成功回合: 恢复健康状态, 并确认上一次自动发送的效果
           state.consecutive = 0;
@@ -465,10 +483,27 @@ export class AutoContinueRunner {
         } else if (reason.kind === 'error') {
           // 记录失败事实(分类与模板填充用), 然后按类型处理
           const error = reason.error;
+          if (typeof error !== 'object' || error === null || Array.isArray(error)) {
+            console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: error details 缺失`);
+            break;
+          }
+          const code = typeof error.code === 'string' && error.code.trim() !== ''
+            ? error.code
+            : undefined;
+          const message = typeof error.message === 'string' && error.message.trim() !== ''
+            ? error.message
+            : undefined;
+          const status = typeof error.status === 'number' && Number.isFinite(error.status)
+            ? error.status
+            : undefined;
+          if (code === undefined && message === undefined && status === undefined) {
+            console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: error details 无法解释`);
+            break;
+          }
           state.lastFailure = {
-            code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
-            message: typeof error.message === 'string' ? error.message : String(error),
-            ...(typeof error.status === 'number' ? { status: error.status } : {}),
+            code: code ?? 'UNKNOWN',
+            message: message ?? code ?? `HTTP ${status}`,
+            ...(status !== undefined ? { status } : {}),
           };
           state.lastTurn = event.data.turn;
           state.lastFailureAt = Date.now();
