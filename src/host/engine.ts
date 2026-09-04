@@ -96,6 +96,20 @@ export interface HostNotice {
 /** SSE 帧外壳: `{ rpcId, payload }`。 */
 type FrameEnvelope<T> = { payload: T };
 
+/** Session history APIs across the supported DSH host releases. */
+type CompatibleSession = Session & {
+  readonly events?: readonly SessionEvent[];
+  snapshotEvents?: () => readonly SessionEvent[];
+};
+
+/** Read one stable event-log snapshot on both legacy and DSH 0.1.2 hosts. */
+function snapshotSessionEvents(session: Session): readonly SessionEvent[] {
+  const compatible = session as CompatibleSession;
+  if (typeof compatible.snapshotEvents === 'function') return compatible.snapshotEvents();
+  if (compatible.events !== undefined) return compatible.events;
+  throw new TypeError('session exposes neither snapshotEvents() nor events');
+}
+
 /**
  * 事件流泵: 带指数退避的 SSE 重连循环。
  * - 从未收到任何帧(宿主未就绪): 退避重试, 不触发扫描
@@ -831,7 +845,7 @@ export class AutoContinueRunner {
     for (const agent of this.ctx.agents.list()) {
       const session = agent.session;
       if (session.header.origin === 'subagent') continue; // 子代理由父代理处理
-      candidates.push({ sessionId: session.id, events: session.events });
+      candidates.push({ sessionId: session.id, events: snapshotSessionEvents(session) });
     }
     for (const candidate of candidates.slice(0, config.scanLimit)) {
       if (this.disposed) return true;
