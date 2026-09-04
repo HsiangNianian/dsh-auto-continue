@@ -33,7 +33,6 @@ import {
   sleep,
   todayKey,
   trackPendingEcho,
-  toolResultFacts,
   type AutoContinueConfig,
   type AutoContinueLocale,
   type DayStats,
@@ -42,6 +41,7 @@ import {
   type NotifyAction,
   type NotifyOptions,
   type TemplateContext,
+  type ToolRepeatSignal,
 } from '../shared/core.ts';
 
 const NOTICE_COPY = {
@@ -311,42 +311,26 @@ export class AutoContinueRunner {
    */
   private onHostEvent(session: Session, event: SessionEvent): void {
     const sessionId = session.id;
+    if (
+      (event.type === 'user/message' || event.type === 'assistant/message') &&
+      typeof event.surfaceOp === 'object' &&
+      event.surfaceOp !== null
+    ) {
+      // Compaction replacement 不是新消息，也可能 shadow 整段工具结果。
+      this.state(sessionId).tools.recordSurfaceReplacement(event.seq);
+      return;
+    }
     if (event.type === 'tool/call') {
-      const name = event.data.name;
-      if (typeof name === 'string') {
-        const state = this.state(sessionId);
-        state.lastTool = name;
-        state.lastToolResult = 'pending'; // 已发起, 尚未见结果
-        // loop guard 信号 2: 同工具+同参数才可能是循环; 参数变化 = 有进展
-        // (工具调用本身也重置短句信号)。计数在结果确认后才推进。
-        state.shortRun = 0;
-        const key = `${name}\n${event.data.arguments}`;
-        if (state.toolRun?.key === key) {
-          state.toolRun.waiting = true; // 结果到达时与上次结果比较
-        } else {
-          state.toolRun = { key, count: 1, lastResult: undefined, waiting: false };
-        }
-      }
+      const state = this.state(sessionId);
+      // 任何新鲜调用都代表进展（即使缺关联 id）；旧帧重放不能清短句 streak。
+      if (state.tools.recordCall(event)) state.shortRun = 0;
     } else if (event.type === 'tool/result') {
       const state = this.state(sessionId);
-      if (state.lastToolResult === 'pending') {
-        const facts = toolResultFacts(event.data);
-        state.lastToolResult = facts;
-        // 结果确认: 与上次相同 → 计数推进; 不同 → 有进展, 重置
-        const run = state.toolRun;
-        if (run !== undefined && run.waiting) {
-          run.waiting = false;
-          if (run.lastResult !== undefined && run.lastResult === facts.excerpt) {
-            run.count += 1;
-            this.checkLoop(sessionId, state);
-          } else {
-            run.lastResult = facts.excerpt;
-            run.count = 1;
-          }
-        } else if (run !== undefined && !run.waiting) {
-          run.lastResult = facts.excerpt;
-        }
-      }
+      state.tools.recordResult(event);
+    } else if (event.type === 'step/start') {
+      const state = this.state(sessionId);
+      const repeat = state.tools.confirmRepeatAtStep(event.seq);
+      if (repeat !== undefined) this.checkLoop(sessionId, state, repeat);
     } else if (event.type === 'assistant/message') {
       const state = this.state(sessionId);
       this.onAssistantMessage(sessionId, state, event);
@@ -396,7 +380,11 @@ export class AutoContinueRunner {
   }
 
   /** 两个循环信号的公共检查; 命中且本回合未打断过则打断。 */
-  private checkLoop(sessionId: SessionId, state: SessionState): void {
+  private checkLoop(
+    sessionId: SessionId,
+    state: SessionState,
+    toolRepeat?: ToolRepeatSignal,
+  ): void {
     if (!this.getConfig().loopGuard) return;
     if (state.loopFired) return;
     if (!state.running) return; // 只干预运行中的回合
@@ -407,9 +395,8 @@ export class AutoContinueRunner {
     } else if (state.shortRun >= config.loopShortCount) {
       this.log(`检测到空转循环 ${sessionId}: 连续 ${state.shortRun} 条短句且无工具调用`);
       void this.interruptLoop(sessionId, state);
-    } else if (state.toolRun !== undefined && state.toolRun.count >= config.loopToolRepeat) {
-      const toolName = state.toolRun.key.split('\n')[0] ?? '?';
-      this.log(`检测到工具死循环 ${sessionId}: 「${toolName}」连续 ${state.toolRun.count} 次(同参数同结果)`);
+    } else if (toolRepeat !== undefined && toolRepeat.count >= config.loopToolRepeat) {
+      this.log(`检测到工具死循环 ${sessionId}: 「${toolRepeat.tool}」连续 ${toolRepeat.count} 次(同参数同结果)`);
       void this.interruptLoop(sessionId, state);
     }
   }
@@ -449,14 +436,12 @@ export class AutoContinueRunner {
       case 'turn/start':
         state.running = true;
         // 新回合开始: 清空上一步工具调用状态, 避免跨回合误用护栏
-        state.lastTool = undefined;
-        state.lastToolResult = undefined;
+        state.tools.startTurn(event.seq);
         // loop guard 状态按回合重置
         state.shortRun = 0;
         state.lastShortAt = 0;
         state.lastAssistantText = '';
         state.sameTextRun = 0;
-        state.toolRun = undefined;
         state.loopFired = false;
         if (state.loopRetryTimer !== undefined) {
           clearTimeout(state.loopRetryTimer);
@@ -491,7 +476,7 @@ export class AutoContinueRunner {
             state.lastShortAt = 0;
             state.lastAssistantText = '';
             state.sameTextRun = 0;
-            state.toolRun = undefined;
+            state.tools.resetRepeat();
             // 重启受冷却约束(防紧密打断循环): 等剩余冷却结束后再调度
             const cooldown = this.cooldownFor(state);
             const remaining = cooldown - (Date.now() - state.lastAttemptAt);
@@ -829,7 +814,7 @@ export class AutoContinueRunner {
   ): string {
     let text = fillTemplate(template, {
       facts: state.lastFailure,
-      tool: state.lastTool,
+      tool: state.tools.lastTool(),
       turn: state.lastTurn,
       errorCount: state.consecutive + 1,
       elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
@@ -850,12 +835,7 @@ export class AutoContinueRunner {
     tool?: string;
     result?: string;
   } {
-    if (state.lastTool === undefined || state.lastToolResult === undefined) return { kind: 'none' };
-    if (state.lastToolResult === 'pending') return { kind: 'pending', tool: state.lastTool };
-    if (state.lastToolResult.ok) {
-      return { kind: 'done', tool: state.lastTool, result: state.lastToolResult.excerpt };
-    }
-    return { kind: 'failed', tool: state.lastTool };
+    return state.tools.guard();
   }
 
   private async bootScanLoop(): Promise<void> {
@@ -974,22 +954,6 @@ export class AutoContinueRunner {
     events: readonly SessionEvent[],
     untilSeq: number,
   ): void {
-    state.lastTool = undefined;
-    state.lastToolResult = undefined;
-    let call: SessionEvent<'tool/call'> | undefined;
-    for (const event of events) {
-      if (event.seq >= untilSeq) continue;
-      if (event.type === 'tool/call') call = event;
-    }
-    if (call === undefined) return;
-    state.lastTool = call.data.name;
-    state.lastToolResult = 'pending';
-    for (const event of events) {
-      if (event.seq <= call.seq || event.seq >= untilSeq) continue;
-      if (event.type === 'tool/result') {
-        state.lastToolResult = toolResultFacts(event.data);
-        break;
-      }
-    }
+    state.tools.restore(events, untilSeq);
   }
 }

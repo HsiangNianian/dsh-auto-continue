@@ -297,6 +297,53 @@ export function fillTemplate(template: string, ctx: TemplateContext): string {
 /** 工具结果摘要的最大长度(护栏模板 {result} 用)。 */
 const TOOL_RESULT_CAP = 160;
 
+/**
+ * 给 JSON 值生成定长且键顺序无关的稳定指纹。
+ *
+ * 这里不保存可能很大的工具输出原文；每个字符都会进入两个独立的
+ * 32-bit 累加器，再附上字符数，供 loop guard 比较完整的模型可见结果。
+ */
+function stableFingerprint(value: unknown): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  let length = 0;
+  const feed = (text: string): void => {
+    length += text.length;
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i);
+      first = Math.imul(first ^ code, 0x01000193) >>> 0;
+      second = Math.imul(second ^ code, 0x85ebca6b) >>> 0;
+      second = (second ^ (second >>> 13)) >>> 0;
+    }
+  };
+  const walk = (part: unknown): void => {
+    if (part === null) {
+      feed('null');
+    } else if (Array.isArray(part)) {
+      feed('[');
+      for (const item of part) {
+        walk(item);
+        feed(',');
+      }
+      feed(']');
+    } else if (typeof part === 'object') {
+      feed('{');
+      const record = part as Record<string, unknown>;
+      for (const key of Object.keys(record).sort()) {
+        feed(JSON.stringify(key));
+        feed(':');
+        walk(record[key]);
+        feed(',');
+      }
+      feed('}');
+    } else {
+      feed(`${typeof part}:${JSON.stringify(part) ?? String(part)}`);
+    }
+  };
+  walk(value);
+  return `${first.toString(16).padStart(8, '0')}${second.toString(16).padStart(8, '0')}:${length}`;
+}
+
 /** 从任意内容块里递归收集文本(结果为模型可见的工具输出)。 */
 function extractText(blocks: unknown, cap: number): string {
   let out = '';
@@ -324,15 +371,363 @@ export interface ToolResultFacts {
   ok: boolean;
   /** 工具输出的文本摘要(截断)。 */
   excerpt: string;
+  /** 完整模型可见内容 + 错误状态的定长稳定指纹(loop guard 比较用)。 */
+  identity: string;
+}
+
+interface ToolResultData {
+  turn?: unknown;
+  step?: unknown;
+  error?: { name?: string; code?: string };
+  message?: {
+    source?: { kind?: string; callId?: unknown };
+    content?: Array<{ type?: string; toolCallId?: unknown; content?: unknown; isError?: boolean }>;
+  };
+}
+
+function toolCorrelationKey(
+  data: { turn?: unknown; step?: unknown },
+  callId: string | undefined,
+): string | undefined {
+  if (callId === undefined || typeof data.turn !== 'number' || typeof data.step !== 'number') {
+    return undefined;
+  }
+  return JSON.stringify([data.turn, data.step, callId]);
+}
+
+function resultBlock(data: ToolResultData) {
+  return data.message?.content?.find((part) => part.type === 'tool-result');
+}
+
+/**
+ * 取工具结果的关联 id。新版 DSH 的权威位置是 message.source.callId，
+ * 同时接受模型可见 block 上的 toolCallId；两者冲突时宁可忽略，不猜测配对。
+ */
+export function toolResultCallId(data: ToolResultData): string | undefined {
+  if (resultBlock(data) === undefined) return undefined;
+  const sourceId = data.message?.source?.kind === 'tool' ? data.message.source.callId : undefined;
+  const blockId = resultBlock(data)?.toolCallId;
+  const source = typeof sourceId === 'string' && sourceId !== '' ? sourceId : undefined;
+  const block = typeof blockId === 'string' && blockId !== '' ? blockId : undefined;
+  if (source !== undefined && block !== undefined && source !== block) return undefined;
+  return source ?? block;
 }
 
 /** 从 tool/result 事件载荷提取成功与否与文本摘要。 */
-export function toolResultFacts(data: {
-  error?: { name?: string; code?: string };
-  message?: { content?: Array<{ type?: string; content?: unknown; isError?: boolean }> };
-}): ToolResultFacts {
-  const failed = data.error !== undefined || data.message?.content?.[0]?.isError === true;
-  return { ok: !failed, excerpt: extractText(data.message?.content?.[0]?.content, TOOL_RESULT_CAP) };
+export function toolResultFacts(data: ToolResultData): ToolResultFacts {
+  const result = resultBlock(data);
+  const failed = data.error !== undefined || result?.isError === true;
+  return {
+    ok: !failed,
+    excerpt: extractText(result?.content, TOOL_RESULT_CAP),
+    identity: stableFingerprint({ content: result?.content ?? [], isError: failed }),
+  };
+}
+
+/** loop guard 在后续 step 边界确认的连续重复信号。 */
+export interface ToolRepeatSignal {
+  tool: string;
+  count: number;
+}
+
+export type ToolGuardState =
+  | { kind: 'none' }
+  | { kind: 'pending'; tool: string }
+  | { kind: 'done'; tool: string; result: string }
+  | { kind: 'failed'; tool: string };
+
+interface TrackedToolCall {
+  id: string | undefined;
+  name: string;
+  key: string;
+  result: ToolResultFacts | undefined;
+  resultSeq: number | undefined;
+}
+
+const MAX_PENDING_TOOL_CALLS = 64;
+const MAX_SEEN_TOOL_CALL_IDS = 256;
+
+/**
+ * 每个会话的工具调用关联器。
+ *
+ * 集中封装事件关联、step 边界确认、护栏读取与重置。内部按 callId 配对，
+ * 乱序结果先缓存、再按调用顺序推进 loop 计数。队列和去重 id 都有硬上限；
+ * 超限或载荷无法关联时会打断重复计数，宁可漏报也不误杀健康回合。
+ */
+export class ToolInvocationTracker {
+  private readonly pendingById = new Map<string, TrackedToolCall>();
+  private readonly pendingInOrder: TrackedToolCall[] = [];
+  private readonly seenCalls = new Map<string, TrackedToolCall>();
+  private readonly seenInOrder: string[] = [];
+  private latest: TrackedToolCall | undefined;
+  private run: { key: string; tool: string; identity: string; count: number } | undefined;
+  private repeatSignal: ToolRepeatSignal | undefined;
+  private lastEventSeq = -1;
+
+  reset(): void {
+    this.pendingById.clear();
+    this.pendingInOrder.length = 0;
+    this.seenCalls.clear();
+    this.seenInOrder.length = 0;
+    this.latest = undefined;
+    this.run = undefined;
+    this.repeatSignal = undefined;
+    this.lastEventSeq = -1;
+  }
+
+  /** 新回合边界：清空工具态，同时把重放水位推进到 turn/start。 */
+  startTurn(seq: number): void {
+    if (!Number.isSafeInteger(seq) || seq < 0 || seq <= this.lastEventSeq) return;
+    this.reset();
+    this.lastEventSeq = seq;
+  }
+
+  /** 回合已结束：保留最后一次调用的护栏，丢弃不再可用的 loop 关联态。 */
+  resetRepeat(): void {
+    this.pendingById.clear();
+    this.pendingInOrder.length = 0;
+    this.seenCalls.clear();
+    this.seenInOrder.length = 0;
+    this.run = undefined;
+    this.repeatSignal = undefined;
+  }
+
+  recordCall(event: SessionEvent<'tool/call'>): boolean {
+    if (!this.acceptEventSeq(event.seq)) return false;
+    this.repeatSignal = undefined;
+    const data = event.data;
+    if (typeof data.name !== 'string') {
+      this.breakCorrelation();
+      return true;
+    }
+    const key = `${data.name}\n${typeof data.arguments === 'string' ? data.arguments : ''}`;
+    const callId = typeof data.callId === 'string' && data.callId !== '' ? data.callId : undefined;
+    const id = toolCorrelationKey(data, callId);
+    if (id === undefined) {
+      this.breakCorrelation({
+        id: undefined,
+        name: data.name,
+        key,
+        result: undefined,
+        resultSeq: undefined,
+      });
+      return true;
+    }
+
+    const seen = this.seenCalls.get(id);
+    if (seen !== undefined) {
+      // 同 seq 重放已被水位拒绝；更高 seq 复用复合 identity 时不猜测。
+      this.breakCorrelation({
+        id: undefined,
+        name: data.name,
+        key,
+        result: undefined,
+        resultSeq: undefined,
+      });
+      return true;
+    }
+
+    const call: TrackedToolCall = {
+      id,
+      name: data.name,
+      key,
+      result: undefined,
+      resultSeq: undefined,
+    };
+    this.latest = call;
+    this.pendingById.set(id, call);
+    this.pendingInOrder.push(call);
+    this.seenCalls.set(id, call);
+    this.seenInOrder.push(id);
+    this.trim(call);
+    return true;
+  }
+
+  recordResult(event: SessionEvent<'tool/result'>): ToolRepeatSignal | undefined {
+    if (!this.acceptEventSeq(event.seq)) return undefined;
+    const data = event.data;
+    const id = toolCorrelationKey(data, toolResultCallId(data));
+    if (id === undefined) {
+      this.breakCorrelation(this.latest);
+      return undefined;
+    }
+    const surfaceOp = event.surfaceOp;
+    if (typeof surfaceOp === 'object' && surfaceOp !== null) {
+      const call = this.seenCalls.get(id);
+      if (
+        surfaceOp.start !== surfaceOp.end ||
+        call === undefined ||
+        call.result === undefined ||
+        call.resultSeq !== surfaceOp.start
+      ) {
+        this.breakCorrelation(this.latest);
+        return undefined;
+      }
+      call.result = toolResultFacts(data);
+      call.resultSeq = event.seq;
+      // replacement 可由 lossy pruner 产生：更新护栏，但绝不据此创建/增强重复。
+      this.breakCorrelation(this.latest);
+      return undefined;
+    }
+    const call = this.pendingById.get(id);
+    if (call === undefined) {
+      const seen = this.seenCalls.get(id);
+      const duplicate = seen?.result;
+      const incoming = toolResultFacts(data);
+      if (
+        seen !== undefined &&
+        duplicate !== undefined &&
+        seen.resultSeq === event.seq &&
+        duplicate.identity === incoming.identity
+      ) {
+        return undefined;
+      }
+      if (seen !== undefined && duplicate !== undefined) {
+        // 已完成调用又出现非 replacement 冲突时，旧完成事实也不再可信。
+        seen.result = undefined;
+        seen.resultSeq = undefined;
+      }
+      this.breakCorrelation(this.latest);
+      return undefined;
+    }
+    if (call.result !== undefined) {
+      const incoming = toolResultFacts(data);
+      if (call.resultSeq === event.seq && call.result.identity === incoming.identity) {
+        return undefined;
+      }
+      // 没有 surface replacement 语义却出现第二个冲突结果：关联已不可信。
+      call.result = undefined;
+      call.resultSeq = undefined;
+      this.breakCorrelation(this.latest);
+      return undefined;
+    }
+    call.result = toolResultFacts(data);
+    call.resultSeq = event.seq;
+    return this.drainCompleted();
+  }
+
+  guard(): ToolGuardState {
+    const latest = this.latest;
+    if (latest === undefined) return { kind: 'none' };
+    if (latest.result === undefined) return { kind: 'pending', tool: latest.name };
+    if (latest.result.ok) {
+      return { kind: 'done', tool: latest.name, result: latest.result.excerpt };
+    }
+    return { kind: 'failed', tool: latest.name };
+  }
+
+  lastTool(): string | undefined {
+    return this.latest?.name;
+  }
+
+  /** 下一模型 step 是稳定边界；此前 replacement/新调用会先清除候选。 */
+  confirmRepeatAtStep(seq: number): ToolRepeatSignal | undefined {
+    if (!this.acceptEventSeq(seq)) return undefined;
+    const signal = this.pendingInOrder.length === 0 ? this.repeatSignal : undefined;
+    this.repeatSignal = undefined;
+    return signal;
+  }
+
+  /** 非工具 surface range replacement（如 compaction summary）同样终止旧工具证据。 */
+  recordSurfaceReplacement(seq: number): void {
+    if (!this.acceptEventSeq(seq)) return;
+    this.breakCorrelation(this.latest);
+  }
+
+  restore(events: readonly SessionEvent[], untilSeq: number): void {
+    this.reset();
+    for (const event of events) {
+      if (event.seq >= untilSeq) continue;
+      if (event.type === 'turn/start') this.startTurn(event.seq);
+      else if (event.type === 'step/start') this.confirmRepeatAtStep(event.seq);
+      else if (event.type === 'tool/call') this.recordCall(event);
+      else if (event.type === 'tool/result') this.recordResult(event);
+      else if (
+        (event.type === 'user/message' || event.type === 'assistant/message') &&
+        typeof event.surfaceOp === 'object' &&
+        event.surfaceOp !== null
+      ) {
+        this.recordSurfaceReplacement(event.seq);
+      }
+    }
+  }
+
+  private acceptEventSeq(seq: number): boolean {
+    if (!Number.isSafeInteger(seq) || seq < 0) {
+      this.breakCorrelation(this.latest);
+      return false;
+    }
+    // session/event 与持久日志都按 seq 单调投递；旧 seq 只能是重放帧。
+    if (seq <= this.lastEventSeq) return false;
+    this.lastEventSeq = seq;
+    return true;
+  }
+
+  private breakCorrelation(latest?: TrackedToolCall, preserve?: TrackedToolCall): void {
+    this.pendingById.clear();
+    this.pendingInOrder.length = 0;
+    this.invalidateRunHistory();
+    this.latest = latest;
+    if (
+      preserve?.id !== undefined &&
+      preserve.result === undefined &&
+      this.seenCalls.get(preserve.id) === preserve
+    ) {
+      this.pendingById.set(preserve.id, preserve);
+      this.pendingInOrder.push(preserve);
+    }
+  }
+
+  private invalidateRunHistory(): void {
+    this.run = undefined;
+    this.repeatSignal = undefined;
+  }
+
+  private trim(current: TrackedToolCall): void {
+    while (this.pendingInOrder.length > MAX_PENDING_TOOL_CALLS) {
+      // 只淘汰一个 call 会让其后的乱序结果跨过未知缺口重新拼成 streak。
+      this.breakCorrelation(current, current);
+    }
+    while (this.seenInOrder.length > MAX_SEEN_TOOL_CALL_IDS) {
+      const id = this.seenInOrder.shift();
+      if (id !== undefined) {
+        this.seenCalls.delete(id);
+        // 丢失去重证据后不保留旧缓存；单调 seq 会拒绝淘汰项的旧帧重放。
+        this.breakCorrelation(current, current);
+      }
+    }
+  }
+
+  private drainCompleted(): ToolRepeatSignal | undefined {
+    let advanced = false;
+    while (this.pendingInOrder[0]?.result !== undefined) {
+      const call = this.pendingInOrder.shift();
+      if (call === undefined || call.result === undefined) break;
+      advanced = true;
+      if (call.id !== undefined) this.pendingById.delete(call.id);
+      this.advanceRun(call);
+    }
+    // 已知并发批次尚未收齐时不提前发信号；末尾结果可能展示真实进展。
+    if (!advanced) return undefined;
+    return this.refreshRepeatSignal();
+  }
+
+  private advanceRun(call: TrackedToolCall): void {
+    if (call.result === undefined) return;
+    if (this.run?.key === call.key && this.run.identity === call.result.identity) {
+      this.run.count += 1;
+    } else {
+      this.run = { key: call.key, tool: call.name, identity: call.result.identity, count: 1 };
+    }
+  }
+
+  private refreshRepeatSignal(): ToolRepeatSignal | undefined {
+    this.repeatSignal =
+      this.pendingInOrder.length === 0 && this.run !== undefined
+        ? { tool: this.run.tool, count: this.run.count }
+        : undefined;
+    return this.repeatSignal;
+  }
 }
 
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
@@ -412,10 +807,8 @@ export interface SessionState {
   lastFailure: FailureFacts | undefined;
   /** 最近一次失败的发生时间(模板 {elapsed} 与恢复统计用)。 */
   lastFailureAt: number;
-  /** 失败前最后一次工具调用的名称(模板 {tool} 与幂等护栏用)。 */
-  lastTool: string | undefined;
-  /** 上一步工具调用的结果状态: 'pending' = 已发起未见结果(可能已部分执行)。 */
-  lastToolResult: 'pending' | ToolResultFacts | undefined;
+  /** callId 精确配对的工具调用、幂等护栏与 loop 重复态。 */
+  tools: ToolInvocationTracker;
   /** 失败回合的编号(模板 {turn})。 */
   lastTurn: number | undefined;
   /** 我们最近一次自动发送的时间戳; 0 = 没有待确认的恢复。 */
@@ -428,22 +821,6 @@ export interface SessionState {
   lastAssistantText: string;
   /** 连续相同文本消息数(最强空转信号, 不限长度)。 */
   sameTextRun: number;
-  /**
-   * 工具重复信号(loop guard 信号 2: 死循环)。
-   * 只有「同工具 + 同参数 + 同结果」的连续调用才累计; 参数或结果有变化视为有进展, 计数重置。
-   */
-  toolRun:
-    | {
-        /** 工具名 + 参数(用于判定是否同一调用)。 */
-        key: string;
-        /** 连续相同调用数(结果确认后更新)。 */
-        count: number;
-        /** 上次该调用的结果摘要(比较用)。 */
-        lastResult: string | undefined;
-        /** 本次调用等待结果确认。 */
-        waiting: boolean;
-      }
-    | undefined;
   /** 本回合已触发过 loop guard(防重复打断)。 */
   loopFired: boolean;
   /** loop 重启的延迟定时器(冷却结束后再 schedule)。 */
@@ -460,15 +837,13 @@ export const freshState = (): SessionState => ({
   subagent: false,
   lastFailure: undefined,
   lastFailureAt: 0,
-  lastTool: undefined,
-  lastToolResult: undefined,
+  tools: new ToolInvocationTracker(),
   lastTurn: undefined,
   pendingRecoveryAt: 0,
   shortRun: 0,
   lastShortAt: 0,
   lastAssistantText: '',
   sameTextRun: 0,
-  toolRun: undefined,
   loopFired: false,
   loopRetryTimer: undefined,
 });

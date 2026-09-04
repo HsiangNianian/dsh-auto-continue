@@ -152,21 +152,92 @@ export interface ToolResultFacts {
     ok: boolean;
     /** 工具输出的文本摘要(截断)。 */
     excerpt: string;
+    /** 完整模型可见内容 + 错误状态的定长稳定指纹(loop guard 比较用)。 */
+    identity: string;
 }
-/** 从 tool/result 事件载荷提取成功与否与文本摘要。 */
-export declare function toolResultFacts(data: {
+interface ToolResultData {
+    turn?: unknown;
+    step?: unknown;
     error?: {
         name?: string;
         code?: string;
     };
     message?: {
+        source?: {
+            kind?: string;
+            callId?: unknown;
+        };
         content?: Array<{
             type?: string;
+            toolCallId?: unknown;
             content?: unknown;
             isError?: boolean;
         }>;
     };
-}): ToolResultFacts;
+}
+/**
+ * 取工具结果的关联 id。新版 DSH 的权威位置是 message.source.callId，
+ * 同时接受模型可见 block 上的 toolCallId；两者冲突时宁可忽略，不猜测配对。
+ */
+export declare function toolResultCallId(data: ToolResultData): string | undefined;
+/** 从 tool/result 事件载荷提取成功与否与文本摘要。 */
+export declare function toolResultFacts(data: ToolResultData): ToolResultFacts;
+/** loop guard 在后续 step 边界确认的连续重复信号。 */
+export interface ToolRepeatSignal {
+    tool: string;
+    count: number;
+}
+export type ToolGuardState = {
+    kind: 'none';
+} | {
+    kind: 'pending';
+    tool: string;
+} | {
+    kind: 'done';
+    tool: string;
+    result: string;
+} | {
+    kind: 'failed';
+    tool: string;
+};
+/**
+ * 每个会话的工具调用关联器。
+ *
+ * 集中封装事件关联、step 边界确认、护栏读取与重置。内部按 callId 配对，
+ * 乱序结果先缓存、再按调用顺序推进 loop 计数。队列和去重 id 都有硬上限；
+ * 超限或载荷无法关联时会打断重复计数，宁可漏报也不误杀健康回合。
+ */
+export declare class ToolInvocationTracker {
+    private readonly pendingById;
+    private readonly pendingInOrder;
+    private readonly seenCalls;
+    private readonly seenInOrder;
+    private latest;
+    private run;
+    private repeatSignal;
+    private lastEventSeq;
+    reset(): void;
+    /** 新回合边界：清空工具态，同时把重放水位推进到 turn/start。 */
+    startTurn(seq: number): void;
+    /** 回合已结束：保留最后一次调用的护栏，丢弃不再可用的 loop 关联态。 */
+    resetRepeat(): void;
+    recordCall(event: SessionEvent<'tool/call'>): boolean;
+    recordResult(event: SessionEvent<'tool/result'>): ToolRepeatSignal | undefined;
+    guard(): ToolGuardState;
+    lastTool(): string | undefined;
+    /** 下一模型 step 是稳定边界；此前 replacement/新调用会先清除候选。 */
+    confirmRepeatAtStep(seq: number): ToolRepeatSignal | undefined;
+    /** 非工具 surface range replacement（如 compaction summary）同样终止旧工具证据。 */
+    recordSurfaceReplacement(seq: number): void;
+    restore(events: readonly SessionEvent[], untilSeq: number): void;
+    private acceptEventSeq;
+    private breakCorrelation;
+    private invalidateRunHistory;
+    private trim;
+    private drainCompleted;
+    private advanceRun;
+    private refreshRepeatSignal;
+}
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
 export declare function effectiveCooldown(consecutive: number, base: number, factor: number, max: number): number;
 export declare function sleep(ms: number): Promise<void>;
@@ -212,10 +283,8 @@ export interface SessionState {
     lastFailure: FailureFacts | undefined;
     /** 最近一次失败的发生时间(模板 {elapsed} 与恢复统计用)。 */
     lastFailureAt: number;
-    /** 失败前最后一次工具调用的名称(模板 {tool} 与幂等护栏用)。 */
-    lastTool: string | undefined;
-    /** 上一步工具调用的结果状态: 'pending' = 已发起未见结果(可能已部分执行)。 */
-    lastToolResult: 'pending' | ToolResultFacts | undefined;
+    /** callId 精确配对的工具调用、幂等护栏与 loop 重复态。 */
+    tools: ToolInvocationTracker;
     /** 失败回合的编号(模板 {turn})。 */
     lastTurn: number | undefined;
     /** 我们最近一次自动发送的时间戳; 0 = 没有待确认的恢复。 */
@@ -228,20 +297,6 @@ export interface SessionState {
     lastAssistantText: string;
     /** 连续相同文本消息数(最强空转信号, 不限长度)。 */
     sameTextRun: number;
-    /**
-     * 工具重复信号(loop guard 信号 2: 死循环)。
-     * 只有「同工具 + 同参数 + 同结果」的连续调用才累计; 参数或结果有变化视为有进展, 计数重置。
-     */
-    toolRun: {
-        /** 工具名 + 参数(用于判定是否同一调用)。 */
-        key: string;
-        /** 连续相同调用数(结果确认后更新)。 */
-        count: number;
-        /** 上次该调用的结果摘要(比较用)。 */
-        lastResult: string | undefined;
-        /** 本次调用等待结果确认。 */
-        waiting: boolean;
-    } | undefined;
     /** 本回合已触发过 loop guard(防重复打断)。 */
     loopFired: boolean;
     /** loop 重启的延迟定时器(冷却结束后再 schedule)。 */

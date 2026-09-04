@@ -17,6 +17,8 @@
  *   5c. 启动扫描: 恢复错误模板上下文
  *   5d. 启动扫描: scanLimit 优先最近活动会话
  *   5e. 启动扫描: 畸形错误不阻塞其他会话
+ *   5f. 启动扫描: 交错工具结果 → 按 callId 恢复最后护栏
+ *   5g. 启动扫描: surface replacement 链 → 恢复最终模型可见结果
  *   6. 错误分类: 永久性跳过, 临时性续跑
  *   6b. provider 专属错误的用户自定义可恢复匹配
  *   7. continueText 模板
@@ -27,14 +29,42 @@
  *   11. 幂等护栏(未确认 / 已成功 / 已失败)
  *   11b. English locale → 默认幂等护栏本地化
  *   11c. English locale → 已成功工具护栏本地化
+ *   11d. 幂等护栏: 交错工具结果不得冒充最后一次调用
+ *   11e. 幂等护栏: 缺失/冲突 callId 的结果不得改写状态
+ *   11f. 幂等护栏: surface replacement 后使用最终模型可见结果
+ *   11g. 幂等护栏: 已完成调用的冲突普通结果降级为不确定
+ *   11h. 幂等护栏: seen id 淘汰后的旧调用重放不得覆盖真实 latest
+ *   11i. 幂等护栏: seen id 淘汰时仍确认当前合法调用的结果
+ *   11j. 幂等护栏: 更高 seq 复用同一复合 call identity 时降级为不确定
  *   12. loop guard: 专属 hook cancel + loop 文本重启
  *   12a. DSH first-cause: 用户 Stop 不得被插件认领
  *   12b. English locale → loop guard 默认重启文本本地化
  *   12c. agent 缺失时回滚 guard/stats，保留冷却节流
  *   12d. cancel 抛错时回滚 guard/stats，冷却后可重试
  *   12e. parent/disposed/legacy/其他 hook 均不得重启
+ *   12f. loop guard: stale tool/call 不得清除短句 streak
+ *   12g. loop guard: 新鲜但缺 callId 的 tool/call 仍清除短句 streak
  *   13. loop guard: 同工具+同参数+同结果 → cancel
+ *   13a. loop guard: 并发调用的结果乱序返回 → 按 callId 与调用顺序判定
+ *   13b. loop guard: 乱序批次末尾出现进展 → 重置重复计数
+ *   13c. loop guard: provider 跨 step 复用 callId → 仍按各 step 调用配对
+ *   13d. loop guard: 乱序 pending 结果被 surface replacement 改写 → 按新内容判定
+ *   13e. loop guard: 同一调用出现冲突的非 replacement 结果 → 保守打断连续性
+ *   13f. loop guard: pending 关联队列超限 → 丢弃旧 streak，不从 replacement 复活
+ *   13g. loop guard: seen id 淘汰后重放旧事件 → 不把旧帧当成新重复
+ *   13h. loop guard: 未知结果位于乱序缓存中间 → 清空缓存 streak
+ *   13i. loop guard: 无效 replacement 位于乱序缓存中间 → 清空缓存 streak
+ *   13j. loop guard: 已完成调用冲突且有乱序缓存 → 清空缓存 streak
+ *   13k. loop guard: 并发批次结果正序到达且末尾进展 → 等整批完成再判断
+ *   13l. loop guard: 新回合后重放旧回合帧 → 由 turn boundary 水位拒绝
+ *   13m. loop guard: 达阈值后同步 surface replacement 显示进展 → 撤销旧信号
+ *   13n. loop guard: 达阈值后同步出现新 pending call → 撤销旧信号
+ *   13o. loop guard: 不同结果被 lossy replacements 改成相同 → 不制造重复
+ *   13p. loop guard: user/message range replacement 摘要工具链 → 清除旧候选
  *   14. loop guard: 参数/结果变化 → 不打断
+ *   14a. loop guard: 超过展示摘要才变化的结果 → 不打断
+ *   14b. loop guard: 文本相同但 isError 变化 → 不打断
+ *   14c. loop guard: 未知/重复 callId → 忽略
  *   15. 通知桥: 通知事件 + 动作(resume / pause1h / unpause / reset-stats)
  *   15b. English locale → 浏览器通知与动作本地化
  *   16. 顶层 row replacement → runner disposer 清理待发送定时器
@@ -320,7 +350,7 @@ const turnEnd = (turn, reason) => ({
 });
 const turnStart = (turn) => ({
   type: 'turn/start',
-  seq: turn * 10,
+  seq: (turn - 1) * 10 + 1,
   time: Date.now(),
   data: { turn },
 });
@@ -346,26 +376,33 @@ const assistantMsg = (text, seq = 6) => ({
     message: { role: 'assistant', content: [{ type: 'text', text }] },
   },
 });
-const toolCall = (name, seq = 5, args = '{}') => ({
+const toolCall = (name, seq = 5, args = '{}', turn = 1, step = 1) => ({
   type: 'tool/call',
   seq,
   time: Date.now(),
-  data: { turn: 1, step: 1, name, callId: `c${seq}`, arguments: args },
+  data: { turn, step, name, callId: `c${seq}`, arguments: args },
 });
-const toolResult = (callId, text, seq = 6, isError = false) => ({
+const toolResult = (callId, text, seq = 6, isError = false, turn = 1, step = 1) => ({
   type: 'tool/result',
   seq,
   time: Date.now(),
   data: {
-    turn: 1,
-    step: 1,
+    turn,
+    step,
     message: {
+      source: { kind: 'tool', callId },
       role: 'user',
       content: [
         { type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }], isError },
       ],
     },
   },
+});
+const stepStart = (turn, step, seq) => ({
+  type: 'step/start',
+  seq,
+  time: Date.now(),
+  data: { turn, step },
 });
 
 // ---------- 测试 1: turn/end error → 宽限期后自动发送 ----------
@@ -753,6 +790,65 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
+// ---------- 测试 5f: 启动扫描按 callId 恢复护栏 ----------
+{
+  console.log('测试 5f: 启动扫描遇到交错工具结果 → 最后调用仍为 pending');
+  const now = Date.now();
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    events: [
+      { ...turnStart(1), seq: 1, time: now - 65_000 },
+      { ...toolCall('write-file', 2), time: now - 64_000 },
+      { ...toolCall('read-file', 3), time: now - 63_000 },
+      { ...toolResult('c2', 'write completed', 4), time: now - 62_000 },
+      { type: 'turn/end', seq: 5, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(1000);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('扫描未把 c2 结果配给 c3', text.includes('「read-file」可能未完成'));
+  await sleep(50);
+}
+
+// ---------- 测试 5g: 启动扫描重放 surface replacement 链 ----------
+{
+  console.log('测试 5g: 启动扫描重放多次 replacement → 护栏使用最终内容');
+  const now = Date.now();
+  const call = { ...toolCall('read-file', 2), time: now - 64_000 };
+  const original = { ...toolResult('c2', 'obsolete result', 3), time: now - 63_000, surfaceOp: 'append' };
+  const firstReplacement = {
+    ...toolResult('c2', 'intermediate result', 4),
+    time: now - 62_000,
+    surfaceOp: { op: 'replace', start: 3, end: 3 },
+    sourceEventSeqs: [3],
+  };
+  const finalReplacement = {
+    ...toolResult('c2', 'final result', 5),
+    time: now - 61_000,
+    surfaceOp: { op: 'replace', start: 4, end: 4 },
+    sourceEventSeqs: [3, 4],
+  };
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    events: [
+      { ...turnStart(1), seq: 1, time: now - 65_000 },
+      call,
+      original,
+      firstReplacement,
+      finalReplacement,
+      { type: 'turn/end', seq: 6, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(1000);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('扫描护栏使用最后一次 replacement', text.includes('final result') && !text.includes('obsolete result'));
+  await sleep(50);
+}
+
 // ---------- 测试 6: 错误分类 ----------
 {
   console.log('测试 6: 永久性错误跳过, 临时性错误续跑');
@@ -926,6 +1022,134 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
+// ---------- 测试 11d: 交错工具结果不得冒充最后一次调用 ----------
+{
+  console.log('测试 11d: 先前调用的结果先返回 → 最后调用仍为 pending');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('write-file', 50));
+  host.emit(agent.session, toolCall('read-file', 51));
+  host.emit(agent.session, toolResult('c50', 'write completed', 52));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('未把 c50 结果配给 c51', text.includes('「read-file」可能未完成'));
+  await sleep(50);
+}
+
+// ---------- 测试 11f: 已完成结果的 surface replacement ----------
+{
+  console.log('测试 11f: 工具结果被 replace 后中断 → 护栏展示最终内容');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('read-file', 220));
+  const original = toolResult('c220', 'obsolete result', 221);
+  original.surfaceOp = 'append';
+  host.emit(agent.session, original);
+  const replacement = toolResult('c220', 'current result', 222);
+  replacement.surfaceOp = { op: 'replace', start: 221, end: 221 };
+  replacement.sourceEventSeqs = [221];
+  host.emit(agent.session, replacement);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('护栏使用 replacement 内容', text.includes('current result') && !text.includes('obsolete result'));
+  await sleep(50);
+}
+
+// ---------- 测试 11g: 已完成调用收到冲突的普通结果 ----------
+{
+  console.log('测试 11g: 已完成调用收到冲突的普通结果 → 护栏降级为不确定');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('write-file', 230));
+  host.emit(agent.session, toolResult('c230', 'first completion', 231));
+  host.emit(agent.session, toolResult('c230', 'conflicting completion', 232));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check(
+    '冲突结果不再宣称旧结果已完成',
+    text.includes('「write-file」可能未完成') && !text.includes('first completion'),
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 11h: seen id 淘汰后的旧调用不得覆盖 latest ----------
+{
+  console.log('测试 11h: seen id 淘汰后重放旧调用 → 保留真实最新工具护栏');
+  const host = startPlugin({ scanOnBoot: false, loopGuard: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  const firstCall = toolCall('delete-production', 1400, '{"path":"prod"}');
+  host.emit(agent.session, firstCall);
+  host.emit(agent.session, toolResult('c1400', 'deleted', 1401));
+  for (let i = 1; i <= 256; i += 1) {
+    const seq = 1400 + i * 2;
+    host.emit(agent.session, toolCall('read', seq));
+    host.emit(agent.session, toolResult(`c${seq}`, 'read', seq + 1));
+  }
+  host.emit(agent.session, toolCall('write-production', 2200, '{"path":"prod"}'));
+  host.emit(agent.session, firstCall); // 已淘汰的旧事件重放
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check(
+    '旧调用重放未覆盖真实 latest',
+    text.includes('「write-production」可能未完成') && !text.includes('delete-production'),
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 11i: seen id 淘汰时保留当前合法调用 ----------
+{
+  console.log('测试 11i: seen id 淘汰时第 257 个合法调用 → 仍能确认结果');
+  const host = startPlugin({ scanOnBoot: false, loopGuard: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  for (let i = 0; i < 256; i += 1) {
+    const seq = 2300 + i * 2;
+    host.emit(agent.session, toolCall('read', seq));
+    host.emit(agent.session, toolResult(`c${seq}`, 'read', seq + 1));
+  }
+  host.emit(agent.session, toolCall('write-production', 2900, '{"path":"prod"}'));
+  host.emit(agent.session, toolResult('c2900', 'write confirmed', 2901));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check(
+    '容量淘汰未丢当前合法结果',
+    text.includes('「write-production」已完成') && text.includes('write confirmed'),
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 11j: 更高 seq 重用同一复合 call identity ----------
+{
+  console.log('测试 11j: 更高 seq 重用同 turn/step/callId → 护栏降级为不确定');
+  const host = startPlugin({ scanOnBoot: false, loopGuard: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('write-production', 3000, '{"path":"prod"}'));
+  host.emit(agent.session, toolResult('c3000', 'first completion', 3001));
+  const reused = toolCall('write-production', 3002, '{"path":"prod"}');
+  reused.data.callId = 'c3000';
+  host.emit(agent.session, reused);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check(
+    '更高 seq 的重复 identity 未冒充旧完成状态',
+    text.includes('「write-production」可能未完成') && !text.includes('first completion'),
+  );
+  await sleep(50);
+}
+
 // ---------- 测试 12: loop guard — 相同消息重复 ----------
 {
   console.log('测试 12: loop guard 相同消息 → 专属 hook cancel + loop 文本重启');
@@ -1094,9 +1318,53 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(20);
 }
 
+// ---------- 测试 12f: stale 工具帧不算进展 ----------
+{
+  console.log('测试 12f: stale tool/call → 不清除短句 streak');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopShortCount: 2,
+    loopShortChars: 20,
+    loopRepeatText: 10,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, assistantMsg('one', 2));
+  host.emit(agent.session, toolCall('read', 1)); // 不晚于 turn/start 水位，应视为 stale
+  host.emit(agent.session, assistantMsg('two', 3));
+  await sleep(150);
+  check('stale tool/call 未清短句计数', agent.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 12g: 缺 callId 的新工具帧仍算进展 ----------
+{
+  console.log('测试 12g: 缺 callId 的新 tool/call → 仍清除短句 streak');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopShortCount: 2,
+    loopShortChars: 20,
+    loopRepeatText: 10,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, assistantMsg('one', 2));
+  const missingIdCall = toolCall('read', 3);
+  delete missingIdCall.data.callId;
+  host.emit(agent.session, missingIdCall);
+  host.emit(agent.session, assistantMsg('two', 4));
+  await sleep(150);
+  check('缺 callId 的新工具调用已清短句计数', agent.cancels.length === 0);
+  await sleep(50);
+}
+
 // ---------- 测试 13: loop guard — 同工具+同参数+同结果 ----------
 {
-  console.log('测试 13: loop guard 同工具同参数同结果 → cancel');
+  console.log('测试 13: loop guard 同工具同参数同结果 → 下一 step 边界确认后 cancel');
   const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
   const agent = host.makeAgent('s1');
   await sleep(50);
@@ -1106,6 +1374,9 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
     host.emit(agent.session, toolCall('read', 20 + i * 2));
     host.emit(agent.session, toolResult(`c${20 + i * 2}`, 'same output', 21 + i * 2));
   }
+  await sleep(20);
+  check('step 边界前未提前 cancel', agent.cancels.length === 0);
+  host.emit(agent.session, stepStart(1, 2, 30));
   await sleep(150);
   check('已 cancel', agent.cancels.length === 1);
   await sleep(50);
@@ -1123,8 +1394,450 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
     host.emit(agent.session, toolCall('read', 20 + i * 2));
     host.emit(agent.session, toolResult(`c${20 + i * 2}`, `output ${i}`, 21 + i * 2));
   }
+  host.emit(agent.session, stepStart(1, 2, 28));
   await sleep(150);
   check('未 cancel', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13a: 并发工具结果乱序返回 ----------
+{
+  console.log('测试 13a: 同一工具并发调用 + 结果乱序返回 → 仍按 callId 判定重复');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) {
+    host.emit(agent.session, toolCall('read', 70 + i));
+  }
+  for (let i = 2; i >= 0; i -= 1) {
+    host.emit(agent.session, toolResult(`c${70 + i}`, 'same parallel output', 80 + (2 - i)));
+  }
+  host.emit(agent.session, stepStart(1, 2, 83));
+  await sleep(150);
+  check('乱序结果仍能识别真实重复并 cancel', agent.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 14a: loop guard 使用完整结果识别进展 ----------
+{
+  console.log('测试 14a: 超过摘要长度才变化的工具结果 → 不打断');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  const sharedPrefix = 'x'.repeat(160);
+  for (let i = 0; i < 3; i += 1) {
+    host.emit(agent.session, toolCall('read', 40 + i * 2));
+    host.emit(agent.session, toolResult(`c${40 + i * 2}`, `${sharedPrefix}-tail-${i}`, 41 + i * 2));
+  }
+  host.emit(agent.session, stepStart(1, 2, 46));
+  await sleep(150);
+  check('完整结果有进展时未 cancel', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13c: provider 在后续 step 合法复用 callId ----------
+{
+  console.log('测试 13c: 不同 step 复用 call-0 → 每次都精确配对');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let step = 1; step <= 3; step += 1) {
+    const call = toolCall('read', 160 + step * 2, '{}', 1, step);
+    call.data.callId = 'call-0';
+    host.emit(agent.session, call);
+    host.emit(agent.session, toolResult('call-0', 'same output', 161 + step * 2, false, 1, step));
+  }
+  host.emit(agent.session, stepStart(1, 4, 168));
+  await sleep(150);
+  check('跨 step 复用 callId 仍能识别真实重复', agent.cancels.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 13b: 乱序批次的最后结果已显示进展 ----------
+{
+  console.log('测试 13b: 乱序批次中先连续重复、后出现进展 → 不打断');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 4; i += 1) {
+    host.emit(agent.session, toolCall('read', 90 + i));
+  }
+  host.emit(agent.session, toolResult('c93', 'progress', 100));
+  host.emit(agent.session, toolResult('c92', 'same', 101));
+  host.emit(agent.session, toolResult('c91', 'same', 102));
+  host.emit(agent.session, toolResult('c90', 'same', 103));
+  host.emit(agent.session, stepStart(1, 2, 104));
+  await sleep(150);
+  check('批次末尾的进展重置重复计数', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13d: pending 乱序结果的 surface replacement ----------
+{
+  console.log('测试 13d: 已缓存的乱序结果被 replace → 使用替换后内容');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  host.emit(agent.session, toolCall('read', 200));
+  host.emit(agent.session, toolCall('read', 201));
+  const secondResult = toolResult('c201', 'same', 202);
+  secondResult.surfaceOp = 'append';
+  host.emit(agent.session, secondResult);
+  const replacement = toolResult('c201', 'different', 203);
+  replacement.surfaceOp = { op: 'replace', start: 202, end: 202 };
+  replacement.sourceEventSeqs = [202];
+  host.emit(agent.session, replacement);
+  host.emit(agent.session, toolResult('c200', 'same', 204));
+  host.emit(agent.session, stepStart(1, 2, 205));
+  await sleep(150);
+  check('replacement 显示进展时未 cancel', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13e: 冲突的非 replacement 重复结果 ----------
+{
+  console.log('测试 13e: 同 callId 收到冲突的普通结果 → 保守中断计数');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  host.emit(agent.session, toolCall('read', 240));
+  host.emit(agent.session, toolCall('read', 241));
+  host.emit(agent.session, toolResult('c241', 'same', 242));
+  host.emit(agent.session, toolResult('c241', 'conflicting', 243));
+  host.emit(agent.session, toolResult('c240', 'same', 244));
+  host.emit(agent.session, stepStart(1, 2, 245));
+  await sleep(150);
+  check('冲突结果未被当成可信重复', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13f: pending 队列超限后 replacement 不得复活旧 streak ----------
+{
+  console.log('测试 13f: pending 关联超限后改写旧结果 → 不复活旧计数');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  host.emit(agent.session, toolCall('read', 300));
+  const baseResult = toolResult('c300', 'same', 301);
+  baseResult.surfaceOp = 'append';
+  host.emit(agent.session, baseResult);
+  for (let i = 0; i < 65; i += 1) {
+    host.emit(agent.session, toolCall('read', 400 + i));
+  }
+  const replacement = toolResult('c300', 'same', 500);
+  replacement.surfaceOp = { op: 'replace', start: 301, end: 301 };
+  replacement.sourceEventSeqs = [301];
+  host.emit(agent.session, replacement);
+  host.emit(agent.session, toolResult('c401', 'same', 501));
+  host.emit(agent.session, stepStart(1, 2, 502));
+  await sleep(150);
+  check('容量降级后未利用旧历史误 cancel', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13g: seen id 淘汰后的旧帧重放 ----------
+{
+  console.log('测试 13g: seen id 容量淘汰后重放旧事件 → 不误判重复');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 258, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 257; i += 1) {
+    const seq = 600 + i * 2;
+    host.emit(agent.session, toolCall('read', seq));
+    host.emit(agent.session, toolResult(`c${seq}`, 'same output', seq + 1));
+  }
+  // c600 已从有界 seen 集合淘汰；旧帧重放不能继承此前的重复 streak。
+  host.emit(agent.session, toolCall('read', 600));
+  host.emit(agent.session, toolResult('c600', 'same output', 601));
+  host.emit(agent.session, stepStart(1, 2, 1200));
+  await sleep(150);
+  check('seen 淘汰后旧重放未制造假重复', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13h: 未知结果打断乱序缓存 ----------
+{
+  console.log('测试 13h: 乱序结果缓存中遇到未知 callId → 不跨边界计数');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) host.emit(agent.session, toolCall('read', 1200 + i));
+  host.emit(agent.session, toolResult('c1201', 'same output', 1210));
+  host.emit(agent.session, toolResult('c1202', 'same output', 1211));
+  host.emit(agent.session, toolResult('unknown-call', 'same output', 1212));
+  host.emit(agent.session, toolResult('c1200', 'same output', 1213));
+  host.emit(agent.session, stepStart(1, 2, 1214));
+  await sleep(150);
+  check('未知结果已清空乱序缓存 streak', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13i: 无效 replacement 打断乱序缓存 ----------
+{
+  console.log('测试 13i: 乱序结果缓存中遇到无效 replacement → 不跨边界计数');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 3; i += 1) host.emit(agent.session, toolCall('read', 1220 + i));
+  host.emit(agent.session, toolResult('c1221', 'same output', 1230));
+  host.emit(agent.session, toolResult('c1222', 'same output', 1231));
+  const invalidReplacement = toolResult('c1221', 'same output', 1232);
+  invalidReplacement.surfaceOp = { op: 'replace', start: 999, end: 999 };
+  invalidReplacement.sourceEventSeqs = [999];
+  host.emit(agent.session, invalidReplacement);
+  host.emit(agent.session, toolResult('c1220', 'same output', 1233));
+  host.emit(agent.session, stepStart(1, 2, 1234));
+  await sleep(150);
+  check('无效 replacement 已清空乱序缓存 streak', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13j: 已完成调用冲突打断乱序缓存 ----------
+{
+  console.log('测试 13j: 已完成调用冲突时已有乱序结果缓存 → 不跨边界计数');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  host.emit(agent.session, toolCall('read', 1240));
+  host.emit(agent.session, toolResult('c1240', 'same output', 1241));
+  for (let i = 0; i < 3; i += 1) host.emit(agent.session, toolCall('read', 1250 + i));
+  host.emit(agent.session, toolResult('c1251', 'same output', 1260));
+  host.emit(agent.session, toolResult('c1252', 'same output', 1261));
+  host.emit(agent.session, toolResult('c1240', 'conflicting completion', 1262));
+  host.emit(agent.session, toolResult('c1250', 'same output', 1263));
+  host.emit(agent.session, stepStart(1, 2, 1264));
+  await sleep(150);
+  check('已完成冲突已清空乱序缓存 streak', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13k: 并发批次正序结果的末尾进展 ----------
+{
+  console.log('测试 13k: 并发批次正序返回，末尾结果有进展 → 不提前打断');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 4; i += 1) host.emit(agent.session, toolCall('read', 1270 + i));
+  for (let i = 0; i < 3; i += 1) {
+    host.emit(agent.session, toolResult(`c${1270 + i}`, 'same output', 1280 + i));
+  }
+  host.emit(agent.session, toolResult('c1273', 'progress', 1283));
+  host.emit(agent.session, stepStart(1, 2, 1284));
+  await sleep(150);
+  check('并发批次收齐后按最终连续 run 判断', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13l: 新回合拒绝旧回合帧重放 ----------
+{
+  console.log('测试 13l: 新回合开始后重放旧回合工具帧 → 不跨回合计数');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  const firstStart = { ...turnStart(1), seq: 10 };
+  const firstCall = toolCall('read', 20, '{}', 1, 1);
+  const firstResult = toolResult('c20', 'same output', 21, false, 1, 1);
+  host.emit(agent.session, firstStart);
+  host.emit(agent.session, firstCall);
+  host.emit(agent.session, firstResult);
+  host.emit(agent.session, { ...turnStart(2), seq: 100 });
+  host.emit(agent.session, firstCall);
+  host.emit(agent.session, firstResult);
+  host.emit(agent.session, toolCall('read', 101, '{}', 2, 1));
+  host.emit(agent.session, toolResult('c101', 'same output', 102, false, 2, 1));
+  host.emit(agent.session, stepStart(2, 2, 103));
+  await sleep(150);
+  check('turn boundary 拒绝旧帧且未制造跨回合 streak', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13m: 达阈值结果被同步 surface replacement ----------
+{
+  console.log('测试 13m: 重复结果达阈值后同步 replace 为进展 → 不按旧 surface 打断');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, toolCall('read', 3100));
+  const first = toolResult('c3100', 'same output', 3101);
+  first.surfaceOp = 'append';
+  host.emit(agent.session, first);
+  host.emit(agent.session, toolCall('read', 3102));
+  const second = toolResult('c3102', 'same output', 3103);
+  second.surfaceOp = 'append';
+  host.emit(agent.session, second);
+  const replacement = toolResult('c3102', 'progress', 3104);
+  replacement.surfaceOp = { op: 'replace', start: 3103, end: 3103 };
+  replacement.sourceEventSeqs = [3103];
+  host.emit(agent.session, replacement);
+  host.emit(agent.session, stepStart(1, 2, 3105));
+  await sleep(150);
+  check('同步 replacement 已撤销旧 repeat signal', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13n: 达阈值后同步出现新的 pending call ----------
+{
+  console.log('测试 13n: 重复结果达阈值后同步出现新调用 → 不按旧信号打断');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, toolCall('read', 3200));
+  host.emit(agent.session, toolResult('c3200', 'same output', 3201));
+  host.emit(agent.session, toolCall('read', 3202));
+  host.emit(agent.session, toolResult('c3202', 'same output', 3203));
+  host.emit(agent.session, toolCall('read', 3204));
+  host.emit(agent.session, stepStart(1, 2, 3205));
+  await sleep(150);
+  check('新 pending call 已撤销旧 repeat signal', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13o: lossy replacements 不得制造重复 ----------
+{
+  console.log('测试 13o: 不同结果被 replace 成相同裁剪内容 → 不制造重复');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 2, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, toolCall('read', 3300));
+  const first = toolResult('c3300', 'distinct result A', 3301);
+  first.surfaceOp = 'append';
+  host.emit(agent.session, first);
+  host.emit(agent.session, toolCall('read', 3302));
+  const second = toolResult('c3302', 'distinct result B', 3303);
+  second.surfaceOp = 'append';
+  host.emit(agent.session, second);
+  const replaceFirst = toolResult('c3300', '[pruned]', 3304);
+  replaceFirst.surfaceOp = { op: 'replace', start: 3301, end: 3301 };
+  replaceFirst.sourceEventSeqs = [3301];
+  host.emit(agent.session, replaceFirst);
+  const replaceSecond = toolResult('c3302', '[pruned]', 3305);
+  replaceSecond.surfaceOp = { op: 'replace', start: 3303, end: 3303 };
+  replaceSecond.sourceEventSeqs = [3303];
+  host.emit(agent.session, replaceSecond);
+  host.emit(agent.session, stepStart(1, 2, 3306));
+  host.emit(agent.session, toolCall('read', 3307, '{}', 1, 2));
+  host.emit(agent.session, toolResult('c3307', '[pruned]', 3308, false, 1, 2));
+  host.emit(agent.session, stepStart(1, 3, 3309));
+  await sleep(150);
+  check('lossy replacements 未生成新的 repeat signal', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 13p: summary range replacement 清除工具候选 ----------
+{
+  console.log('测试 13p: 工具重复达阈值后被 summary range replace → 不打断新 step');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  for (let i = 0; i < 3; i += 1) {
+    const seq = 3400 + i * 2;
+    host.emit(agent.session, toolCall('read', seq));
+    host.emit(agent.session, toolResult(`c${seq}`, 'same output', seq + 1));
+  }
+  const summary = userMsg('Summary of prior tool outputs', 'summary-3406', 3406);
+  summary.data.source = { kind: 'compaction' };
+  summary.surfaceOp = { op: 'replace', start: 3401, end: 3405 };
+  summary.sourceEventSeqs = [3401, 3403, 3405];
+  host.emit(agent.session, summary);
+  host.emit(agent.session, stepStart(1, 2, 3407));
+  await sleep(150);
+  check('summary replacement 已清除旧工具 repeat signal', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 14b: 相同文本的成功/失败结果不同 ----------
+{
+  console.log('测试 14b: 工具结果文本相同但 isError 变化 → 不打断');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  for (let i = 0; i < 4; i += 1) {
+    host.emit(agent.session, toolCall('probe', 110 + i * 2));
+    host.emit(agent.session, toolResult(`c${110 + i * 2}`, 'same visible text', 111 + i * 2, i % 2 === 1));
+  }
+  host.emit(agent.session, stepStart(1, 2, 118));
+  await sleep(150);
+  check('错误状态变化视为进展', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 14c: 未知和重复 callId 不影响 loop 计数 ----------
+{
+  console.log('测试 14c: 未知/重复 callId → 忽略且不误 cancel');
+  const host = startPlugin({ scanOnBoot: false, loopToolRepeat: 3, cooldownMs: 300 });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  await sleep(30);
+  const firstCall = toolCall('read', 130);
+  const firstResult = toolResult('c130', 'same output', 131);
+  host.emit(agent.session, firstCall);
+  host.emit(agent.session, firstCall); // 同一事件重放
+  host.emit(agent.session, firstResult);
+  host.emit(agent.session, firstResult); // 重复结果不得再计数
+  host.emit(agent.session, toolResult('unknown-call', 'same output', 132));
+  host.emit(agent.session, toolCall('read', 133));
+  host.emit(agent.session, toolResult('c133', 'same output', 134));
+  host.emit(agent.session, toolCall('read', 135));
+  host.emit(agent.session, toolResult('c135', 'same output', 136));
+  host.emit(agent.session, stepStart(1, 2, 137));
+  await sleep(150);
+  check('不可关联结果打断连续性，未误达阈值', agent.cancels.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 11e: 不可关联的结果不得改写护栏 ----------
+{
+  console.log('测试 11e: 缺失/冲突 callId 的结果 → 最后调用仍为 pending');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1');
+  await sleep(50);
+  host.emit(agent.session, toolCall('delete-file', 150));
+  const mismatched = toolResult('other-call', 'deleted', 151);
+  mismatched.data.message.source.callId = 'c150';
+  host.emit(agent.session, mismatched);
+  const missing = toolResult('missing-call', 'deleted', 152);
+  delete missing.data.message.source;
+  delete missing.data.message.content[0].toolCallId;
+  host.emit(agent.session, missing);
+  const missingCallId = toolCall('rename-file', 153);
+  delete missingCallId.data.callId;
+  host.emit(agent.session, missingCallId);
+  host.emit(agent.session, toolResult('c153', 'renamed', 154));
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'x' } }));
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check('不可关联结果未改写护栏', text.includes('「rename-file」可能未完成'));
   await sleep(50);
 }
 
