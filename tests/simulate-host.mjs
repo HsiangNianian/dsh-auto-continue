@@ -44,6 +44,7 @@
  *   12e. parent/disposed/legacy/其他 hook 均不得重启
  *   12f. loop guard: stale tool/call 不得清除短句 streak
  *   12g. loop guard: 新鲜但缺 callId 的 tool/call 仍清除短句 streak
+ *   12h. loop guard: settings 失效异常留在 session listener 边界内
  *   13. loop guard: 同工具+同参数+同结果 → cancel
  *   13a. loop guard: 并发调用的结果乱序返回 → 按 callId 与调用顺序判定
  *   13b. loop guard: 乱序批次末尾出现进展 → 重置重复计数
@@ -1360,6 +1361,45 @@ const stepStart = (turn, step, seq) => ({
   await sleep(150);
   check('缺 callId 的新工具调用已清短句计数', agent.cancels.length === 0);
   await sleep(50);
+}
+
+// ---------- 测试 12h: loop interrupt 的同步异常由 listener 收口 ----------
+{
+  console.log('测试 12h: loop interrupt 读取失效 settings → listener 收口且进程继续');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 2,
+    graceMs: 20,
+    cooldownMs: 50,
+  });
+  const agent = host.makeAgent('loop-settings-boundary');
+  await sleep(20);
+  host.emit(agent.session, turnStart(1));
+  const repeated = 'This intentionally long assistant message reaches the repeated-text loop guard.';
+  host.emit(agent.session, assistantMsg(repeated, 10));
+  // The repeated event performs five successful config reads before
+  // interruptLoop() asks cooldownFor() for the sixth one.
+  host.failConfigAfterSuccessfulReads(5);
+  const errors = await captureConsoleErrors(async () => {
+    host.emit(agent.session, assistantMsg(repeated, 11));
+    await sleep(20);
+  });
+  check(
+    'loop interrupt 异常由 session listener 记录',
+    agent.cancels.length === 0 &&
+      errors.some(
+        (line) =>
+          line.includes('会话事件处理异常 loop-settings-boundary') &&
+          line.includes('inactive context'),
+      ),
+  );
+  host.emit(
+    agent.session,
+    turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'retry me' } }),
+  );
+  await sleep(150);
+  check('异常后续合法事件仍能处理', agent.followups.length === 1);
+  await sleep(20);
 }
 
 // ---------- 测试 13: loop guard — 同工具+同参数+同结果 ----------

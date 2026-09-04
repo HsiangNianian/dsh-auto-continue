@@ -391,13 +391,13 @@ export class AutoContinueRunner {
     const config = this.getConfig();
     if (state.sameTextRun >= config.loopRepeatText) {
       this.log(`检测到空转循环 ${sessionId}: 连续 ${state.sameTextRun} 条相同消息`);
-      void this.interruptLoop(sessionId, state);
+      this.interruptLoop(sessionId, state);
     } else if (state.shortRun >= config.loopShortCount) {
       this.log(`检测到空转循环 ${sessionId}: 连续 ${state.shortRun} 条短句且无工具调用`);
-      void this.interruptLoop(sessionId, state);
+      this.interruptLoop(sessionId, state);
     } else if (toolRepeat !== undefined && toolRepeat.count >= config.loopToolRepeat) {
       this.log(`检测到工具死循环 ${sessionId}: 「${toolRepeat.tool}」连续 ${toolRepeat.count} 次(同参数同结果)`);
-      void this.interruptLoop(sessionId, state);
+      this.interruptLoop(sessionId, state);
     }
   }
 
@@ -406,7 +406,7 @@ export class AutoContinueRunner {
    * 只有随后持久化的 turn/end 精确携带专属 hook cause 时,
    * 才会用 loopText 重启回合——DSH 的 first-cause 语义保证用户 Stop 优先。
    */
-  private async interruptLoop(sessionId: SessionId, state: SessionState): Promise<void> {
+  private interruptLoop(sessionId: SessionId, state: SessionState): void {
     if (state.loopFired) return;
     // 打断本身受冷却约束: 距上次打断/发送太近时不再打断, 防止反复打断刷屏
     if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) {
