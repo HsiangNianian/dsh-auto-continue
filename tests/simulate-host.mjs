@@ -11,6 +11,10 @@
  *   3. aborted(用户停止)→ 不发送
  *   4. 连续次数上限
  *   5. 启动扫描: 最后回合 interrupted → 自动续跑
+ *   5a. 启动扫描: DSH 0.1.2 snapshotEvents() API
+ *   5b. 启动扫描: 永久性错误沿用实时分类
+ *   5c. 启动扫描: 恢复错误模板上下文
+ *   5d. 启动扫描: scanLimit 优先最近活动会话
  *   6. 错误分类: 永久性跳过, 临时性续跑
  *   6b. provider 专属错误的用户自定义可恢复匹配
  *   7. continueText 模板
@@ -113,8 +117,13 @@ function makeHost() {
     emit(session, event) {
       for (const h of sessionHandlers) h(session, event);
     },
-    makeAgent(id, { events = [], origin } = {}) {
-      const session = { id, header: { origin }, events };
+    makeAgent(id, { events = [], origin, sessionApi = 'events' } = {}) {
+      const session = { id, header: { origin } };
+      if (sessionApi === 'snapshot') {
+        session.snapshotEvents = () => events;
+      } else {
+        session.events = events;
+      }
       const agent = {
         session,
         followups: [],
@@ -408,6 +417,107 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   mod.apply(host.ctx);
   await sleep(1000);
   check('已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 5a: DSH 0.1.2 Session snapshot API ----------
+{
+  console.log('测试 5a: 启动扫描通过 snapshotEvents() 读取新版 Session');
+  const now = Date.now();
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    sessionApi: 'snapshot',
+    events: [
+      { type: 'turn/end', seq: 2, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(1000);
+  check('新版 Session 已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 5b: 启动扫描沿用实时错误分类 ----------
+{
+  console.log('测试 5b: 启动扫描跳过永久性错误');
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    sessionApi: 'snapshot',
+    events: [
+      turnEnd(4, {
+        kind: 'error',
+        error: { code: 'INVALID_API_KEY', message: 'bad credential', status: 401 },
+      }),
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(600);
+  check('永久性扫描错误未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+
+// ---------- 测试 5c: 启动扫描恢复错误模板上下文 ----------
+{
+  console.log('测试 5c: 启动扫描恢复失败事实、回合与发生时间');
+  const failedAt = Date.now() - 65_000;
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    sessionApi: 'snapshot',
+    events: [
+      {
+        ...turnEnd(7, {
+          kind: 'error',
+          error: { code: 'UPSTREAM', message: 'gateway timeout', status: 503 },
+        }),
+        time: failedAt,
+      },
+    ],
+  });
+  host.setConfig({
+    ...FAST,
+    scanOnBoot: true,
+    continueText: 'turn={turn} code={code} status={status} message={message} elapsed={elapsed}',
+  });
+  mod.apply(host.ctx);
+  await sleep(600);
+  const text = agent.followups[0]?.content?.[0]?.text ?? '';
+  check(
+    '扫描错误模板上下文完整',
+    text.includes('turn=7 code=UPSTREAM status=503 message=gateway timeout') &&
+      text.includes('elapsed=1m'),
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 5d: 扫描上限优先最近活动会话 ----------
+{
+  console.log('测试 5d: 启动扫描按最后活动时间降序应用 scanLimit');
+  const now = Date.now();
+  const host = makeHost();
+  host.makeAgent('older-a', {
+    sessionApi: 'snapshot',
+    events: [
+      { type: 'turn/end', seq: 2, time: now - 120_000, data: { turn: 1, reason: { kind: 'completed' } } },
+    ],
+  });
+  host.makeAgent('older-b', {
+    sessionApi: 'snapshot',
+    events: [
+      { type: 'turn/end', seq: 2, time: now - 90_000, data: { turn: 1, reason: { kind: 'completed' } } },
+    ],
+  });
+  const recent = host.makeAgent('recent', {
+    sessionApi: 'snapshot',
+    events: [
+      { type: 'turn/end', seq: 2, time: now - 1_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true, scanLimit: 2 });
+  mod.apply(host.ctx);
+  await sleep(600);
+  check('最近中断会话未被注册顺序挤出', recent.followups.length === 1);
   await sleep(50);
 }
 

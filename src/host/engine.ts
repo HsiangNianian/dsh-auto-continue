@@ -827,12 +827,38 @@ export class AutoContinueRunner {
     if (config.paused) return true; // 全局暂停: 不做任何扫描
     // 只扫 live agents(host 重启后 agent-loop 会 resume 崩溃会话, 冷会话无需处理)
     const now = Date.now();
-    const candidates: { sessionId: SessionId; events: readonly SessionEvent[] }[] = [];
+    const candidates: {
+      sessionId: SessionId;
+      events: readonly SessionEvent[];
+      lastActivityAt: number;
+      listIndex: number;
+    }[] = [];
     for (const agent of this.ctx.agents.list()) {
       const session = agent.session;
       if (session.header.origin === 'subagent') continue; // 子代理由父代理处理
-      candidates.push({ sessionId: session.id, events: session.events });
+      const eventSource = session as unknown as {
+        snapshotEvents?: () => readonly SessionEvent[];
+        events?: readonly SessionEvent[];
+      };
+      const events =
+        typeof eventSource.snapshotEvents === 'function'
+          ? eventSource.snapshotEvents()
+          : (eventSource.events ?? []);
+      const lastActivityAt = events.reduce(
+        (latest, event) => Math.max(latest, event.time),
+        0,
+      );
+      candidates.push({
+        sessionId: session.id,
+        events,
+        lastActivityAt,
+        listIndex: candidates.length,
+      });
     }
+    candidates.sort(
+      (left, right) =>
+        right.lastActivityAt - left.lastActivityAt || left.listIndex - right.listIndex,
+    );
     for (const candidate of candidates.slice(0, config.scanLimit)) {
       if (this.disposed) return true;
       const state = this.state(candidate.sessionId);
@@ -865,8 +891,21 @@ export class AutoContinueRunner {
       if (superseded) continue;
       // 幂等护栏: 从历史事件里重建上一步工具调用的执行状态
       this.applyGuardFromEvents(state, events, lastEnd.seq);
-      this.log(`扫描发现中断 ${candidate.sessionId}(turn/end:${reason.kind}), 安排自动继续`);
-      this.schedule(candidate.sessionId, `scan:turn/end:${reason.kind}`);
+      const scanReason = `scan:turn/end:${reason.kind}`;
+      this.log(`扫描发现中断 ${candidate.sessionId}(turn/end:${reason.kind}), 交给恢复策略处理`);
+      if (reason.kind === 'error') {
+        const error = reason.error;
+        state.lastFailure = {
+          code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
+          message: typeof error.message === 'string' ? error.message : String(error),
+          ...(typeof error.status === 'number' ? { status: error.status } : {}),
+        };
+        state.lastTurn = lastEnd.data.turn;
+        state.lastFailureAt = lastEnd.time;
+        this.onTurnFailure(candidate.sessionId, scanReason, state.lastFailure);
+      } else {
+        this.schedule(candidate.sessionId, scanReason);
+      }
     }
     return true;
   }
