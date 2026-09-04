@@ -10,7 +10,7 @@
  *   2. 宽限期内 turn/start → 取消
  *   3. aborted(用户停止)→ 不发送
  *   4. 连续次数上限
- *   5. 启动扫描: 最后回合 interrupted → 自动续跑
+ *   5. 启动扫描: 兼容旧 events 属性与新 snapshotEvents() API
  *   6. 错误分类: 永久性跳过, 临时性续跑
  *   6b. provider 专属错误的用户自定义可恢复匹配
  *   7. continueText 模板
@@ -113,8 +113,14 @@ function makeHost() {
     emit(session, event) {
       for (const h of sessionHandlers) h(session, event);
     },
-    makeAgent(id, { events = [], origin } = {}) {
-      const session = { id, header: { origin }, events };
+    makeAgent(id, { events = [], origin, eventApi = 'legacy' } = {}) {
+      const session = { id, header: { origin } };
+      if (eventApi === 'snapshot') {
+        const snapshot = Object.freeze([...events]);
+        session.snapshotEvents = () => snapshot;
+      } else {
+        session.events = events;
+      }
       const agent = {
         session,
         followups: [],
@@ -394,14 +400,34 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   await sleep(50);
 }
 
-// ---------- 测试 5: 启动扫描 interrupted ----------
+// ---------- 测试 5: 启动扫描 interrupted(旧 API) ----------
 {
-  console.log('测试 5: 启动扫描发现最近 interrupted 回合 → 自动继续');
+  console.log('测试 5: 启动扫描通过旧 events API 发现最近 interrupted 回合');
   const now = Date.now();
   const host = makeHost();
   const agent = host.makeAgent('s1', {
     events: [
       { type: 'turn/end', seq: 2, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(1000);
+  check('已发送', agent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 5b: 启动扫描 interrupted(DSH 0.1.2 API) ----------
+{
+  console.log('测试 5b: 启动扫描通过 snapshotEvents() 发现最近 interrupted 回合');
+  const now = Date.now();
+  const host = makeHost();
+  const agent = host.makeAgent('s1', {
+    eventApi: 'snapshot',
+    events: [
+      { type: 'turn/start', seq: 0, time: now - 61_000, data: { turn: 1 } },
+      { type: 'turn/end', seq: 1, time: now - 60_000, data: { turn: 1, reason: { kind: 'interrupted' } } },
+      { type: 'session/end-seed', seq: 2, time: now - 59_000, data: {} },
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
