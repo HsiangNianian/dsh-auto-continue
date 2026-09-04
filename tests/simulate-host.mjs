@@ -16,6 +16,7 @@
  *   5b. 启动扫描: 永久性错误沿用实时分类
  *   5c. 启动扫描: 恢复错误模板上下文
  *   5d. 启动扫描: scanLimit 优先最近活动会话
+ *   5e. 启动扫描: 畸形错误不阻塞其他会话
  *   6. 错误分类: 永久性跳过, 临时性续跑
  *   6b. provider 专属错误的用户自定义可恢复匹配
  *   7. continueText 模板
@@ -709,6 +710,46 @@ const toolResult = (callId, text, seq = 6, isError = false) => ({
   mod.apply(host.ctx);
   await sleep(600);
   check('最近中断会话未被注册顺序挤出', recent.followups.length === 1);
+  await sleep(50);
+}
+
+// ---------- 测试 5e: 畸形扫描错误不阻塞其他会话 ----------
+{
+  console.log('测试 5e: 启动扫描跳过畸形错误并继续处理其他会话');
+  const now = Date.now();
+  const host = makeHost();
+  const malformed = host.makeAgent('scan-malformed', {
+    eventApi: 'snapshot',
+    events: [
+      {
+        type: 'turn/end',
+        seq: 2,
+        time: now,
+        data: { turn: 1, reason: { kind: 'error' } },
+      },
+    ],
+  });
+  const recoverable = host.makeAgent('scan-recoverable', {
+    eventApi: 'snapshot',
+    events: [
+      {
+        type: 'turn/end',
+        seq: 2,
+        time: now - 1,
+        data: {
+          turn: 1,
+          reason: { kind: 'error', error: { code: 'UPSTREAM', message: 'retry me' } },
+        },
+      },
+    ],
+  });
+  host.setConfig({ ...FAST, scanOnBoot: true });
+  mod.apply(host.ctx);
+  await sleep(600);
+  check(
+    '畸形扫描错误被隔离',
+    malformed.followups.length === 0 && recoverable.followups.length === 1,
+  );
   await sleep(50);
 }
 

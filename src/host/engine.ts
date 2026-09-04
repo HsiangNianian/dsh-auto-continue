@@ -111,6 +111,40 @@ function snapshotSessionEvents(session: Session): readonly SessionEvent[] {
   throw new TypeError('session exposes neither snapshotEvents() nor events');
 }
 
+/** Interpret host failure payloads without trusting persisted or plugin-provided event shapes. */
+function parseFailureFacts(value: unknown): FailureFacts | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const failure = value as { code?: unknown; message?: unknown; status?: unknown };
+  const code = typeof failure.code === 'string' && failure.code.trim() !== ''
+    ? failure.code
+    : undefined;
+  const message = typeof failure.message === 'string' && failure.message.trim() !== ''
+    ? failure.message
+    : undefined;
+  const status = typeof failure.status === 'number' && Number.isFinite(failure.status)
+    ? failure.status
+    : undefined;
+  if (code === undefined && message === undefined && status === undefined) return undefined;
+  return {
+    code: code ?? 'UNKNOWN',
+    message: message ?? code ?? `HTTP ${status}`,
+    ...(status !== undefined ? { status } : {}),
+  };
+}
+
+/** Read a reason discriminator defensively because session history can outlive its schema. */
+function readReasonKind(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const kind = (value as { kind?: unknown }).kind;
+  return typeof kind === 'string' && kind.trim() !== '' ? kind : undefined;
+}
+
+function isLoopGuardCancelReason(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const cause = value as { kind?: unknown; reason?: unknown };
+  return cause.kind === LOOP_GUARD_CANCEL_CAUSE.kind && cause.reason === LOOP_GUARD_CANCEL_CAUSE.reason;
+}
+
 /**
  * 事件流泵: 带指数退避的 SSE 重连循环。
  * - 从未收到任何帧(宿主未就绪): 退避重试, 不触发扫描
@@ -436,26 +470,18 @@ export class AutoContinueRunner {
         state.loopFired = false;
         this.cancelPending(sessionId, '收到新的 turn/end');
         const reason = event.data.reason;
-        if (
-          typeof reason !== 'object' ||
-          reason === null ||
-          Array.isArray(reason) ||
-          typeof reason.kind !== 'string' ||
-          reason.kind.trim() === ''
-        ) {
+        const reasonKind = readReasonKind(reason);
+        if (reasonKind === undefined) {
           console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: reason 无法解释`);
           break;
         }
-        if (reason.kind === 'completed') {
+        if (reasonKind === 'completed') {
           // 成功回合: 恢复健康状态, 并确认上一次自动发送的效果
           state.consecutive = 0;
           state.lastFailure = undefined;
           this.noteRecovery(sessionId, 'completed');
-        } else if (reason.kind === 'aborted') {
-          if (
-            reason.reason.kind === LOOP_GUARD_CANCEL_CAUSE.kind &&
-            reason.reason.reason === LOOP_GUARD_CANCEL_CAUSE.reason
-          ) {
+        } else if (reasonKind === 'aborted') {
+          if (isLoopGuardCancelReason((reason as { reason?: unknown }).reason)) {
             // 我们自己的 loop guard 打断: 视为可恢复中断, 用循环提示文本重启回合。
             // 不清 consecutive / lastAttemptAt: 冷却与连续上限在 loop 路径同样生效,
             // 防止无限打断重发(issue #13); 打断本身受冷却约束, 重启也要等冷却。
@@ -488,44 +514,27 @@ export class AutoContinueRunner {
             state.consecutive = 0;
             state.pendingRecoveryAt = 0;
           }
-        } else if (reason.kind === 'blocked') {
+        } else if (reasonKind === 'blocked') {
           // 策略拒绝: 不自动继续
-        } else if (reason.kind === 'interrupted') {
+        } else if (reasonKind === 'interrupted') {
           // 实时路径的 interrupted 仅来自崩溃修复重载(loop 从不实时发出);
           // 用户手动停止在 DSH 中标记为 aborted, 不走到这里。实时流里出现
           // interrupted 视为异常中断, 不自动继续——宿主崩溃孤儿回合由扫描恢复。
           state.consecutive = 0;
           state.pendingRecoveryAt = 0;
-        } else if (reason.kind === 'error') {
+        } else if (reasonKind === 'error') {
           // 记录失败事实(分类与模板填充用), 然后按类型处理
-          const error = reason.error;
-          if (typeof error !== 'object' || error === null || Array.isArray(error)) {
-            console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: error details 缺失`);
-            break;
-          }
-          const code = typeof error.code === 'string' && error.code.trim() !== ''
-            ? error.code
-            : undefined;
-          const message = typeof error.message === 'string' && error.message.trim() !== ''
-            ? error.message
-            : undefined;
-          const status = typeof error.status === 'number' && Number.isFinite(error.status)
-            ? error.status
-            : undefined;
-          if (code === undefined && message === undefined && status === undefined) {
+          const failure = parseFailureFacts((reason as { error?: unknown }).error);
+          if (failure === undefined) {
             console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: error details 无法解释`);
             break;
           }
-          state.lastFailure = {
-            code: code ?? 'UNKNOWN',
-            message: message ?? code ?? `HTTP ${status}`,
-            ...(status !== undefined ? { status } : {}),
-          };
+          state.lastFailure = failure;
           state.lastTurn = event.data.turn;
           state.lastFailureAt = Date.now();
           this.noteRecovery(sessionId, 'error');
           this.onTurnFailure(sessionId, 'turn/end:error', state.lastFailure);
-        } else if (reason.kind === 'max-tokens') {
+        } else if (reasonKind === 'max-tokens') {
           state.lastFailureAt = Date.now();
           this.noteRecovery(sessionId, 'error');
           this.schedule(sessionId, 'turn/end:max-tokens');
@@ -926,7 +935,8 @@ export class AutoContinueRunner {
       }
       if (lastEnd === undefined) continue;
       const reason = lastEnd.data.reason;
-      if (!isNonHumanReason(reason.kind)) continue;
+      const reasonKind = readReasonKind(reason);
+      if (reasonKind === undefined || !isNonHumanReason(reasonKind)) continue;
       if (lastEnd.time < now - config.freshMs) continue; // 太久远, 不翻旧账
       // 该 turn/end 之后不能有新回合或用户消息(说明已被处理)
       let superseded = false;
@@ -939,15 +949,15 @@ export class AutoContinueRunner {
       if (superseded) continue;
       // 幂等护栏: 从历史事件里重建上一步工具调用的执行状态
       this.applyGuardFromEvents(state, events, lastEnd.seq);
-      const scanReason = `scan:turn/end:${reason.kind}`;
-      this.log(`扫描发现中断 ${candidate.sessionId}(turn/end:${reason.kind}), 交给恢复策略处理`);
-      if (reason.kind === 'error') {
-        const error = reason.error;
-        state.lastFailure = {
-          code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
-          message: typeof error.message === 'string' ? error.message : String(error),
-          ...(typeof error.status === 'number' ? { status: error.status } : {}),
-        };
+      const scanReason = `scan:turn/end:${reasonKind}`;
+      this.log(`扫描发现中断 ${candidate.sessionId}(turn/end:${reasonKind}), 交给恢复策略处理`);
+      if (reasonKind === 'error') {
+        const failure = parseFailureFacts((reason as { error?: unknown }).error);
+        if (failure === undefined) {
+          console.error(`[auto-continue] 忽略畸形扫描 turn/end ${candidate.sessionId}: error details 无法解释`);
+          continue;
+        }
+        state.lastFailure = failure;
         state.lastTurn = lastEnd.data.turn;
         state.lastFailureAt = lastEnd.time;
         this.onTurnFailure(candidate.sessionId, scanReason, state.lastFailure);
