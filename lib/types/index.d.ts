@@ -61,7 +61,7 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopWindowMs: z<number, number>;
     /** Consecutive short sentences trip the loop guard. */
     loopShortCount: z<number, number>;
-    /** Consecutive identical short sentences trip the loop guard (strongest spinning signal). */
+    /** Consecutive identical assistant messages trip the loop guard (strongest signal; also used for streamed intra-message repetition). */
     loopRepeatText: z<number, number>;
     /** Consecutive identical tool calls with identical arguments AND results trip the loop guard. */
     loopToolRepeat: z<number, number>;
@@ -114,7 +114,7 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopWindowMs: z<number, number>;
     /** Consecutive short sentences trip the loop guard. */
     loopShortCount: z<number, number>;
-    /** Consecutive identical short sentences trip the loop guard (strongest spinning signal). */
+    /** Consecutive identical assistant messages trip the loop guard (strongest signal; also used for streamed intra-message repetition). */
     loopRepeatText: z<number, number>;
     /** Consecutive identical tool calls with identical arguments AND results trip the loop guard. */
     loopToolRepeat: z<number, number>;

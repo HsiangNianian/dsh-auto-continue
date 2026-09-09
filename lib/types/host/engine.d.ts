@@ -69,6 +69,12 @@ export declare class AutoContinueRunner {
     private onHostEvent;
     /** 从 assistant/message 事件提取纯文本。 */
     private assistantText;
+    private assistantChunkText;
+    private normalizedSegment;
+    private isNearDuplicateSegment;
+    private withinEditDistance;
+    private noteStreamSegment;
+    private onAssistantChunk;
     private onAssistantMessage;
     /** 两个循环信号的公共检查; 命中且本回合未打断过则打断。 */
     private checkLoop;
