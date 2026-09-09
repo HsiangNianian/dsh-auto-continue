@@ -47,6 +47,11 @@
  *   12h. loop guard: settings 失效异常留在 session listener 边界内
  *   12i. loop guard: 流式单条消息内部连续复读 → 提前打断
  *   12j. loop guard: 流式文本有进展 → 不误打断
+ *   12k. loop guard: 流式短进展段落 → 中断复读 streak
+ *   12l. loop guard: assistant/message 提交前冲洗无换行尾段
+ *   12m. loop guard: 独立换行 chunk 仍能闭合流式段落
+ *   12n. loop guard: 超长近似段落比较保持有界
+ *   12o. loop guard: 无换行流式尾段保持有界
  *   13. loop guard: 同工具+同参数+同结果 → cancel
  *   13a. loop guard: 并发调用的结果乱序返回 → 按 callId 与调用顺序判定
  *   13b. loop guard: 乱序批次末尾出现进展 → 重置重复计数
@@ -386,7 +391,7 @@ const assistantChunk = (text, seq = 6) => ({
   data: {
     turn: 1,
     step: 1,
-    delta: { content: [{ type: 'text', text }] },
+    chunk: { type: 'text-delta', index: 0, text },
   },
 });
 const toolCall = (name, seq = 5, args = '{}', turn = 1, step = 1) => ({
@@ -1451,6 +1456,122 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, assistantChunk('The urllib download failed. Let me use a different approach and inspect installed wheels first.\n\n', 22));
   await sleep(80);
   check('有进展时未触发 cancel', agent.cancels.length === 0);
+  await sleep(20);
+}
+
+// ---------- 测试 12k: 流式短进展段落中断复读 ----------
+{
+  console.log('测试 12k: assistant/chunk 短进展段落 → 中断复读 streak');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const repeated = 'The download failed, so I will inspect the package metadata before trying again.\n\n';
+  host.emit(agent.session, assistantChunk(repeated, 30));
+  host.emit(agent.session, assistantChunk('Found a clue.\n\n', 31));
+  host.emit(agent.session, assistantChunk(repeated, 32));
+  host.emit(agent.session, assistantChunk(repeated, 33));
+  await sleep(80);
+  check('短进展段落已中断复读 streak', agent.cancels.length === 0);
+  await sleep(20);
+}
+
+// ---------- 测试 12l: assistant/message 冲洗流式尾段 ----------
+{
+  console.log('测试 12l: assistant/message 冲洗无换行尾段 → 命中阈值');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const repeated = 'The download failed, so I will inspect the package metadata before trying again.';
+  host.emit(agent.session, assistantChunk(`${repeated}\n`, 40));
+  host.emit(agent.session, assistantChunk(`${repeated}\n`, 41));
+  host.emit(agent.session, assistantChunk(repeated, 42));
+  host.emit(agent.session, assistantMsg(`${repeated}\n${repeated}\n${repeated}`, 43));
+  await sleep(80);
+  check('无换行尾段已在消息提交时计入', agent.cancels.length === 1);
+  await sleep(20);
+}
+
+// ---------- 测试 12m: 换行单独成 chunk ----------
+{
+  console.log('测试 12m: 独立换行 assistant/chunk → 正确闭合流式段落');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const repeated = 'The download failed, so I will inspect the package metadata before trying again.';
+  let seq = 50;
+  for (let index = 0; index < 3; index += 1) {
+    host.emit(agent.session, assistantChunk(repeated, seq));
+    seq += 1;
+    host.emit(agent.session, assistantChunk('\n\n', seq));
+    seq += 1;
+  }
+  await sleep(80);
+  check('独立换行 chunk 未被丢弃', agent.cancels.length === 1);
+  await sleep(20);
+}
+
+// ---------- 测试 12n: 超长近似段落比较保持有界 ----------
+{
+  console.log('测试 12n: 超长近似段落 → 同步事件处理保持有界');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const first = 'a'.repeat(12_000);
+  const second = `${first.slice(0, 6_000)}b${first.slice(6_001)}`;
+  host.emit(agent.session, assistantChunk(`${first}\n`, 60));
+  const startedAt = performance.now();
+  host.emit(agent.session, assistantChunk(`${second}\n`, 61));
+  const elapsedMs = performance.now() - startedAt;
+  check('超长近似段落未阻塞 host 事件线程', elapsedMs < 500);
+  await sleep(20);
+}
+
+// ---------- 测试 12o: 无换行流式尾段保持有界 ----------
+{
+  console.log('测试 12o: 大量无换行 assistant/chunk → 尾段处理保持有界');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const chunk = 'x'.repeat(8_192);
+  const startedAt = performance.now();
+  for (let index = 0; index < 512; index += 1) {
+    host.emit(agent.session, assistantChunk(chunk, 70 + index));
+  }
+  const elapsedMs = performance.now() - startedAt;
+  check(
+    '无换行流式尾段未随总输出反复重拷贝',
+    elapsedMs < 500 && agent.cancels.length === 0,
+  );
   await sleep(20);
 }
 

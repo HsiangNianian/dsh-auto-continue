@@ -821,7 +821,7 @@ export interface SessionState {
   lastAssistantText: string;
   /** 连续相同文本消息数(最强空转信号, 不限长度)。 */
   sameTextRun: number;
-  /** 流式消息尚未闭合的尾段(assistant/chunk 增量分段检测用)。 */
+  /** 流式消息尚未闭合的有界尾段(assistant/chunk 增量分段检测用)。 */
   streamTail: string;
   /** 流式消息最近一个长段的归一化文本。 */
   streamLastSegment: string;

@@ -67,10 +67,8 @@ export declare class AutoContinueRunner {
      * 然后交给回合状态机。
      */
     private onHostEvent;
-    private isAssistantChunkEvent;
     /** 从 assistant/message 事件提取纯文本。 */
     private assistantText;
-    private chunkTextFromParts;
     private assistantChunkText;
     private normalizedSegment;
     private isNearDuplicateSegment;

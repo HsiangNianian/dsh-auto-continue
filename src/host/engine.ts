@@ -79,6 +79,11 @@ const LOOP_GUARD_CANCEL_CAUSE = {
   reason: 'dsh-auto-continue:loop-guard',
 } as const;
 
+/** Keep fuzzy matching off the unbounded host event path; exact repeats remain unlimited. */
+const STREAM_NEAR_DUPLICATE_MAX_CHARS = 2_048;
+/** Bound unfinished text copied between token chunks when a provider emits no paragraph break. */
+const STREAM_TAIL_MAX_CHARS = 4_096;
+
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
   /** 稳定标识(供 browser 去重)。 */
@@ -331,7 +336,7 @@ export class AutoContinueRunner {
       const state = this.state(sessionId);
       const repeat = state.tools.confirmRepeatAtStep(event.seq);
       if (repeat !== undefined) this.checkLoop(sessionId, state, repeat);
-    } else if (this.isAssistantChunkEvent(event)) {
+    } else if (event.type === 'assistant/chunk') {
       const state = this.state(sessionId);
       this.onAssistantChunk(sessionId, state, event);
     } else if (event.type === 'assistant/message') {
@@ -339,10 +344,6 @@ export class AutoContinueRunner {
       this.onAssistantMessage(sessionId, state, event);
     }
     this.onSessionEvent(sessionId, event);
-  }
-
-  private isAssistantChunkEvent(event: SessionEvent): event is SessionEvent & { type: 'assistant/chunk' } {
-    return (event as { type?: unknown }).type === 'assistant/chunk';
   }
 
   /** 从 assistant/message 事件提取纯文本。 */
@@ -355,28 +356,8 @@ export class AutoContinueRunner {
       .join('');
   }
 
-  private chunkTextFromParts(value: unknown): string {
-    if (typeof value === 'string') return value;
-    if (!Array.isArray(value)) return '';
-    return value
-      .filter((part): part is { type: 'text'; text: string } =>
-        typeof part === 'object' &&
-          part !== null &&
-          (part as { type?: unknown }).type === 'text' &&
-          typeof (part as { text?: unknown }).text === 'string')
-      .map((part) => part.text)
-      .join('');
-  }
-
-  private assistantChunkText(event: SessionEvent & { type: 'assistant/chunk' }): string {
-    const data = (event as { data?: unknown }).data;
-    if (typeof data !== 'object' || data === null) return '';
-    const record = data as Record<string, unknown>;
-    const direct = typeof record['text'] === 'string' ? record['text'] : '';
-    const fromDelta = this.chunkTextFromParts((record['delta'] as { content?: unknown } | undefined)?.content);
-    const fromChunk = this.chunkTextFromParts((record['chunk'] as { content?: unknown } | undefined)?.content);
-    const fromMessage = this.chunkTextFromParts((record['messageDelta'] as { content?: unknown } | undefined)?.content);
-    return `${direct}${fromDelta}${fromChunk}${fromMessage}`;
+  private assistantChunkText(event: SessionEvent<'assistant/chunk'>): string {
+    return event.data.chunk.type === 'text-delta' ? event.data.chunk.text : '';
   }
 
   private normalizedSegment(text: string): string {
@@ -390,6 +371,7 @@ export class AutoContinueRunner {
     const longer = Math.max(leftLen, rightLen);
     const shorter = Math.min(leftLen, rightLen);
     if (shorter === 0 || shorter / longer < 0.85) return false;
+    if (longer > STREAM_NEAR_DUPLICATE_MAX_CHARS) return false;
     const maxDistance = Math.max(6, Math.floor(longer * 0.08));
     if (Math.abs(leftLen - rightLen) > maxDistance) return false;
     return this.withinEditDistance(left, right, maxDistance);
@@ -401,31 +383,45 @@ export class AutoContinueRunner {
     const leftLen = left.length;
     const rightLen = right.length;
     if (Math.abs(leftLen - rightLen) > maxDistance) return false;
-    let previous = Array.from({ length: rightLen + 1 }, (_, index) => index);
+    if (leftLen === 0 || rightLen === 0) return Math.max(leftLen, rightLen) <= maxDistance;
+    const unreachable = maxDistance + 1;
+    let previous = new Int32Array(rightLen + 1);
+    let current = new Int32Array(rightLen + 1);
+    previous.fill(unreachable);
+    for (let col = 0; col <= Math.min(rightLen, maxDistance); col += 1) {
+      previous[col] = col;
+    }
     for (let row = 1; row <= leftLen; row += 1) {
-      const current = new Array<number>(rightLen + 1);
-      current[0] = row;
-      let minInRow = row;
-      for (let col = 1; col <= rightLen; col += 1) {
-        const insertion = (current[col - 1] ?? Number.MAX_SAFE_INTEGER) + 1;
-        const deletion = (previous[col] ?? Number.MAX_SAFE_INTEGER) + 1;
+      current.fill(unreachable);
+      if (row <= maxDistance) current[0] = row;
+      const firstCol = Math.max(1, row - maxDistance);
+      const lastCol = Math.min(rightLen, row + maxDistance);
+      let minInRow = unreachable;
+      for (let col = firstCol; col <= lastCol; col += 1) {
+        const insertion = (current[col - 1] ?? unreachable) + 1;
+        const deletion = (previous[col] ?? unreachable) + 1;
         const substitution =
-          (previous[col - 1] ?? Number.MAX_SAFE_INTEGER) +
+          (previous[col - 1] ?? unreachable) +
           (left.charCodeAt(row - 1) === right.charCodeAt(col - 1) ? 0 : 1);
-        const score = Math.min(insertion, deletion, substitution);
+        const score = Math.min(insertion, deletion, substitution, unreachable);
         current[col] = score;
         if (score < minInRow) minInRow = score;
       }
       if (minInRow > maxDistance) return false;
-      previous = current;
+      [previous, current] = [current, previous];
     }
-    return (previous[rightLen] ?? Number.MAX_SAFE_INTEGER) <= maxDistance;
+    return (previous[rightLen] ?? unreachable) <= maxDistance;
   }
 
   private noteStreamSegment(sessionId: SessionId, state: SessionState, segment: string): void {
     const normalized = this.normalizedSegment(segment);
     const config = this.getConfig();
-    if (normalized.length < config.loopShortChars) return;
+    if (normalized === '') return;
+    if (normalized.length < config.loopShortChars) {
+      state.streamLastSegment = '';
+      state.streamRepeatRun = 0;
+      return;
+    }
     if (
       state.streamLastSegment !== '' &&
       this.isNearDuplicateSegment(normalized, state.streamLastSegment)
@@ -446,15 +442,24 @@ export class AutoContinueRunner {
   private onAssistantChunk(
     sessionId: SessionId,
     state: SessionState,
-    event: SessionEvent & { type: 'assistant/chunk' },
+    event: SessionEvent<'assistant/chunk'>,
   ): void {
     if (!this.getConfig().loopGuard) return;
     const chunk = this.assistantChunkText(event);
-    if (chunk.trim() === '') return;
+    if (chunk === '') return;
     const merged = `${state.streamTail}${chunk}`.replace(/\r/g, '');
     const pieces = merged.split(/\n+/u);
-    state.streamTail = pieces.pop() ?? '';
+    const tail = pieces.pop() ?? '';
     for (const piece of pieces) this.noteStreamSegment(sessionId, state, piece);
+    if (tail.length <= STREAM_TAIL_MAX_CHARS) {
+      state.streamTail = tail;
+      return;
+    }
+    state.streamTail = tail.slice(-STREAM_TAIL_MAX_CHARS);
+    if (/\S/u.test(tail)) {
+      state.streamLastSegment = '';
+      state.streamRepeatRun = 0;
+    }
   }
 
   private onAssistantMessage(
@@ -485,7 +490,9 @@ export class AutoContinueRunner {
       state.shortRun = 0; // 长句 = 有实际输出, 重置
       state.lastShortAt = 0;
     }
+    const streamTail = state.streamTail;
     state.streamTail = '';
+    if (streamTail !== '') this.noteStreamSegment(sessionId, state, streamTail);
     state.streamLastSegment = '';
     state.streamRepeatRun = 0;
     this.checkLoop(sessionId, state);
