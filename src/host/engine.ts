@@ -331,11 +331,18 @@ export class AutoContinueRunner {
       const state = this.state(sessionId);
       const repeat = state.tools.confirmRepeatAtStep(event.seq);
       if (repeat !== undefined) this.checkLoop(sessionId, state, repeat);
+    } else if (this.isAssistantChunkEvent(event)) {
+      const state = this.state(sessionId);
+      this.onAssistantChunk(sessionId, state, event);
     } else if (event.type === 'assistant/message') {
       const state = this.state(sessionId);
       this.onAssistantMessage(sessionId, state, event);
     }
     this.onSessionEvent(sessionId, event);
+  }
+
+  private isAssistantChunkEvent(event: SessionEvent): event is SessionEvent & { type: 'assistant/chunk' } {
+    return (event as { type?: unknown }).type === 'assistant/chunk';
   }
 
   /** 从 assistant/message 事件提取纯文本。 */
@@ -346,6 +353,108 @@ export class AutoContinueRunner {
       .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
       .map((part) => part.text)
       .join('');
+  }
+
+  private chunkTextFromParts(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (!Array.isArray(value)) return '';
+    return value
+      .filter((part): part is { type: 'text'; text: string } =>
+        typeof part === 'object' &&
+          part !== null &&
+          (part as { type?: unknown }).type === 'text' &&
+          typeof (part as { text?: unknown }).text === 'string')
+      .map((part) => part.text)
+      .join('');
+  }
+
+  private assistantChunkText(event: SessionEvent & { type: 'assistant/chunk' }): string {
+    const data = (event as { data?: unknown }).data;
+    if (typeof data !== 'object' || data === null) return '';
+    const record = data as Record<string, unknown>;
+    const direct = typeof record['text'] === 'string' ? record['text'] : '';
+    const fromDelta = this.chunkTextFromParts((record['delta'] as { content?: unknown } | undefined)?.content);
+    const fromChunk = this.chunkTextFromParts((record['chunk'] as { content?: unknown } | undefined)?.content);
+    const fromMessage = this.chunkTextFromParts((record['messageDelta'] as { content?: unknown } | undefined)?.content);
+    return `${direct}${fromDelta}${fromChunk}${fromMessage}`;
+  }
+
+  private normalizedSegment(text: string): string {
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
+  private isNearDuplicateSegment(left: string, right: string): boolean {
+    if (left === right) return true;
+    const leftLen = left.length;
+    const rightLen = right.length;
+    const longer = Math.max(leftLen, rightLen);
+    const shorter = Math.min(leftLen, rightLen);
+    if (shorter === 0 || shorter / longer < 0.85) return false;
+    const maxDistance = Math.max(6, Math.floor(longer * 0.08));
+    if (Math.abs(leftLen - rightLen) > maxDistance) return false;
+    return this.withinEditDistance(left, right, maxDistance);
+  }
+
+  private withinEditDistance(left: string, right: string, maxDistance: number): boolean {
+    if (left === right) return true;
+    if (maxDistance < 0) return false;
+    const leftLen = left.length;
+    const rightLen = right.length;
+    if (Math.abs(leftLen - rightLen) > maxDistance) return false;
+    let previous = Array.from({ length: rightLen + 1 }, (_, index) => index);
+    for (let row = 1; row <= leftLen; row += 1) {
+      const current = new Array<number>(rightLen + 1);
+      current[0] = row;
+      let minInRow = row;
+      for (let col = 1; col <= rightLen; col += 1) {
+        const insertion = (current[col - 1] ?? Number.MAX_SAFE_INTEGER) + 1;
+        const deletion = (previous[col] ?? Number.MAX_SAFE_INTEGER) + 1;
+        const substitution =
+          (previous[col - 1] ?? Number.MAX_SAFE_INTEGER) +
+          (left.charCodeAt(row - 1) === right.charCodeAt(col - 1) ? 0 : 1);
+        const score = Math.min(insertion, deletion, substitution);
+        current[col] = score;
+        if (score < minInRow) minInRow = score;
+      }
+      if (minInRow > maxDistance) return false;
+      previous = current;
+    }
+    return (previous[rightLen] ?? Number.MAX_SAFE_INTEGER) <= maxDistance;
+  }
+
+  private noteStreamSegment(sessionId: SessionId, state: SessionState, segment: string): void {
+    const normalized = this.normalizedSegment(segment);
+    const config = this.getConfig();
+    if (normalized.length < config.loopShortChars) return;
+    if (
+      state.streamLastSegment !== '' &&
+      this.isNearDuplicateSegment(normalized, state.streamLastSegment)
+    ) {
+      state.streamRepeatRun += 1;
+    } else {
+      state.streamLastSegment = normalized;
+      state.streamRepeatRun = 1;
+    }
+    if (state.streamRepeatRun >= config.loopRepeatText) {
+      this.log(
+        `检测到流式消息内复读 ${sessionId}: 连续 ${state.streamRepeatRun} 段近似重复文本`,
+      );
+      this.interruptLoop(sessionId, state);
+    }
+  }
+
+  private onAssistantChunk(
+    sessionId: SessionId,
+    state: SessionState,
+    event: SessionEvent & { type: 'assistant/chunk' },
+  ): void {
+    if (!this.getConfig().loopGuard) return;
+    const chunk = this.assistantChunkText(event);
+    if (chunk.trim() === '') return;
+    const merged = `${state.streamTail}${chunk}`.replace(/\r/g, '');
+    const pieces = merged.split(/\n+/u);
+    state.streamTail = pieces.pop() ?? '';
+    for (const piece of pieces) this.noteStreamSegment(sessionId, state, piece);
   }
 
   private onAssistantMessage(
@@ -376,6 +485,9 @@ export class AutoContinueRunner {
       state.shortRun = 0; // 长句 = 有实际输出, 重置
       state.lastShortAt = 0;
     }
+    state.streamTail = '';
+    state.streamLastSegment = '';
+    state.streamRepeatRun = 0;
     this.checkLoop(sessionId, state);
   }
 
@@ -442,6 +554,9 @@ export class AutoContinueRunner {
         state.lastShortAt = 0;
         state.lastAssistantText = '';
         state.sameTextRun = 0;
+        state.streamTail = '';
+        state.streamLastSegment = '';
+        state.streamRepeatRun = 0;
         state.loopFired = false;
         if (state.loopRetryTimer !== undefined) {
           clearTimeout(state.loopRetryTimer);
@@ -476,6 +591,9 @@ export class AutoContinueRunner {
             state.lastShortAt = 0;
             state.lastAssistantText = '';
             state.sameTextRun = 0;
+            state.streamTail = '';
+            state.streamLastSegment = '';
+            state.streamRepeatRun = 0;
             state.tools.resetRepeat();
             // 重启受冷却约束(防紧密打断循环): 等剩余冷却结束后再调度
             const cooldown = this.cooldownFor(state);

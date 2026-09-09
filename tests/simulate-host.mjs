@@ -45,6 +45,8 @@
  *   12f. loop guard: stale tool/call 不得清除短句 streak
  *   12g. loop guard: 新鲜但缺 callId 的 tool/call 仍清除短句 streak
  *   12h. loop guard: settings 失效异常留在 session listener 边界内
+ *   12i. loop guard: 流式单条消息内部连续复读 → 提前打断
+ *   12j. loop guard: 流式文本有进展 → 不误打断
  *   13. loop guard: 同工具+同参数+同结果 → cancel
  *   13a. loop guard: 并发调用的结果乱序返回 → 按 callId 与调用顺序判定
  *   13b. loop guard: 乱序批次末尾出现进展 → 重置重复计数
@@ -375,6 +377,16 @@ const assistantMsg = (text, seq = 6) => ({
     turn: 1,
     step: 1,
     message: { role: 'assistant', content: [{ type: 'text', text }] },
+  },
+});
+const assistantChunk = (text, seq = 6) => ({
+  type: 'assistant/chunk',
+  seq,
+  time: Date.now(),
+  data: {
+    turn: 1,
+    step: 1,
+    delta: { content: [{ type: 'text', text }] },
   },
 });
 const toolCall = (name, seq = 5, args = '{}', turn = 1, step = 1) => ({
@@ -1399,6 +1411,46 @@ const stepStart = (turn, step, seq) => ({
   );
   await sleep(150);
   check('异常后续合法事件仍能处理', agent.followups.length === 1);
+  await sleep(20);
+}
+
+// ---------- 测试 12i: 流式单条消息内部复读 ----------
+{
+  console.log('测试 12i: assistant/chunk 单条消息内连续复读 → 提前 cancel');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, assistantChunk('The urllib download failed. Let me use pip with --prefix to a clean dir to extract the py-spy binary.\n\n', 10));
+  host.emit(agent.session, assistantChunk('The urllib download failed. Let me use pip with --prefix to a clean dir to extract the py-spy binary.\n\n', 11));
+  host.emit(agent.session, assistantChunk('The urllib download failed. Let me use pip with --prefix to a clean dir to extract the py-spy binary.\n\n', 12));
+  await sleep(80);
+  check('流式阶段已触发 cancel', agent.cancels.length === 1);
+  await sleep(20);
+}
+
+// ---------- 测试 12j: 流式文本有进展 ----------
+{
+  console.log('测试 12j: assistant/chunk 有进展变化 → 不误触发 cancel');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, assistantChunk('The urllib download failed. Let me use pip with --prefix to a clean dir to extract the py-spy binary.\n\n', 20));
+  host.emit(agent.session, assistantChunk('The urllib download failed. Let me use pip with --prefix to a fresh directory to extract the py-spy binary.\n\n', 21));
+  host.emit(agent.session, assistantChunk('The urllib download failed. Let me use a different approach and inspect installed wheels first.\n\n', 22));
+  await sleep(80);
+  check('有进展时未触发 cancel', agent.cancels.length === 0);
   await sleep(20);
 }
 

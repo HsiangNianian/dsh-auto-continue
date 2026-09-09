@@ -80,7 +80,7 @@ export interface AutoContinueSettings {
   loopShortCount?: number;
   /** Consecutive identical tool calls with identical arguments AND identical results trip the loop guard. */
   loopToolRepeat?: number;
-  /** Consecutive identical short sentences trip the loop guard (strongest spinning signal). */
+  /** Consecutive identical assistant messages trip the loop guard (strongest signal; also used for streamed intra-message repetition). */
   loopRepeatText?: number;
   /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
   loopText?: string;
@@ -821,6 +821,12 @@ export interface SessionState {
   lastAssistantText: string;
   /** 连续相同文本消息数(最强空转信号, 不限长度)。 */
   sameTextRun: number;
+  /** 流式消息尚未闭合的尾段(assistant/chunk 增量分段检测用)。 */
+  streamTail: string;
+  /** 流式消息最近一个长段的归一化文本。 */
+  streamLastSegment: string;
+  /** 流式消息内连续近似重复长段计数。 */
+  streamRepeatRun: number;
   /** 本回合已触发过 loop guard(防重复打断)。 */
   loopFired: boolean;
   /** loop 重启的延迟定时器(冷却结束后再 schedule)。 */
@@ -844,6 +850,9 @@ export const freshState = (): SessionState => ({
   lastShortAt: 0,
   lastAssistantText: '',
   sameTextRun: 0,
+  streamTail: '',
+  streamLastSegment: '',
+  streamRepeatRun: 0,
   loopFired: false,
   loopRetryTimer: undefined,
 });

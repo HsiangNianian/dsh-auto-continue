@@ -76,7 +76,7 @@ export const AutoContinueSchema = z.object({
   loopWindowMs: z.natural().min(1000).default(30000),
   /** Consecutive short sentences trip the loop guard. */
   loopShortCount: z.natural().min(2).default(12),
-  /** Consecutive identical short sentences trip the loop guard (strongest spinning signal). */
+  /** Consecutive identical assistant messages trip the loop guard (strongest signal; also used for streamed intra-message repetition). */
   loopRepeatText: z.natural().min(2).default(4),
   /** Consecutive identical tool calls with identical arguments AND results trip the loop guard. */
   loopToolRepeat: z.natural().min(2).default(5),
