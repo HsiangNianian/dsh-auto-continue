@@ -52,6 +52,9 @@
  *   12m. loop guard: 独立换行 chunk 仍能闭合流式段落
  *   12n. loop guard: 超长近似段落比较保持有界
  *   12o. loop guard: 无换行流式尾段保持有界
+ *   12p. loop guard: 单换行进度行不按重复段落处理
+ *   12q. loop guard: 渐进漂移段落与最近一段比较
+ *   12r. loop guard: 非运行态晚到 chunk 不触发取消
  *   13. loop guard: 同工具+同参数+同结果 → cancel
  *   13a. loop guard: 并发调用的结果乱序返回 → 按 callId 与调用顺序判定
  *   13b. loop guard: 乱序批次末尾出现进展 → 重置重复计数
@@ -1494,10 +1497,10 @@ const stepStart = (turn, step, seq) => ({
   await sleep(30);
   host.emit(agent.session, turnStart(1));
   const repeated = 'The download failed, so I will inspect the package metadata before trying again.';
-  host.emit(agent.session, assistantChunk(`${repeated}\n`, 40));
-  host.emit(agent.session, assistantChunk(`${repeated}\n`, 41));
+  host.emit(agent.session, assistantChunk(`${repeated}\n\n`, 40));
+  host.emit(agent.session, assistantChunk(`${repeated}\n\n`, 41));
   host.emit(agent.session, assistantChunk(repeated, 42));
-  host.emit(agent.session, assistantMsg(`${repeated}\n${repeated}\n${repeated}`, 43));
+  host.emit(agent.session, assistantMsg(`${repeated}\n\n${repeated}\n\n${repeated}`, 43));
   await sleep(80);
   check('无换行尾段已在消息提交时计入', agent.cancels.length === 1);
   await sleep(20);
@@ -1572,6 +1575,76 @@ const stepStart = (turn, step, seq) => ({
     '无换行流式尾段未随总输出反复重拷贝',
     elapsedMs < 500 && agent.cancels.length === 0,
   );
+  await sleep(20);
+}
+
+// ---------- 测试 12p: 单换行进度行不是重复段落 ----------
+{
+  console.log('测试 12p: 单换行批处理进度 → 不误判为重复段落');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 4,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  for (let batch = 1; batch <= 4; batch += 1) {
+    const number = String(batch).padStart(4, '0');
+    host.emit(
+      agent.session,
+      assistantChunk(
+        `Processed batch ${number} successfully; wrote 200 records to destination\n`,
+        600 + batch,
+      ),
+    );
+  }
+  await sleep(80);
+  check('有编号进展的单换行状态未被 cancel', agent.cancels.length === 0);
+  await sleep(20);
+}
+
+// ---------- 测试 12q: 渐进漂移与最近段落比较 ----------
+{
+  console.log('测试 12q: 渐进漂移的重复段落 → 仍能命中阈值');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 4,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  host.emit(agent.session, turnStart(1));
+  const base = 'abcdefghij'.repeat(8);
+  for (let version = 0; version < 4; version += 1) {
+    const changed = version * 3;
+    const paragraph = `${'z'.repeat(changed)}${base.slice(changed)}`;
+    host.emit(agent.session, assistantChunk(`${paragraph}\n\n`, 700 + version));
+  }
+  await sleep(80);
+  check('每段均与最近段近似时已 cancel', agent.cancels.length === 1);
+  await sleep(20);
+}
+
+// ---------- 测试 12r: 非运行态 chunk 不触发取消 ----------
+{
+  console.log('测试 12r: 非运行态 assistant/chunk → 不触发 cancel');
+  const host = startPlugin({
+    scanOnBoot: false,
+    loopRepeatText: 3,
+    loopShortChars: 20,
+    cooldownMs: 300,
+  });
+  const agent = host.makeAgent('s1');
+  await sleep(30);
+  const repeated = 'A late replayed chunk must not cancel an idle session.\n\n';
+  host.emit(agent.session, assistantChunk(repeated, 800));
+  host.emit(agent.session, assistantChunk(repeated, 801));
+  host.emit(agent.session, assistantChunk(repeated, 802));
+  await sleep(80);
+  check('idle session 未被晚到 chunk cancel', agent.cancels.length === 0);
   await sleep(20);
 }
 

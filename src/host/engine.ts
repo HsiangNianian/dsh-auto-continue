@@ -427,6 +427,7 @@ export class AutoContinueRunner {
       this.isNearDuplicateSegment(normalized, state.streamLastSegment)
     ) {
       state.streamRepeatRun += 1;
+      state.streamLastSegment = normalized;
     } else {
       state.streamLastSegment = normalized;
       state.streamRepeatRun = 1;
@@ -444,11 +445,11 @@ export class AutoContinueRunner {
     state: SessionState,
     event: SessionEvent<'assistant/chunk'>,
   ): void {
-    if (!this.getConfig().loopGuard) return;
+    if (!this.getConfig().loopGuard || !state.running || state.loopFired) return;
     const chunk = this.assistantChunkText(event);
     if (chunk === '') return;
     const merged = `${state.streamTail}${chunk}`.replace(/\r/g, '');
-    const pieces = merged.split(/\n+/u);
+    const pieces = merged.split(/\n(?:[ \t]*\n)+/u);
     const tail = pieces.pop() ?? '';
     for (const piece of pieces) this.noteStreamSegment(sessionId, state, piece);
     if (tail.length <= STREAM_TAIL_MAX_CHARS) {
