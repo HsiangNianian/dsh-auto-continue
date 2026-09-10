@@ -57,11 +57,39 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'auto-continue: dictionaries');
 
   const scope = ctx.settingsScope.bind<AutoContinueSettings>({ namespace: SETTINGS_NS });
+  /**
+   * Mirror the browser locale into the host config, with a hard per-page budget.
+   *
+   * The write is only needed while the stored value disagrees with the page, so
+   * every notification re-checks the snapshot — but two unbounded writers hid in
+   * that check, and both of them hammer `settings.yaml` until the host settings
+   * write queue backs up (observed: ~1 write / 400 ms when a completed write does
+   * not fold back before the next document tick, and a two-page ping-pong when
+   * two pages with different UI languages keep overwriting each other).
+   *
+   * So: keep the subscription and the `locale/change` hook (a scope that is not
+   * `ready` yet still mirrors once it is, and a real language switch still wins),
+   * but cap this page at {@link MAX_MIRROR_ATTEMPTS} writes per active locale. A
+   * stored value that already matches resets the budget.
+   */
+  const MAX_MIRROR_ATTEMPTS = 3;
+  let mirroredLocale: string | undefined;
+  let mirrorAttempts = 0;
   const syncLocale = (): void => {
     const active = ctx.locale.getLocale().active;
     const snapshot = scope.getSnapshot();
     if (snapshot.status !== 'ready' || !snapshot.writable || snapshot.mode !== 'host') return;
-    if (snapshot.value?.locale === active) return;
+    if (snapshot.value?.locale === active) {
+      mirroredLocale = active;
+      mirrorAttempts = 0;
+      return;
+    }
+    if (mirroredLocale !== active) {
+      mirroredLocale = active;
+      mirrorAttempts = 0;
+    }
+    if (mirrorAttempts >= MAX_MIRROR_ATTEMPTS) return;
+    mirrorAttempts += 1;
     void scope.set('locale', active);
   };
   ctx.effect(() => scope.subscribe(syncLocale), 'auto-continue: locale settings sync');
