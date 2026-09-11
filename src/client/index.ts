@@ -69,8 +69,16 @@ export function apply(ctx: ClientContext): void {
    *
    * So: keep the subscription and the `locale/change` hook (a scope that is not
    * `ready` yet still mirrors once it is, and a real language switch still wins),
-   * but cap this page at {@link MAX_MIRROR_ATTEMPTS} writes per active locale. A
-   * stored value that already matches resets the budget.
+   * but cap this page at {@link MAX_MIRROR_ATTEMPTS} writes per active locale.
+   *
+   * The budget must NOT be reset by a matching snapshot. In the real
+   * `SettingsScopeController`, a successful `set()` folds the mutation response
+   * into the WRITING page's own mirror (`mirror.acceptView` -> scope `derive()` ->
+   * subscriber), so under the two-page ping-pong each page first sees its own
+   * accepted value — matching its active locale — and would hand itself a fresh
+   * budget before the other page writes back. That is an unbounded loop again
+   * (probed: 400+ host writes). Reset only when the browser's active locale
+   * genuinely changes; a matching snapshot then simply needs no write.
    */
   const MAX_MIRROR_ATTEMPTS = 3;
   let mirroredLocale: string | undefined;
@@ -79,15 +87,16 @@ export function apply(ctx: ClientContext): void {
     const active = ctx.locale.getLocale().active;
     const snapshot = scope.getSnapshot();
     if (snapshot.status !== 'ready' || !snapshot.writable || snapshot.mode !== 'host') return;
-    if (snapshot.value?.locale === active) {
-      mirroredLocale = active;
-      mirrorAttempts = 0;
-      return;
-    }
+    // A genuine language switch is the only thing that earns a fresh budget: the
+    // attempt count must survive matching snapshots, because the writing page's
+    // own acknowledgement arrives as a match (see above). Tracking `mirroredLocale`
+    // on every pass is what lets a later real switch be recognised.
     if (mirroredLocale !== active) {
       mirroredLocale = active;
       mirrorAttempts = 0;
     }
+    // Converged: nothing to write.
+    if (snapshot.value?.locale === active) return;
     if (mirrorAttempts >= MAX_MIRROR_ATTEMPTS) return;
     mirrorAttempts += 1;
     void scope.set('locale', active);
