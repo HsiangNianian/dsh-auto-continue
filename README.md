@@ -44,6 +44,7 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 - **English / Chinese localization** — the settings card, built-in resume / guard / loop text, and browser notifications follow DSH's active UI language (initially selected from the browser language). Only `en` and `zh` are supported; other languages fall back to Chinese. Switching languages updates built-in defaults without overwriting custom text
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("Continue ({tool} failed: {code})"); a **separate template** fires on `max-tokens` (e.g. "Continue the output without repeating anything already generated")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
+- **Silent turn resume** — a model sometimes ends a turn with a reasoning block only: no text and no tool call. DSH records a normal `completed` turn, so nothing resumes it and the agent waits for a hand-typed "Continue". When a turn ends `completed` without visible output (no non-blank text part, no tool call), the plugin sends a dedicated resume text. Such a resume does not reset the consecutive count, so the cooldown and the cap still bound a model that stalls on every turn; a turn with visible output or a user message resets it. The `no-visible-output` reason kind, proposed to DSH for the same turn, is handled the same way. Turn it off with **Resume silent turns**
 - **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
 - **Loop guard** — watches **running** turns too. Four signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), repeated near-duplicate paragraphs **inside one streamed assistant message**, many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
@@ -57,6 +58,7 @@ It watches the live event streams and reacts to:
 | `turn/end` → `error` | Turn failed (model / network / timeout, …) |
 | `turn/end` → `interrupted` | Crash-orphaned turn left behind by a host restart (recovered by the startup scan) |
 | `turn/end` → `max-tokens` | Output token ceiling reached |
+| `turn/end` → `completed` / `no-visible-output` with no visible output | Turn ended normally with reasoning only: no text, no tool call |
 | `host/agent-error` | Agent failure with no turn position (only network/timeout-class messages auto-resume) |
 
 **Never auto-continues:** user-aborted turns (`aborted`) or policy rejections (`blocked`); live `interrupted` turn-ends too — that marker is only written by crash repair when the host reloads, so orphaned turns are recovered by the startup scan, not the live path; sessions the host already resumed itself; running sessions or sessions with queued messages; subagent sessions; anything inside the cooldown / consecutive-cap windows (configurable in the settings card, below).
@@ -207,6 +209,8 @@ auto-continue:
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
 | Continue text | `Continue` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
+| Resume silent turns | `on` | Resume a turn that ended normally with reasoning only (no text, no tool call); does not reset the consecutive count |
+| Continue text (silent turn) | `Continue. Your previous turn ended with internal reasoning only, ...` | Text sent to resume a silent turn (same placeholders) |
 | Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
 | Loop guard | `on` | Detect a running turn spinning in place and restart it (see What It Does) |
 | Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |
@@ -219,7 +223,7 @@ auto-continue:
 | Guard text (tool succeeded) | `(The previous tool "{tool}" completed successfully. Result: {result}; do not run it again. Continue from there.)` | Appended when the last tool is confirmed done; `{tool}` / `{result}` placeholders |
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
 | Cooldown (ms) | `20000` | Min interval between auto-continues per session (failed attempts count too) |
-| Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes |
+| Max consecutive | `3` | Max consecutive auto-continues; stops until a user intervenes or a turn completes with visible output |
 | Scan on load / reconnect | `on` | Scan recently interrupted sessions on load / reconnect |
 | Scan limit | `8` | Max sessions scanned (running / subagent sessions excluded) |
 | Scan window (ms) | `900000` | Scan only considers interruptions inside this window |
@@ -240,7 +244,7 @@ auto-continue:
 
 Patterns are literal substrings, not regular expressions. Blank lines are ignored; any matching line wins before the built-in permanent-error rules. Cooldown and consecutive-attempt limits still apply.
 
-`continueText` (and `continueTextMaxTokens`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
+`continueText` (and `continueTextMaxTokens`, `continueTextSilent`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
 
 ---
 
