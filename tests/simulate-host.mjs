@@ -7,6 +7,9 @@
  *   1b. English locale → 默认发送 "Continue"
  *   1c. 本地化只替换默认值, 不覆盖用户自定义文本
  *   1d. 未支持的 locale → 回落中文
+ *   1e. 已有排队消息 → 自动继续优先, 用户消息顺序保持不变
+ *   1f. 立即续跑 → 同样优先于已有排队消息
+ *   1g. 队首调整失败 → 回滚到队尾且消息不丢失
  *   2. 宽限期内 turn/start → 取消
  *   2b. 稳定消息 ID 回显识别(真人同文本、多 pending、一次消费、同步发布、失败回滚、过期与上限)
  *   3. aborted(用户停止)→ 不发送
@@ -119,6 +122,7 @@ if (typeof mod.apply !== 'function') throw new Error('host bundle 未导出 appl
 // ---------- 假 host 环境 ----------
 function makeHost() {
   const sessionHandlers = new Set();
+  const inboxInsertedHandlers = new Set();
   let config = {};
   let configReadsBeforeFailure;
   let contextActive = true;
@@ -166,20 +170,57 @@ function makeHost() {
     failConfigAfterSuccessfulReads(count) {
       configReadsBeforeFailure = count;
     },
+    inboxListenerCount() {
+      return inboxInsertedHandlers.size;
+    },
     emit(session, event) {
       for (const h of sessionHandlers) h(session, event);
     },
-    makeAgent(id, { events = [], origin, eventApi = 'legacy', cancel: cancelImpl } = {}) {
+    makeAgent(id, { events = [], origin, eventApi = 'legacy', cancel: cancelImpl, queued = [] } = {}) {
       const session = { id, header: { origin } };
       if (eventApi === 'snapshot') {
         session.snapshotEvents = () => Object.freeze([...events]);
       } else {
         session.events = events;
       }
-      const agent = {
+      const nextTurn = [...queued];
+      let agent;
+      const inbox = {
+        get nextTurn() {
+          return nextTurn;
+        },
+        get nextStep() {
+          return [];
+        },
+        remove(messageId) {
+          const index = nextTurn.findIndex(message => message.id === messageId);
+          if (index < 0) return false;
+          nextTurn.splice(index, 1);
+          return true;
+        },
+        prepend(target, message) {
+          if (target !== 'next-turn') throw new Error(`unexpected inbox target ${target}`);
+          if (this.prependError !== undefined) {
+            const error = this.prependError;
+            this.prependError = undefined;
+            throw error;
+          }
+          nextTurn.unshift(message);
+          for (const handler of inboxInsertedHandlers) handler({ agent, message });
+        },
+        append(target, message) {
+          if (target !== 'next-turn') throw new Error(`unexpected inbox target ${target}`);
+          nextTurn.push(message);
+          for (const handler of inboxInsertedHandlers) handler({ agent, message });
+        },
+      };
+      agent = {
+        id,
         session,
+        inbox,
         followupAttempts: [],
         followups: [],
+        claimed: [],
         cancels: [],
         followup(message) {
           this.followupAttempts.push(message);
@@ -188,7 +229,11 @@ function makeHost() {
             this.followupError = undefined;
             throw error;
           }
+          nextTurn.push(message);
+          for (const handler of inboxInsertedHandlers) handler({ agent: this, message });
           this.followups.push(message);
+          const claimed = nextTurn.shift();
+          if (claimed !== undefined) this.claimed.push(claimed);
           this.onFollowup?.(message);
         },
         cancel(cause, options) {
@@ -225,6 +270,12 @@ function makeHost() {
     engineEffects = effects;
     return {
       on(event, handler) {
+        if (event === 'agent/inbox/inserted') {
+          return registerEffect(effects, () => {
+            inboxInsertedHandlers.add(handler);
+            return () => inboxInsertedHandlers.delete(handler);
+          });
+        }
         if (event !== 'session/event') return () => {};
         return registerEffect(effects, () => {
           sessionHandlers.add(handler);
@@ -472,6 +523,67 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
   await sleep(600);
   check('默认文本回落为「继续」', agent.followups[0]?.content?.[0]?.text === '继续');
+  await sleep(50);
+}
+
+// ---------- 测试 1e: 自动继续排到既有用户队列之前 ----------
+{
+  console.log('测试 1e: 已有多条排队消息 → 自动继续优先且用户顺序不变');
+  const queued = [
+    { id: 'queued-1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'first' }] },
+    { id: 'queued-2', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'second' }] },
+  ];
+  const host = startPlugin({ scanOnBoot: false, graceMs: 20 });
+  const agent = host.makeAgent('s1', { queued });
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(100);
+  check('自动继续先被宿主领取', agent.claimed[0]?.content?.[0]?.text === '继续');
+  check(
+    '两条用户消息仍按原顺序排队',
+    agent.inbox.nextTurn.length === 2 &&
+      agent.inbox.nextTurn[0] === queued[0] &&
+      agent.inbox.nextTurn[1] === queued[1],
+  );
+  await sleep(50);
+}
+
+// ---------- 测试 1f: 手动立即续跑也排到既有队列之前 ----------
+{
+  console.log('测试 1f: Resume now + 已有排队消息 → 续跑优先且不丢消息');
+  const queued = [
+    { id: 'manual-queued', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'later' }] },
+  ];
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1', { queued });
+  await sleep(50);
+  const response = await postAction(host, { action: 'resume', sessionId: 's1' });
+  check('Resume now 响应成功', response.ok === true);
+  check('立即续跑先被宿主领取', agent.claimed[0]?.content?.[0]?.text === '继续');
+  check('原用户消息仍在队首等待', agent.inbox.nextTurn.length === 1 && agent.inbox.nextTurn[0] === queued[0]);
+  await sleep(50);
+}
+
+// ---------- 测试 1g: 队首调整失败时回滚 ----------
+{
+  console.log('测试 1g: inbox prepend 失败 → 续跑消息回滚到队尾且不丢失');
+  const queued = [
+    { id: 'rollback-queued', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'first' }] },
+  ];
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('s1', { queued });
+  agent.inbox.prependError = new Error('inbox unavailable');
+  await sleep(50);
+  const errors = await captureConsoleErrors(async () => {
+    await postAction(host, { action: 'resume', sessionId: 's1' });
+  });
+  check('调整失败被记录', errors.some(message => message.includes('调整续跑消息顺序失败')));
+  check('原用户消息仍先被领取', agent.claimed[0] === queued[0]);
+  check(
+    '续跑消息已回滚到队列且仅出现一次',
+    agent.inbox.nextTurn.length === 1 &&
+      agent.inbox.nextTurn[0]?.id === agent.followups[0]?.id,
+  );
   await sleep(50);
 }
 
@@ -2230,7 +2342,9 @@ const stepStart = (turn, step, seq) => ({
   const host = startPlugin({ scanOnBoot: false });
   const agent = host.makeAgent('s1');
   await sleep(50);
+  check('卸载前已注册 inbox listener', host.inboxListenerCount() === 1);
   host.replacePluginRow();
+  check('卸载后已注销 inbox listener', host.inboxListenerCount() === 0);
   host.setContextActive(false);
   let eventError;
   try {

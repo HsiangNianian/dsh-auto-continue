@@ -36,7 +36,9 @@ export declare class AutoContinueRunner {
     private readonly notices;
     private readonly noticeListeners;
     private readonly stateListeners;
+    private readonly prioritizedFollowups;
     private readonly disposeSessionEvents;
+    private readonly disposeInboxEvents;
     private disposed;
     /**
      * @param ctx - host plugin context (agents registry, session events, settings).
