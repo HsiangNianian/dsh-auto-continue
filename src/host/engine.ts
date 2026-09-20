@@ -197,7 +197,9 @@ export class AutoContinueRunner {
   private readonly notices: HostNotice[] = [];
   private readonly noticeListeners = new Set<() => void>();
   private readonly stateListeners = new Set<() => void>();
+  private readonly prioritizedFollowups = new Set<string>();
   private readonly disposeSessionEvents: () => void;
+  private readonly disposeInboxEvents: () => void;
   private disposed = false;
 
   /**
@@ -215,6 +217,37 @@ export class AutoContinueRunner {
       } catch (error) {
         console.error(
           `[auto-continue] 会话事件处理异常 ${session.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    });
+    // followup() appends before it wakes the driver. Move only this plugin's marked
+    // message during the synchronous insertion event, while the driver still cannot claim it.
+    this.disposeInboxEvents = ctx.on('agent/inbox/inserted', ({ agent, message }) => {
+      if (!this.prioritizedFollowups.delete(message.id)) return;
+      let removed = false;
+      try {
+        const index = agent.inbox.nextTurn.findIndex(pending => pending.id === message.id);
+        if (index <= 0) return;
+        removed = agent.inbox.remove(message.id);
+        if (!removed) return;
+        agent.inbox.prepend('next-turn', message);
+      } catch (error) {
+        // Preserve the continuation even if a host-side queue mutation rejects the move.
+        if (removed) {
+          try {
+            agent.inbox.append('next-turn', message);
+          } catch (rollbackError) {
+            console.error(
+              `[auto-continue] 恢复续跑消息失败 ${agent.id}: ${
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+              }`,
+            );
+          }
+        }
+        console.error(
+          `[auto-continue] 调整续跑消息顺序失败 ${agent.id}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -294,6 +327,8 @@ export class AutoContinueRunner {
     if (this.disposed) return;
     this.disposed = true;
     this.disposeSessionEvents();
+    this.disposeInboxEvents();
+    this.prioritizedFollowups.clear();
     for (const state of this.states.values()) {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
       if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
@@ -874,7 +909,7 @@ export class AutoContinueRunner {
         ? config.continueTextMaxTokens
         : config.continueText;
     const text = this.buildContinueText(config, state, template);
-    // 发送: agent.followup 是排队语义(运行中会排入 inbox, 不会打断), 天然安全
+    // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) {
       this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
@@ -888,11 +923,14 @@ export class AutoContinueRunner {
       });
       // `followup` may publish the matching session event synchronously.
       trackPendingEcho(state, message.id);
+      if (agent.inbox.nextTurn.length > 0) this.prioritizedFollowups.add(message.id);
       try {
         agent.followup(message);
       } catch (error) {
         forgetPendingEcho(state, message.id);
         throw error;
+      } finally {
+        this.prioritizedFollowups.delete(message.id);
       }
       const now = Date.now();
       state.consecutive += 1;
