@@ -25,6 +25,11 @@ export declare const zh: {
     'field.continueTextMaxTokens': string;
     'field.continueTextMaxTokensHint': string;
     'default.continueTextMaxTokens': "继续";
+    'field.resumeSilentTurns': string;
+    'field.resumeSilentTurnsHint': string;
+    'field.continueTextSilent': string;
+    'field.continueTextSilentHint': string;
+    'default.continueTextSilent': "继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。";
     'field.guardTools': string;
     'field.guardToolsHint': string;
     'field.guardPendingText': string;

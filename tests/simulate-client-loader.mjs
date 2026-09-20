@@ -134,6 +134,7 @@ assert.deepEqual(
     zh: {
       continueText: registeredDictionaries?.zh?.['default.continueText'],
       continueTextMaxTokens: registeredDictionaries?.zh?.['default.continueTextMaxTokens'],
+      continueTextSilent: registeredDictionaries?.zh?.['default.continueTextSilent'],
       guardPendingText: registeredDictionaries?.zh?.['default.guardPendingText'],
       guardDoneText: registeredDictionaries?.zh?.['default.guardDoneText'],
       loopText: registeredDictionaries?.zh?.['default.loopText'],
@@ -141,6 +142,7 @@ assert.deepEqual(
     en: {
       continueText: registeredDictionaries?.en?.['default.continueText'],
       continueTextMaxTokens: registeredDictionaries?.en?.['default.continueTextMaxTokens'],
+      continueTextSilent: registeredDictionaries?.en?.['default.continueTextSilent'],
       guardPendingText: registeredDictionaries?.en?.['default.guardPendingText'],
       guardDoneText: registeredDictionaries?.en?.['default.guardDoneText'],
       loopText: registeredDictionaries?.en?.['default.loopText'],
@@ -150,6 +152,8 @@ assert.deepEqual(
     zh: {
       continueText: '继续',
       continueTextMaxTokens: '继续',
+      continueTextSilent:
+        '继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。',
       guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)',
       guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)',
       loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
@@ -157,6 +161,8 @@ assert.deepEqual(
     en: {
       continueText: 'Continue',
       continueTextMaxTokens: 'Continue',
+      continueTextSilent:
+        'Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.',
       guardPendingText:
         '(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)',
       guardDoneText:

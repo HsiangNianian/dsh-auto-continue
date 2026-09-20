@@ -39,6 +39,8 @@ export interface AutoContinueSettingsCardState extends CardShell {
   paused: CardFieldState;
   continueText: CardFieldState;
   continueTextMaxTokens: CardFieldState;
+  resumeSilentTurns: CardFieldState;
+  continueTextSilent: CardFieldState;
   guardTools: CardFieldState;
   guardPendingText: CardFieldState;
   guardDoneText: CardFieldState;
@@ -84,6 +86,8 @@ export class AutoContinueSettingsCardController {
       booleanField('paused'),
       textField('continueText'),
       textField('continueTextMaxTokens'),
+      booleanField('resumeSilentTurns'),
+      textField('continueTextSilent'),
       booleanField('guardTools'),
       textField('guardPendingText'),
       textField('guardDoneText'),
@@ -116,6 +120,8 @@ export class AutoContinueSettingsCardController {
       paused: this.form.field('paused'),
       continueText: this.form.field('continueText'),
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
+      resumeSilentTurns: this.form.field('resumeSilentTurns'),
+      continueTextSilent: this.form.field('continueTextSilent'),
       guardTools: this.form.field('guardTools'),
       guardPendingText: this.form.field('guardPendingText'),
       guardDoneText: this.form.field('guardDoneText'),
@@ -578,6 +584,27 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
             onEdit={(text) => props.edit('continueTextMaxTokens', text)}
             placeholder={t('default.continueTextMaxTokens')}
             onReset={() => props.resetField('continueTextMaxTokens')}
+          />
+          <BooleanField
+            wide
+            id="auto-continue-resume-silent-turns"
+            label={t('field.resumeSilentTurns')}
+            hint={t('field.resumeSilentTurnsHint')}
+            {...shared}
+            {...state.resumeSilentTurns}
+            onEdit={(text) => props.edit('resumeSilentTurns', text)}
+            onReset={() => props.resetField('resumeSilentTurns')}
+          />
+          <ValueField
+            wide
+            id="auto-continue-continue-text-silent"
+            label={t('field.continueTextSilent')}
+            hint={t('field.continueTextSilentHint')}
+            {...shared}
+            {...state.continueTextSilent}
+            onEdit={(text) => props.edit('continueTextSilent', text)}
+            placeholder={t('default.continueTextSilent')}
+            onReset={() => props.resetField('continueTextSilent')}
           />
         </SettingsSection>
 

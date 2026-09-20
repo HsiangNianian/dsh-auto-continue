@@ -12,6 +12,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
     readonly zh: {
         readonly continueText: "继续";
         readonly continueTextMaxTokens: "继续";
+        readonly continueTextSilent: "继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。";
         readonly guardPendingText: "(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)";
         readonly guardDoneText: "(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)";
         readonly loopText: "(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)";
@@ -19,6 +20,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
     readonly en: {
         readonly continueText: "Continue";
         readonly continueTextMaxTokens: "Continue";
+        readonly continueTextSilent: "Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.";
         readonly guardPendingText: "(The previous tool \"{tool}\" may not have completed. Check its state before continuing and do not run it again.)";
         readonly guardDoneText: "(The previous tool \"{tool}\" completed successfully. Result: {result}; do not run it again. Continue from there.)";
         readonly loopText: "(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)";
@@ -32,6 +34,10 @@ export interface AutoContinueSettings {
     continueText?: string;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens?: string;
+    /** Resume a turn that ended normally with no visible output (reasoning only: no text, no tool call). */
+    resumeSilentTurns?: boolean;
+    /** Text sent to resume a silent turn (same placeholders as `continueText`). */
+    continueTextSilent?: string;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools?: boolean;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -88,7 +94,7 @@ export declare function resolveConfig(section: AutoContinueSettings | undefined)
 /**
  * 视为「非人为中断」的回合结束原因, 用于启动/重连扫描。
  * - `interrupted` 只由崩溃修复在宿主重载时写入(loop 永不实时发出), 因此仅在扫描路径处理;
- * - 实时事件路径只对 `error` / `max-tokens` 自动续跑;
+ * - 实时事件路径只对 `error` / `max-tokens` 自动续跑; 另外续跑没有可见输出的 `completed` / `no-visible-output` 回合(不属于本类型);
  * - `aborted`(用户停止)与 `blocked`(策略拒绝)永不自动继续。
  */
 type NonHumanReason = 'error' | 'interrupted' | 'max-tokens';
@@ -289,6 +295,8 @@ export interface SessionState {
     lastTurn: number | undefined;
     /** 我们最近一次自动发送的时间戳; 0 = 没有待确认的恢复。 */
     pendingRecoveryAt: number;
+    /** 当前回合的可见输出: 未见到 turn/start 时为 unknown; 出现非空文本或工具调用后为 visible。 */
+    turnOutput: 'unknown' | 'silent' | 'visible';
     /** 当前连续短句数(loop guard 信号 1: 空转)。 */
     shortRun: number;
     /** 最后一条短句的时间(时间窗判定用)。 */

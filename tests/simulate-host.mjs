@@ -2579,5 +2579,158 @@ const stepStart = (turn, step, seq) => ({
   await sleep(50);
 }
 
+// ---------- 测试 26: 无输出回合续跑 ----------
+const reasoningMsg = (seq, parts = [{ type: 'reasoning', text: 'thinking' }], turn = 1) => ({
+  type: 'assistant/message',
+  seq,
+  time: Date.now(),
+  data: { turn, step: 1, message: { role: 'assistant', content: parts } },
+});
+const SILENT_ZH = '继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。';
+{
+  console.log('测试 26a: 只有推理的 completed 回合 → 用无输出文本续跑');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('silent-a');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, reasoningMsg(5));
+  host.emit(agent.session, turnEnd(1, { kind: 'completed' }));
+  await sleep(600);
+  check('已发送一次', agent.followups.length === 1);
+  check('使用无输出回合默认文本', agent.followups[0]?.content?.[0]?.text === SILENT_ZH);
+  await sleep(50);
+}
+{
+  console.log('测试 26b: 有文本或工具调用的 completed 回合 → 不发送');
+  const host = startPlugin({ scanOnBoot: false });
+  const textAgent = host.makeAgent('silent-text');
+  const toolAgent = host.makeAgent('silent-tool-part');
+  const callAgent = host.makeAgent('silent-tool-event');
+  await sleep(50);
+  host.emit(textAgent.session, turnStart(1));
+  host.emit(
+    textAgent.session,
+    reasoningMsg(5, [
+      { type: 'reasoning', text: '...' },
+      { type: 'text', text: 'done' },
+    ]),
+  );
+  host.emit(textAgent.session, turnEnd(1, { kind: 'completed' }));
+  host.emit(toolAgent.session, turnStart(1));
+  host.emit(
+    toolAgent.session,
+    reasoningMsg(5, [{ type: 'tool-call', toolCallId: 'c1', toolName: 'read', input: {} }]),
+  );
+  host.emit(toolAgent.session, turnEnd(1, { kind: 'completed' }));
+  host.emit(callAgent.session, turnStart(1));
+  host.emit(callAgent.session, toolCall('read', 5));
+  host.emit(callAgent.session, reasoningMsg(6));
+  host.emit(callAgent.session, turnEnd(1, { kind: 'completed' }));
+  await sleep(600);
+  check('文本回合未发送', textAgent.followups.length === 0);
+  check('tool-call 内容回合未发送', toolAgent.followups.length === 0);
+  check('tool/call 事件回合未发送', callAgent.followups.length === 0);
+  await sleep(50);
+}
+{
+  console.log('测试 26c: 只有空白文本 → 视为无输出');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('silent-blank');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(
+    agent.session,
+    reasoningMsg(5, [
+      { type: 'reasoning', text: '...' },
+      { type: 'text', text: '  \n' },
+    ]),
+  );
+  host.emit(agent.session, turnEnd(1, { kind: 'completed' }));
+  await sleep(600);
+  check('空白文本回合已续跑', agent.followups.length === 1);
+  await sleep(50);
+}
+{
+  console.log('测试 26d: no-visible-output 结束原因 → 续跑(无需先见到 turn/start)');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('silent-kind');
+  await sleep(50);
+  host.emit(agent.session, turnEnd(1, { kind: 'no-visible-output' }));
+  await sleep(600);
+  check(
+    'no-visible-output 已续跑',
+    agent.followups.length === 1 && agent.followups[0]?.content?.[0]?.text === SILENT_ZH,
+  );
+  await sleep(50);
+}
+{
+  console.log('测试 26e: 插件在回合中途启动(未见 turn/start) → completed 不续跑');
+  const host = startPlugin({ scanOnBoot: false });
+  const agent = host.makeAgent('silent-midturn');
+  await sleep(50);
+  host.emit(agent.session, reasoningMsg(5));
+  host.emit(agent.session, turnEnd(1, { kind: 'completed' }));
+  await sleep(600);
+  check('回合输出未知时不续跑', agent.followups.length === 0);
+  await sleep(50);
+}
+{
+  console.log('测试 26f: resumeSilentTurns 关闭 → 两种结束原因都不续跑');
+  const host = startPlugin({ scanOnBoot: false, resumeSilentTurns: false });
+  const agent = host.makeAgent('silent-off');
+  await sleep(50);
+  host.emit(agent.session, turnStart(1));
+  host.emit(agent.session, reasoningMsg(5));
+  host.emit(agent.session, turnEnd(1, { kind: 'completed' }));
+  host.emit(agent.session, turnStart(2));
+  host.emit(agent.session, turnEnd(2, { kind: 'no-visible-output' }));
+  await sleep(600);
+  check('关闭后未发送', agent.followups.length === 0);
+  await sleep(50);
+}
+{
+  console.log('测试 26g: 连续无输出回合受连续上限约束, 有输出回合清零');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 30, cooldownMs: 0 });
+  const agent = host.makeAgent('silent-cap');
+  await sleep(50);
+  for (let turn = 1; turn <= 5; turn += 1) {
+    host.emit(agent.session, turnStart(turn));
+    host.emit(agent.session, reasoningMsg(turn * 10 - 5, undefined, turn));
+    host.emit(agent.session, turnEnd(turn, { kind: 'completed' }));
+    await sleep(120);
+  }
+  check('5 个无输出回合只续跑 3 次', agent.followups.length === 3);
+  host.emit(agent.session, turnStart(6));
+  host.emit(agent.session, reasoningMsg(55, [{ type: 'text', text: 'progress' }], 6));
+  host.emit(agent.session, turnEnd(6, { kind: 'completed' }));
+  host.emit(agent.session, turnStart(7));
+  host.emit(agent.session, reasoningMsg(65, undefined, 7));
+  host.emit(agent.session, turnEnd(7, { kind: 'completed' }));
+  await sleep(200);
+  check('有输出回合后重新允许续跑', agent.followups.length === 4);
+  await sleep(50);
+}
+{
+  console.log('测试 26h: 自定义文本与 English 默认文本');
+  const host = startPlugin({ scanOnBoot: false, continueTextSilent: 'Keep going, answer visibly' });
+  const custom = host.makeAgent('silent-custom');
+  const enHost = startPlugin({ scanOnBoot: false, locale: 'en' });
+  const english = enHost.makeAgent('silent-en');
+  await sleep(50);
+  host.emit(custom.session, turnStart(1));
+  host.emit(custom.session, turnEnd(1, { kind: 'completed' }));
+  enHost.emit(english.session, turnStart(1));
+  enHost.emit(english.session, turnEnd(1, { kind: 'completed' }));
+  await sleep(600);
+  check('使用自定义无输出文本', custom.followups[0]?.content?.[0]?.text === 'Keep going, answer visibly');
+  check(
+    '英文默认无输出文本',
+    english.followups[0]?.content?.[0]?.text?.startsWith(
+      'Continue. Your previous turn ended with internal reasoning only',
+    ) === true,
+  );
+  await sleep(50);
+}
+
 console.log(failures === 0 ? '\n全部通过 ✅' : `\n${failures} 项失败 ❌`);
 process.exit(failures === 0 ? 0 : 1);

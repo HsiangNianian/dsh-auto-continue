@@ -363,7 +363,10 @@ export class AutoContinueRunner {
     if (event.type === 'tool/call') {
       const state = this.state(sessionId);
       // 任何新鲜调用都代表进展（即使缺关联 id）；旧帧重放不能清短句 streak。
-      if (state.tools.recordCall(event)) state.shortRun = 0;
+      if (state.tools.recordCall(event)) {
+        state.shortRun = 0;
+        state.turnOutput = 'visible';
+      }
     } else if (event.type === 'tool/result') {
       const state = this.state(sessionId);
       state.tools.recordResult(event);
@@ -376,9 +379,19 @@ export class AutoContinueRunner {
       this.onAssistantChunk(sessionId, state, event);
     } else if (event.type === 'assistant/message') {
       const state = this.state(sessionId);
+      if (this.hasVisibleOutput(event)) state.turnOutput = 'visible';
       this.onAssistantMessage(sessionId, state, event);
     }
     this.onSessionEvent(sessionId, event);
+  }
+
+  /** assistant/message 是否带有可见输出: 非空文本或工具调用(推理不算)。 */
+  private hasVisibleOutput(event: SessionEvent<'assistant/message'>): boolean {
+    const content = event.data.message.content;
+    if (!Array.isArray(content)) return false;
+    return content.some(
+      (part) => part.type === 'tool-call' || (part.type === 'text' && part.text.trim() !== ''),
+    );
   }
 
   /** 从 assistant/message 事件提取纯文本。 */
@@ -601,6 +614,7 @@ export class AutoContinueRunner {
         state.streamLastSegment = '';
         state.streamRepeatRun = 0;
         state.loopFired = false;
+        state.turnOutput = 'silent';
         if (state.loopRetryTimer !== undefined) {
           clearTimeout(state.loopRetryTimer);
           state.loopRetryTimer = undefined;
@@ -612,10 +626,26 @@ export class AutoContinueRunner {
         const loopCancelPending = state.loopFired;
         state.loopFired = false;
         this.cancelPending(sessionId, '收到新的 turn/end');
+        const turnOutput = state.turnOutput;
+        state.turnOutput = 'unknown';
         const reason = event.data.reason;
         const reasonKind = readReasonKind(reason);
         if (reasonKind === undefined) {
           console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: reason 无法解释`);
+          break;
+        }
+        if (
+          (reasonKind === 'no-visible-output' || (reasonKind === 'completed' && turnOutput === 'silent')) &&
+          this.getConfig().resumeSilentTurns
+        ) {
+          // 回合正常结束却只有推理: 没有文本也没有工具调用, 用户看不到任何输出, 也没有机制续跑。
+          // 不清零 consecutive: 每轮都卡住的模型仍受冷却与连续上限约束。
+          // `no-visible-output` 是 DSH 为同一种回合提议的结束原因, 按同样方式处理。
+          state.lastFailure = undefined;
+          state.lastTurn = event.data.turn;
+          state.lastFailureAt = Date.now();
+          this.noteRecovery(sessionId, 'error');
+          this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
           break;
         }
         if (reasonKind === 'completed') {
@@ -862,14 +892,18 @@ export class AutoContinueRunner {
       }
     }, config.graceMs);
     state.pendingTimer = timer;
-    const template = reason.startsWith('loop:')
-      ? config.loopText
-      : reason.includes('max-tokens')
-        ? config.continueTextMaxTokens
-        : config.continueText;
+    const template = this.templateFor(config, reason);
     this.log(
       `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${template}」`,
     );
+  }
+
+  /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens, 其余用通用继续文本。 */
+  private templateFor(config: AutoContinueConfig, reason: string): string {
+    if (reason.startsWith('loop:')) return config.loopText;
+    if (reason.endsWith(':silent')) return config.continueTextSilent;
+    if (reason.includes('max-tokens')) return config.continueTextMaxTokens;
+    return config.continueText;
   }
 
   private cancelPending(sessionId: SessionId, why: string): void {
@@ -903,11 +937,7 @@ export class AutoContinueRunner {
       return;
     }
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
-    const template = reason.startsWith('loop:')
-      ? config.loopText
-      : reason.includes('max-tokens')
-        ? config.continueTextMaxTokens
-        : config.continueText;
+    const template = this.templateFor(config, reason);
     const text = this.buildContinueText(config, state, template);
     // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
