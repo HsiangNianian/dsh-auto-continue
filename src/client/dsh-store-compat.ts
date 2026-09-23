@@ -27,12 +27,12 @@ export interface SettingsScopeSnapshot<T> {
   mode: 'host' | 'memory';
 }
 
-/** Stable subset shared by the legacy and DSH 0.1.2 settings scopes. */
+/** Stable subset shared by settings scopes and DSH 0.1.7 configuration forms. */
 export interface SettingsScope<T> {
   getSnapshot(): SettingsScopeSnapshot<T>;
   subscribe(listener: () => void): () => void;
-  set(field: string, value: unknown): Promise<void>;
-  unset(field: string): Promise<void>;
+  set(field: string, value: unknown): Promise<void | boolean>;
+  unset(field: string): Promise<void | boolean>;
 }
 
 interface SnapshotStoreModule {

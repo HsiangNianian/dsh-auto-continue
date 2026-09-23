@@ -3,7 +3,7 @@
  *
  * Since 0.8.0 the auto-continue ENGINE runs inside the host process (single
  * instance — see src/host/engine.ts), so this half only:
- * - registers the `auto-continue` settings card (`settings.plugin.item`),
+ * - registers the `auto-continue` settings card in the available plugin UI,
  * - subscribes to the host status bridge (SSE) and shows browser
  *   notifications with action buttons (Resume now / Pause 1h) via the bridge
  *   action endpoint,
@@ -21,8 +21,10 @@ import { en, zh, type SettingsCardKey } from './locales.ts';
 import {
   AutoContinueSettingsCard,
   AutoContinueSettingsCardController,
+  AutoContinueSettingsPage,
 } from './settings-card.tsx';
 import { startBridge } from './bridge.ts';
+import type { SettingsScope } from './dsh-store-compat.ts';
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'auto-continue';
@@ -31,14 +33,27 @@ const NS = 'auto-continue';
 const SETTINGS_NS = 'auto-continue';
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    /** DSH 0.1.7's bundle configuration seat; only the owner props we consume. */
+    'plugins.bundle.config': {
+      kind: 'keyed';
+      scope: 'root';
+      owner: { readonly view: 'summary' | 'page' };
+    };
+  }
   interface LocaleNamespaceMap {
     /** auto-continue settings-card copy. */
     'auto-continue': SettingsCardKey;
   }
 }
 
-/** Services required by this plugin. */
-export const inject = ['slots', 'locale', 'settingsScope'];
+/** Shared subset of DSH 0.1.7's provider, without a new runtime dependency. */
+type ConfigFormsContext = ClientContext & {
+  configForms: { get<T>(entryId: string): SettingsScope<T> };
+};
+
+/** Settings services are injected separately: neither exists in every DSH cohort. */
+export const inject = ['slots', 'locale'];
 
 // 浏览器侧辅助(设置卡片用): 桥状态读取与暂停解除。
 export {
@@ -55,8 +70,22 @@ export {
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'auto-continue: dictionaries');
+  ctx.effect(() => startBridge(), 'auto-continue: host bridge');
 
-  const scope = ctx.settingsScope.bind<AutoContinueSettings>({ namespace: SETTINGS_NS });
+  // Cordis waits for ALL top-level dependencies. Requiring settingsScope here
+  // would leave DSH 0.1.7 pending forever; requiring configForms breaks older
+  // hosts. Separate child fibers also follow late providers and their teardown.
+  ctx.inject(['settingsScope'], (settingsCtx) => {
+    mountSettings(settingsCtx, settingsCtx.settingsScope.bind<AutoContinueSettings>({ namespace: SETTINGS_NS }));
+  });
+  ctx.inject(['configForms'], (settingsCtx) => {
+    const forms = (settingsCtx as ConfigFormsContext).configForms;
+    mountSettings(settingsCtx, forms.get<AutoContinueSettings>(SETTINGS_NS));
+  });
+}
+
+/** Attach this consumer's subscriptions and card to the provider's lifecycle. */
+function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSettings>): void {
   /**
    * Mirror the browser locale into the host config, with a hard per-page budget.
    *
@@ -105,15 +134,11 @@ export function apply(ctx: ClientContext): void {
   ctx.on('locale/change', syncLocale);
   syncLocale();
 
-  // 状态桥: 订阅 host 的通知与运行时状态, 弹浏览器通知并驱动卡片面板。
-  ctx.effect(() => startBridge(), 'auto-continue: host bridge');
-
-  // Plugin configuration card: one staged form over the `auto-continue`
-  // settings namespace, contributed to the plugin-configuration section
-  // (Settings → Plugins). Since DSH 0.1.0-rc.7 `settings.plugin.item` is a
-  // keyed slot dispatched by the settings namespace it edits, so the entry
-  // registers with `key` (the namespace), like the official cards.
   const controller = new AutoContinueSettingsCardController(scope);
+  ctx.effect(() => () => controller.dispose(), 'auto-continue: settings form');
+
+  // Slot injection waits for the matching UI declaration. Keep the old
+  // settings card and the new bundle page independent of service migration.
   ctx.slots.inject('settings.plugin.item', () =>
     ctx.slots.register(
       {
@@ -123,6 +148,17 @@ export function apply(ctx: ClientContext): void {
         inject: () => controller.inject(),
       },
       AutoContinueSettingsCard,
+    ),
+  );
+  ctx.slots.inject('plugins.bundle.config', () =>
+    ctx.slots.register(
+      {
+        name: 'plugins.bundle.config',
+        key: 'dsh-client-auto-continue',
+        locale: NS,
+        inject: () => controller.inject(),
+      },
+      AutoContinueSettingsPage,
     ),
   );
 }

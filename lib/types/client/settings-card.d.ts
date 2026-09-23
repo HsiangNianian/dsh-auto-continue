@@ -1,4 +1,4 @@
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
+import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import { type AutoContinueSettings } from './engine.ts';
 import { type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
 import { type CardActions, type CardFieldState, type CardShell } from './settings-form.ts';
@@ -51,9 +51,13 @@ export declare class AutoContinueSettingsCardController {
      * @returns the card's snapshot and its form actions.
      */
     inject(): AutoContinueSettingsCardFace;
+    /** Release this card's subscription to the provider-owned settings form. */
+    dispose(): void;
 }
 /** Props the renderer binds for the auto-continue plugin-configuration card. */
-export type AutoContinueSettingsCardProps = PropsRuntime<'settings.plugin.item'> & PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
+export type AutoContinueSettingsCardProps = PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
+/** The bundle page supplies no list container, unlike the legacy settings slot. */
+export declare function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps): import("react").JSX.Element;
 /**
  * Render the auto-continue card.
  * @param props - locale copy, the card snapshot, and its form actions.

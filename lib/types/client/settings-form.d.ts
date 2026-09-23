@@ -84,6 +84,7 @@ export declare class CardForm<T> {
     private readonly specs;
     private readonly staged;
     private readonly listeners;
+    private readonly unsubscribe;
     private saving;
     private failed;
     /**
@@ -91,6 +92,8 @@ export declare class CardForm<T> {
      * @param specs - the section fields this card edits.
      */
     constructor(scope: SettingsScope<T>, specs: CardFieldSpec[]);
+    /** Release this editor's listeners without disposing the provider's shared form. */
+    dispose(): void;
     /** Publish a projection of this form, rebuilt whenever the scope or a draft changes. */
     bind<S>(project: () => S, createStore: (init: S) => SnapshotStore<S>): SnapshotStore<S>;
     /** Read the card-level state: what the Host serves, and what a save would do. */

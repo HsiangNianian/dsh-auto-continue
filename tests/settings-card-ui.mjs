@@ -85,6 +85,9 @@ let Card;
 let face;
 let dictionaries;
 const ctx = {
+  inject(deps, mount) {
+    if (deps.every((name) => this[name])) mount(this);
+  },
   effect(start) {
     return start();
   },
@@ -98,7 +101,7 @@ const ctx = {
   on: () => () => {},
   settingsScope: { bind: () => scope },
   slots: {
-    inject: (_name, mount) => mount(),
+    inject: (name, mount) => name === 'settings.plugin.item' ? mount() : () => {},
     register(spec, component) {
       Card = component;
       face = spec.inject();

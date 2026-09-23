@@ -165,6 +165,9 @@ function openClient(exports, world, active, options = {}) {
     async unset() {},
   };
   exports.apply({
+    inject(deps, mount) {
+      if (deps.every((name) => this[name])) mount(this);
+    },
     effect: (start) => start(),
     locale: {
       getLocale: () => ({ active: page.active, locales: [], revision: 0 }),
@@ -172,7 +175,10 @@ function openClient(exports, world, active, options = {}) {
     },
     on: () => () => {},
     settingsScope: { bind: () => scope },
-    slots: { inject: (_name, mount) => mount(), register: () => () => {} },
+    slots: {
+      inject: (name, mount) => name === 'settings.plugin.item' ? mount() : () => {},
+      register: () => () => {},
+    },
   });
   return page;
 }

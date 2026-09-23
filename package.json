@@ -1,7 +1,7 @@
 {
   "name": "dsh-client-auto-continue",
   "description": "DSH Web UI plugin: automatically sends a localized continue prompt when a request is interrupted by network errors or other non-human causes",
-  "version": "0.11.7",
+  "version": "0.11.8",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -46,7 +46,7 @@
     "build": "node build.mjs && tsc -p tsconfig.build.json",
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/locale-mirror-bounded.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
+    "test": "node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/client-settings-services.mjs && node tests/locale-mirror-bounded.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
     "prepack": "npm run build"
   },
   "keywords": [

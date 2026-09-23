@@ -128,6 +128,7 @@ export class CardForm<T> {
   private readonly specs: Map<string, CardFieldSpec>;
   private readonly staged = new Map<string, StagedEdit>();
   private readonly listeners = new Set<() => void>();
+  private readonly unsubscribe: () => void;
   private saving = false;
   private failed = false;
 
@@ -140,7 +141,13 @@ export class CardForm<T> {
     specs: CardFieldSpec[],
   ) {
     this.specs = new Map(specs.map((spec) => [spec.field, spec]));
-    this.scope.subscribe(() => this.publish());
+    this.unsubscribe = this.scope.subscribe(() => this.publish());
+  }
+
+  /** Release this editor's listeners without disposing the provider's shared form. */
+  dispose(): void {
+    this.unsubscribe();
+    this.listeners.clear();
   }
 
   /** Publish a projection of this form, rebuilt whenever the scope or a draft changes. */

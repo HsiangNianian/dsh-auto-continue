@@ -1,6 +1,6 @@
 /**
  * The auto-continue settings card: edits the `auto-continue` namespace fields
- * from the plugin-configuration section (the `settings.plugin.item` seat).
+ * from the legacy settings section or the bundle's plugin-manager page.
  *
  * Self-contained card chrome (disclosure header, staged fields, save/discard
  * footer) following the plugin-card store pattern of the DSH plugin
@@ -8,7 +8,7 @@
  * tokens so the card follows the active theme.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
+import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import { type AutoContinueSettings } from './engine.ts';
 import { createSnapshotStore, type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
 import {
@@ -148,11 +148,25 @@ export class AutoContinueSettingsCardController {
   inject(): AutoContinueSettingsCardFace {
     return { hooks: { autoContinueSettingsCard: this.store }, ...this.form.actions() };
   }
+
+  /** Release this card's subscription to the provider-owned settings form. */
+  dispose(): void {
+    this.form.dispose();
+  }
 }
 
 /** Props the renderer binds for the auto-continue plugin-configuration card. */
 export type AutoContinueSettingsCardProps =
-  PropsRuntime<'settings.plugin.item'> & PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
+  PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
+
+/** The bundle page supplies no list container, unlike the legacy settings slot. */
+export function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps) {
+  return (
+    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+      <AutoContinueSettingsCard {...props} />
+    </ul>
+  );
+}
 
 const REPOSITORY_URL = 'https://github.com/HsiangNianian/dsh-auto-continue';
 const REPOSITORY_SLUG = 'HsiangNianian/dsh-auto-continue';

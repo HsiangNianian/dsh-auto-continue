@@ -101,6 +101,9 @@ const localeHandlers = new Set();
 let registeredDictionaries;
 let activeLocale = 'en';
 const ctx = {
+  inject(deps, mount) {
+    if (deps.every((name) => this[name])) mount(this);
+  },
   effect(start) {
     return start();
   },
@@ -117,7 +120,7 @@ const ctx = {
   },
   settingsScope: { bind: () => scope },
   slots: {
-    inject: (_name, mount) => mount(),
+    inject: (name, mount) => name === 'settings.plugin.item' ? mount() : () => {},
     register: () => () => {},
   },
 };

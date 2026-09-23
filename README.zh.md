@@ -83,6 +83,8 @@ DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。安装后重�
 
 > **请使用最新 DSH(推荐 0.1.2-alpha.4 或更高版本)。** 安装前先运行 `dsh --version`。插件 v0.11.1 已支持 DSH 0.1.2-alpha.2+ 使用的设置 API(包括 alpha.3 和 alpha.4), 同时继续兼容 DSH 0.1.0-rc.7 至 0.1.1; rc.6 及更早版本仍不支持(`list slot ... requires options.id`)。预览版可能先发布在 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases), 公开 npm 标签会稍后跟进。
 
+插件 v0.11.8 也已支持 DSH 0.1.7-alpha.2 的 `configForms` API。新版从 **插件 → dsh-client-auto-continue** 进入设置, 旧版仍从 **设置 → 插件** 进入。此适配修复了新版启动时的 `pending (waiting for service: settingsScope)` 错误。
+
 ### 从 npm 安装(推荐)
 
 已发布为 [`dsh-client-auto-continue`](https://www.npmjs.com/package/dsh-client-auto-continue):
@@ -266,7 +268,7 @@ npm run test        # node tests/simulate-host.mjs — 15 个 host 侧行为场�
 
 `npm run watch` 运行时, profile 的 client-hmr 行每 500ms 轮询 `lib/client.js` 并在浏览器中热重载插件——改代码无需重启服务。
 
-CI 会按锁文件安装依赖, 执行类型检查、重新构建并核对已提交产物, 跑 host 与双模块布局 client 模拟测试, 最后运行 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check); 发布也受同一体检门禁约束。
+CI 会按锁文件安装依赖, 执行类型检查、重新构建并核对已提交产物, 跑 host 与 client 模拟测试(包括通过 Cordis 加载旧版 settings scope 和 DSH 0.1.7 configuration form), 最后运行 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check); 发布也受同一体检门禁约束。
 
 ---
 

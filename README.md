@@ -83,6 +83,8 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, r
 
 > **Use the latest DSH (recommended: 0.1.2-alpha.4 or newer).** Run `dsh --version` before installing. Plugin v0.11.1 supports the settings API used by DSH 0.1.2-alpha.2+ (including alpha.3 and alpha.4) while retaining compatibility with DSH 0.1.0-rc.7 through 0.1.1; rc.6 and earlier remain unsupported (`list slot ... requires options.id`). Preview releases may appear on the [official DSH releases page](https://github.com/deepseek-ai/deepseek-harness/releases) before the public npm tag catches up.
 
+Plugin v0.11.8 also supports DSH 0.1.7-alpha.2's `configForms` API. Open **Plugins → dsh-client-auto-continue** for its settings; older DSH versions retain **Settings → Plugins**. This fixes the startup error `pending (waiting for service: settingsScope)` on the newer API.
+
 ### From npm (recommended)
 
 Published as [`dsh-client-auto-continue`](https://www.npmjs.com/package/dsh-client-auto-continue):
@@ -266,7 +268,7 @@ npm run test        # node tests/simulate-host.mjs — 15 host-side behavioral s
 
 While `npm run watch` runs, the profile's client-hmr row polls `lib/client.js` every 500 ms and hot-reloads the plugin in the browser — no server restart needed for code changes.
 
-CI installs from the lockfile, typechecks, rebuilds and verifies committed artifacts, runs the host and dual-layout client simulations, then runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check). The same health check gates releases.
+CI installs from the lockfile, typechecks, rebuilds and verifies committed artifacts, runs the host and client simulations (including legacy settings scopes and DSH 0.1.7 configuration forms through Cordis), then runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check). The same health check gates releases.
 
 ---
 
