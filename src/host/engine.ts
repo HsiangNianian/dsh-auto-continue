@@ -1032,7 +1032,7 @@ export class AutoContinueRunner {
    */
   private async scanInterrupted(): Promise<boolean> {
     const config = this.getConfig();
-    if (config.paused) return true; // 全局暂停: 不做任何扫描
+    if (config.paused) return false; // 全局暂停: 不做任何扫描, 但保持循环以便解停后恢复
     // 只扫 live agents(host 重启后 agent-loop 会 resume 崩溃会话, 冷会话无需处理)
     const now = Date.now();
     const candidates: {
@@ -1109,7 +1109,7 @@ export class AutoContinueRunner {
         this.schedule(candidate.sessionId, scanReason);
       }
     }
-    return true;
+    return false;
   }
 
   /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
