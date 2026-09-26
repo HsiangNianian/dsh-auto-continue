@@ -83,6 +83,8 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, r
 
 > **Use the latest DSH (recommended: 0.1.2-alpha.4 or newer).** Run `dsh --version` before installing. Plugin v0.11.1 supports the settings API used by DSH 0.1.2-alpha.2+ (including alpha.3 and alpha.4) while retaining compatibility with DSH 0.1.0-rc.7 through 0.1.1; rc.6 and earlier remain unsupported (`list slot ... requires options.id`). Preview releases may appear on the [official DSH releases page](https://github.com/deepseek-ai/deepseek-harness/releases) before the public npm tag catches up.
 
+Plugin v0.11.9 drops the host engine's dependency on the legacy `settings` register/get namespace: entry config is injected directly via `apply(ctx, config)` and merged with schema defaults, fixing the host-half startup failure on the newer settings API (the client's `configForms` support is unchanged).
+
 Plugin v0.11.8 also supports DSH 0.1.7-alpha.2's `configForms` API. Open **Plugins → dsh-client-auto-continue** for its settings; older DSH versions retain **Settings → Plugins**. This fixes the startup error `pending (waiting for service: settingsScope)` on the newer API.
 
 ### From npm (recommended)
