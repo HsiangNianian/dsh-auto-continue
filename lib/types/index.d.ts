@@ -1,8 +1,9 @@
 /**
  * Host half of the auto-continue plugin.
  *
- * - Registers the `auto-continue` settings namespace (the browser half's
- *   settings card edits it; the host engine reads it).
+ * - Configuration is this entry's own Loader config: `apply(ctx, config)`
+ *   injects it into the engine, where `resolveConfig` merges it with the
+ *   schema defaults (the browser half's settings card writes the same values).
  * - Runs the single-instance auto-continue engine: listens to the session
  *   event firehose, sends via `agent.followup`, cancels via `agent.cancel`.
  * - Serves a status bridge the browser half subscribes to: notifications and
@@ -11,6 +12,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type AutoContinueSettings } from './shared/core.ts';
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export declare const AUTO_CONTINUE_NS = "auto-continue";
 /** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
@@ -122,8 +124,13 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopText: z<string, string>;
 }>>;
 /**
- * Plugin body: register the settings namespace, start the single-instance
- * engine, and serve the status bridge.
+ * Plugin body: start the single-instance engine and serve the status bridge.
+ *
+ * Configuration comes from this entry's own Loader config (merged with the
+ * schema defaults by `resolveConfig`); the current harness exposes entry
+ * config through the settings service instead of the legacy `register`/`get`
+ * namespace API this plugin was originally written against.
  * @param ctx - host plugin context.
+ * @param config - this entry's config (may be partial / absent → defaults).
  */
-export declare function apply(ctx: Context): void;
+export declare function apply(ctx: Context, config?: AutoContinueSettings): void;

@@ -6,10 +6,11 @@
  * bugs (issue #13) cannot exist by construction. Listens to the session event
  * firehose (`session/event`), sends through the agent registry
  * (`agent.followup`), cancels through `agent.cancel`, and reads configuration
- * from the settings service.
+ * injected by the entry (`apply`'s config argument, merged with schema
+ * defaults by `resolveConfig`).
  *
- * All behavior is driven by the `auto-continue` settings namespace (see the
- * plugin's settings card); every knob below is user-configurable there.
+ * All behavior is driven by the `auto-continue` entry config; every knob below
+ * is user-configurable there.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
@@ -41,8 +42,8 @@ export declare class AutoContinueRunner {
     private readonly disposeInboxEvents;
     private disposed;
     /**
-     * @param ctx - host plugin context (agents registry, session events, settings).
-     * @param getConfig - read the current resolved configuration (settings service).
+     * @param ctx - host plugin context (agents registry, session events).
+     * @param getConfig - read the current resolved configuration (entry config).
      */
     constructor(ctx: Context, getConfig: () => AutoContinueConfig);
     private log;

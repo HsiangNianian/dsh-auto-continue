@@ -1,8 +1,9 @@
 /**
  * Host half of the auto-continue plugin.
  *
- * - Registers the `auto-continue` settings namespace (the browser half's
- *   settings card edits it; the host engine reads it).
+ * - Configuration is this entry's own Loader config: `apply(ctx, config)`
+ *   injects it into the engine, where `resolveConfig` merges it with the
+ *   schema defaults (the browser half's settings card writes the same values).
  * - Runs the single-instance auto-continue engine: listens to the session
  *   event firehose, sends via `agent.followup`, cancels via `agent.cancel`.
  * - Serves a status bridge the browser half subscribes to: notifications and
