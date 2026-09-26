@@ -58,7 +58,7 @@ try {
 
   const loaded = await import(pathToFileURL(join(fixtureRoot, 'pkg', 'index.js')).href);
   assert.equal(typeof loaded.apply, 'function');
-  console.log('Host bundle supports DSH settings alpha.2+ export surface ✅');
+  console.log('Host bundle loads without a dependency on the legacy settings surface ✅');
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });
 }

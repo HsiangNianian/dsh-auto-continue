@@ -6,10 +6,11 @@
  * bugs (issue #13) cannot exist by construction. Listens to the session event
  * firehose (`session/event`), sends through the agent registry
  * (`agent.followup`), cancels through `agent.cancel`, and reads configuration
- * from the settings service.
+ * injected by the entry (`apply`'s config argument, merged with schema
+ * defaults by `resolveConfig`).
  *
- * All behavior is driven by the `auto-continue` settings namespace (see the
- * plugin's settings card); every knob below is user-configurable there.
+ * All behavior is driven by the `auto-continue` entry config; every knob below
+ * is user-configurable there.
  */
 
 import type { Context } from '@deepseek-ai/cordis';
@@ -203,8 +204,8 @@ export class AutoContinueRunner {
   private disposed = false;
 
   /**
-   * @param ctx - host plugin context (agents registry, session events, settings).
-   * @param getConfig - read the current resolved configuration (settings service).
+   * @param ctx - host plugin context (agents registry, session events).
+   * @param getConfig - read the current resolved configuration (entry config).
    */
   constructor(
     private readonly ctx: Context,
@@ -650,7 +651,7 @@ export class AutoContinueRunner {
                 } catch (error) {
                   console.error(`[auto-continue] loop 重启异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
                 }
-              }, remaining);
+              }, remaining + 10); // +10ms: the schedule re-check compares Date.now() against the cooldown; a 1ms wall-clock step can otherwise make it read just under, silently dropping the restart
               this.log(`loop 重启延迟 ${remaining}ms(冷却期) ${sessionId}`);
             } else {
               this.schedule(sessionId, 'loop:aborted');
@@ -1060,6 +1061,12 @@ export class AutoContinueRunner {
       (left, right) =>
         right.lastActivityAt - left.lastActivityAt || left.listIndex - right.listIndex,
     );
+    // Host readiness does not imply conversation readiness: the browser resumes
+    // sessions on demand (typert lookup), so agents.list() may still be empty
+    // right after a restart. An empty pass is not a completed scan, so keep
+    // polling every 3s until a pass actually sees a live session (only then can
+    // the interrupted marker be picked up).
+    if (candidates.length === 0) return false;
     for (const candidate of candidates.slice(0, config.scanLimit)) {
       if (this.disposed) return true;
       const state = this.state(candidate.sessionId);

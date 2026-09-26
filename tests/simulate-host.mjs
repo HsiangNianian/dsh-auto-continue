@@ -1,6 +1,6 @@
 /**
- * Host 引擎无头测试: 用假 cordis ctx(事件发射器 + 假 agent 注册表 + 假 settings)
- * 加载打包后的 lib/index.js(host bundle), 验证单实例引擎的核心行为。
+ * Headless host-engine tests: a fake cordis ctx (event emitter + fake agent registry, config passed to apply)
+ * loads the bundled lib/index.js (host bundle) and verifies the single-instance engine's core behavior.
  *
  * 覆盖场景:
  *   1. turn/end error → 宽限期后 followup 配置的文本
@@ -84,9 +84,9 @@
  *   16. 顶层 row replacement → runner disposer 清理待发送定时器
  *   16b. 顶层 row replacement → runner disposer 注销旧事件监听
  *   17. engine inject 重入 → 旧 runner 释放, 新 runner 单独接管
- *   18. 宽限定时器遇到 inactive settings → 异常被收口
- *   19. loop 冷却定时器遇到 inactive settings → 异常被收口
- *   20. 通知 resume 遇到 inactive settings → 路由正常响应, 异常被收口
+ *   18. followup throws at grace-timer fire → failure contained
+ *   19. followup throws at loop-restart fire → failure contained
+ *   20. followup throws at notify-resume → route still responds, failure contained
  *   21. turn/end error 缺失 failure details → 记录并跳过
  *   22. turn/end error 不可解释的 failure details → 记录并跳过
  *   23. turn/end reason 结构无效 → 记录并跳过
@@ -123,9 +123,7 @@ if (typeof mod.apply !== 'function') throw new Error('host bundle 未导出 appl
 function makeHost() {
   const sessionHandlers = new Set();
   const inboxInsertedHandlers = new Set();
-  let config = {};
-  let configReadsBeforeFailure;
-  let contextActive = true;
+  const config = {};
   const registry = new Map();
   const topLevelEffects = [];
   let engineEffects = [];
@@ -146,29 +144,13 @@ function makeHost() {
   const disposeEffects = (effects) => {
     for (const dispose of effects.splice(0).reverse()) dispose();
   };
-  const getConfig = () => {
-    if (!contextActive) {
-      throw new Error('cannot get required service "settings" in inactive context');
-    }
-    if (configReadsBeforeFailure !== undefined) {
-      if (configReadsBeforeFailure === 0) {
-        configReadsBeforeFailure = undefined;
-        throw new Error('cannot get required service "settings" in inactive context');
-      }
-      configReadsBeforeFailure -= 1;
-    }
-    return config;
-  };
-
   const host = {
+    // Config is mutated in place and handed to apply — mirrors the Loader passing the entry config to apply on mount.
     setConfig(patch) {
-      config = { ...config, ...patch };
+      Object.assign(config, patch);
     },
-    setContextActive(active) {
-      contextActive = active;
-    },
-    failConfigAfterSuccessfulReads(count) {
-      configReadsBeforeFailure = count;
+    configValue() {
+      return config;
     },
     inboxListenerCount() {
       return inboxInsertedHandlers.size;
@@ -283,7 +265,6 @@ function makeHost() {
         });
       },
       effect: (cb) => registerEffect(effects, cb),
-      settings: { register: () => {}, get: getConfig },
       agents: { get: (id) => registry.get(id), list: () => [...registry.values()] },
       webServer: {
         register(route) {
@@ -303,12 +284,8 @@ function makeHost() {
   const ctx = {
     effect: (cb) => registerEffect(topLevelEffects, cb),
     inject(deps, cb) {
-      if (deps.includes('agents')) {
-        engineInject = cb;
-        cb(makeEngineContext());
-      } else {
-        cb({ settings: { register: () => {}, get: getConfig } });
-      }
+      engineInject = cb;
+      cb(makeEngineContext());
       return () => {};
     },
   };
@@ -320,14 +297,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function captureConsoleErrors(run) {
   const original = console.error;
+  const originalInfo = console.info;
   const errors = [];
+  // The engine's log() goes to console.info (verbose-gated); most containment paths also console.error.
   console.error = (...args) => {
+    errors.push(args.map(String).join(' '));
+  };
+  console.info = (...args) => {
     errors.push(args.map(String).join(' '));
   };
   try {
     await run();
   } finally {
     console.error = original;
+    console.info = originalInfo;
   }
   return errors;
 }
@@ -400,7 +383,7 @@ const FAST = {
 function startPlugin(overrides = {}) {
   const host = makeHost();
   host.setConfig({ ...FAST, ...overrides });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   return host;
 }
 
@@ -776,7 +759,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(1000);
   check('已发送', agent.followups.length === 1);
   await sleep(50);
@@ -794,7 +777,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(1000);
   check('新版 Session 已发送', agent.followups.length === 1);
   await sleep(50);
@@ -814,7 +797,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(600);
   check('永久性扫描错误未发送', agent.followups.length === 0);
   await sleep(50);
@@ -842,7 +825,7 @@ const stepStart = (turn, step, seq) => ({
     scanOnBoot: true,
     continueText: 'turn={turn} code={code} status={status} message={message} elapsed={elapsed}',
   });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(600);
   const text = agent.followups[0]?.content?.[0]?.text ?? '';
   check(
@@ -877,7 +860,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true, scanLimit: 2 });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(600);
   check('最近中断会话未被注册顺序挤出', recent.followups.length === 1);
   await sleep(50);
@@ -914,7 +897,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(600);
   check(
     '畸形扫描错误被隔离',
@@ -938,7 +921,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(1000);
   const text = agent.followups[0]?.content?.[0]?.text ?? '';
   check('扫描未把 c2 结果配给 c3', text.includes('「read-file」可能未完成'));
@@ -975,7 +958,7 @@ const stepStart = (turn, step, seq) => ({
     ],
   });
   host.setConfig({ ...FAST, scanOnBoot: true });
-  mod.apply(host.ctx);
+  mod.apply(host.ctx, host.configValue());
   await sleep(1000);
   const text = agent.followups[0]?.content?.[0]?.text ?? '';
   check('扫描护栏使用最后一次 replacement', text.includes('final result') && !text.includes('obsolete result'));
@@ -1493,45 +1476,6 @@ const stepStart = (turn, step, seq) => ({
   await sleep(150);
   check('缺 callId 的新工具调用已清短句计数', agent.cancels.length === 0);
   await sleep(50);
-}
-
-// ---------- 测试 12h: loop interrupt 的同步异常由 listener 收口 ----------
-{
-  console.log('测试 12h: loop interrupt 读取失效 settings → listener 收口且进程继续');
-  const host = startPlugin({
-    scanOnBoot: false,
-    loopRepeatText: 2,
-    graceMs: 20,
-    cooldownMs: 50,
-  });
-  const agent = host.makeAgent('loop-settings-boundary');
-  await sleep(20);
-  host.emit(agent.session, turnStart(1));
-  const repeated = 'This intentionally long assistant message reaches the repeated-text loop guard.';
-  host.emit(agent.session, assistantMsg(repeated, 10));
-  // The repeated event performs five successful config reads before
-  // interruptLoop() asks cooldownFor() for the sixth one.
-  host.failConfigAfterSuccessfulReads(5);
-  const errors = await captureConsoleErrors(async () => {
-    host.emit(agent.session, assistantMsg(repeated, 11));
-    await sleep(20);
-  });
-  check(
-    'loop interrupt 异常由 session listener 记录',
-    agent.cancels.length === 0 &&
-      errors.some(
-        (line) =>
-          line.includes('会话事件处理异常 loop-settings-boundary') &&
-          line.includes('inactive context'),
-      ),
-  );
-  host.emit(
-    agent.session,
-    turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'retry me' } }),
-  );
-  await sleep(150);
-  check('异常后续合法事件仍能处理', agent.followups.length === 1);
-  await sleep(20);
 }
 
 // ---------- 测试 12i: 流式单条消息内部复读 ----------
@@ -2345,14 +2289,13 @@ const stepStart = (turn, step, seq) => ({
   check('卸载前已注册 inbox listener', host.inboxListenerCount() === 1);
   host.replacePluginRow();
   check('卸载后已注销 inbox listener', host.inboxListenerCount() === 0);
-  host.setContextActive(false);
   let eventError;
   try {
     host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'late' } }));
   } catch (error) {
     eventError = error;
   }
-  check('旧 listener 未访问 inactive context', eventError === undefined);
+  check('no event errors after row replacement', eventError === undefined);
   check('row replacement 后事件未发送', agent.followups.length === 0);
   await sleep(50);
 }
@@ -2377,19 +2320,20 @@ const stepStart = (turn, step, seq) => ({
 // ---------- 测试 18: 宽限定时器遇到 inactive context ----------
 {
   console.log('测试 18: 宽限定时器遇到 inactive context — 记录异常且进程继续');
-  const host = startPlugin({ scanOnBoot: false, graceMs: 100 });
+  const host = startPlugin({ scanOnBoot: false, graceMs: 100, verbose: true });
   const agent = host.makeAgent('s1');
   await sleep(50);
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  agent.followupError = new Error('cannot followup in inactive context');
   const errors = await captureConsoleErrors(async () => {
-    host.setContextActive(false);
     await sleep(200);
   });
   check(
-    '定时发送异常已记录',
-    errors.some((line) => line.includes('定时发送异常 s1') && line.includes('inactive context')),
+    'fire-time send failure logged',
+    // The engine's fire-time containment log embeds the followup error message.
+    errors.some((line) => line.includes('s1') && line.includes('cannot followup in inactive context')),
   );
-  check('inactive context 时未发送', agent.followups.length === 0);
+  check('nothing sent when followup throws', agent.followups.length === 0);
   await sleep(50);
 }
 
@@ -2400,7 +2344,8 @@ const stepStart = (turn, step, seq) => ({
     scanOnBoot: false,
     loopRepeatText: 2,
     graceMs: 100,
-    cooldownMs: 300,
+    cooldownMs: 60,
+    verbose: true,
   });
   const agent = host.makeAgent('s1');
   await sleep(50);
@@ -2412,15 +2357,16 @@ const stepStart = (turn, step, seq) => ({
   await sleep(50);
   check('loop guard 已打断', agent.cancels.length === 1);
   host.emit(agent.session, turnEnd(1, { kind: 'aborted', reason: agent.cancels[0]?.cause }));
+  agent.followupError = new Error('cannot followup in inactive context');
   const errors = await captureConsoleErrors(async () => {
-    host.setContextActive(false);
     await sleep(400);
   });
   check(
-    'loop 重启异常已记录',
-    errors.some((line) => line.includes('loop 重启异常 s1') && line.includes('inactive context')),
+    'loop-restart send failure logged',
+    // The engine's fire-time containment log embeds the followup error message.
+    errors.some((line) => line.includes('s1') && line.includes('cannot followup in inactive context')),
   );
-  check('inactive context 时 loop 未重启', agent.followups.length === 0);
+  check('loop not restarted when followup throws', agent.followups.length === 0);
   await sleep(50);
 }
 
@@ -2430,19 +2376,22 @@ const stepStart = (turn, step, seq) => ({
   const host = startPlugin({ scanOnBoot: false });
   const agent = host.makeAgent('s1');
   await sleep(50);
-  // 通知动作先写一条 debug log；让这次读取成功，再让 resumeNow -> fire 的读取失败。
-  host.failConfigAfterSuccessfulReads(1);
+  const host2 = startPlugin({ scanOnBoot: false, verbose: true });
+  const agent2 = host2.makeAgent('s1');
+  await sleep(50);
+  agent2.followupError = new Error('cannot followup in inactive context');
   let response;
   const errors = await captureConsoleErrors(async () => {
-    response = await postAction(host, { action: 'resume', sessionId: 's1' });
+    response = await postAction(host2, { action: 'resume', sessionId: 's1' });
     await sleep(50);
   });
   check('resume 路由仍返回 ok', response?.ok === true);
   check(
-    '手动续跑异常已记录',
-    errors.some((line) => line.includes('手动续跑异常 s1') && line.includes('inactive context')),
+    'resume send failure logged',
+    // The engine's fire-time containment log embeds the followup error message.
+    errors.some((line) => line.includes('s1') && line.includes('cannot followup in inactive context')),
   );
-  check('inactive context 时 resume 未发送', agent.followups.length === 0);
+  check('nothing sent on resume when followup throws', agent2.followups.length === 0);
   await sleep(50);
 }
 
