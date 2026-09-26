@@ -1,6 +1,6 @@
 /**
- * Host 引擎无头测试: 用假 cordis ctx(事件发射器 + 假 agent 注册表 + apply 传入的配置对象)
- * 加载打包后的 lib/index.js(host bundle), 验证单实例引擎的核心行为。
+ * Headless host-engine tests: a fake cordis ctx (event emitter + fake agent registry, config passed to apply)
+ * loads the bundled lib/index.js (host bundle) and verifies the single-instance engine's core behavior.
  *
  * 覆盖场景:
  *   1. turn/end error → 宽限期后 followup 配置的文本
@@ -84,9 +84,9 @@
  *   16. 顶层 row replacement → runner disposer 清理待发送定时器
  *   16b. 顶层 row replacement → runner disposer 注销旧事件监听
  *   17. engine inject 重入 → 旧 runner 释放, 新 runner 单独接管
- *   18. 宽限定时器发送时 followup 抛错 → 异常被收口
- *   19. loop 冷却定时器重启时 followup 抛错 → 异常被收口
- *   20. 通知 resume 发送时 followup 抛错 → 路由正常响应, 异常被收口
+ *   18. followup throws at grace-timer fire → failure contained
+ *   19. followup throws at loop-restart fire → failure contained
+ *   20. followup throws at notify-resume → route still responds, failure contained
  *   21. turn/end error 缺失 failure details → 记录并跳过
  *   22. turn/end error 不可解释的 failure details → 记录并跳过
  *   23. turn/end reason 结构无效 → 记录并跳过
@@ -145,7 +145,7 @@ function makeHost() {
     for (const dispose of effects.splice(0).reverse()) dispose();
   };
   const host = {
-    // 配置按引用修改并随 apply 传入: 等价于 Loader 在挂载时把条目配置交给 apply。
+    // Config is mutated in place and handed to apply — mirrors the Loader passing the entry config to apply on mount.
     setConfig(patch) {
       Object.assign(config, patch);
     },
@@ -299,7 +299,7 @@ async function captureConsoleErrors(run) {
   const original = console.error;
   const originalInfo = console.info;
   const errors = [];
-  // 引擎的 log() 走 console.info(受 verbose 门控), 错误收口路径多数也 console.error。
+  // The engine's log() goes to console.info (verbose-gated); most containment paths also console.error.
   console.error = (...args) => {
     errors.push(args.map(String).join(' '));
   };
@@ -2295,7 +2295,7 @@ const stepStart = (turn, step, seq) => ({
   } catch (error) {
     eventError = error;
   }
-  check('row replacement 后事件无异常', eventError === undefined);
+  check('no event errors after row replacement', eventError === undefined);
   check('row replacement 后事件未发送', agent.followups.length === 0);
   await sleep(50);
 }
@@ -2329,10 +2329,11 @@ const stepStart = (turn, step, seq) => ({
     await sleep(200);
   });
   check(
-    '发送异常已记录',
-    errors.some((line) => line.includes('发送异常 s1') && line.includes('inactive context')),
+    'fire-time send failure logged',
+    // The engine's fire-time containment log embeds the followup error message.
+    errors.some((line) => line.includes('s1') && line.includes('cannot followup in inactive context')),
   );
-  check('followup 抛错时未发送', agent.followups.length === 0);
+  check('nothing sent when followup throws', agent.followups.length === 0);
   await sleep(50);
 }
 
@@ -2361,10 +2362,11 @@ const stepStart = (turn, step, seq) => ({
     await sleep(400);
   });
   check(
-    '重启发送异常已记录',
-    errors.some((line) => line.includes('发送异常 s1') && line.includes('inactive context')),
+    'loop-restart send failure logged',
+    // The engine's fire-time containment log embeds the followup error message.
+    errors.some((line) => line.includes('s1') && line.includes('cannot followup in inactive context')),
   );
-  check('followup 抛错时 loop 未重启', agent.followups.length === 0);
+  check('loop not restarted when followup throws', agent.followups.length === 0);
   await sleep(50);
 }
 
@@ -2385,10 +2387,11 @@ const stepStart = (turn, step, seq) => ({
   });
   check('resume 路由仍返回 ok', response?.ok === true);
   check(
-    'resume 发送异常已记录',
-    errors.some((line) => line.includes('发送异常 s1') && line.includes('inactive context')),
+    'resume send failure logged',
+    // The engine's fire-time containment log embeds the followup error message.
+    errors.some((line) => line.includes('s1') && line.includes('cannot followup in inactive context')),
   );
-  check('followup 抛错时 resume 未发送', agent2.followups.length === 0);
+  check('nothing sent on resume when followup throws', agent2.followups.length === 0);
   await sleep(50);
 }
 

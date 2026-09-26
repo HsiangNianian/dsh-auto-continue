@@ -651,7 +651,7 @@ export class AutoContinueRunner {
                 } catch (error) {
                   console.error(`[auto-continue] loop 重启异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
                 }
-              }, remaining);
+              }, remaining + 10); // +10ms: the schedule re-check compares Date.now() against the cooldown; a 1ms wall-clock step can otherwise make it read just under, silently dropping the restart
               this.log(`loop 重启延迟 ${remaining}ms(冷却期) ${sessionId}`);
             } else {
               this.schedule(sessionId, 'loop:aborted');
@@ -1061,9 +1061,11 @@ export class AutoContinueRunner {
       (left, right) =>
         right.lastActivityAt - left.lastActivityAt || left.listIndex - right.listIndex,
     );
-    // 宿主就绪 ≠ 对话就绪: 会话是被浏览器按需 resume 的(typert lookup), 重启后
-    // 此刻 agents.list() 可能还是空的。空 pass 不算完成——继续 3s 轮询, 直到
-    // 某个 pass 真正看到 live 会话(那时中断标记才有机会被扫描到)。
+    // Host readiness does not imply conversation readiness: the browser resumes
+    // sessions on demand (typert lookup), so agents.list() may still be empty
+    // right after a restart. An empty pass is not a completed scan, so keep
+    // polling every 3s until a pass actually sees a live session (only then can
+    // the interrupted marker be picked up).
     if (candidates.length === 0) return false;
     for (const candidate of candidates.slice(0, config.scanLimit)) {
       if (this.disposed) return true;
