@@ -6,10 +6,11 @@
  * bugs (issue #13) cannot exist by construction. Listens to the session event
  * firehose (`session/event`), sends through the agent registry
  * (`agent.followup`), cancels through `agent.cancel`, and reads configuration
- * from the settings service.
+ * injected by the entry (`apply`'s config argument, merged with schema
+ * defaults by `resolveConfig`).
  *
- * All behavior is driven by the `auto-continue` settings namespace (see the
- * plugin's settings card); every knob below is user-configurable there.
+ * All behavior is driven by the `auto-continue` entry config; every knob below
+ * is user-configurable there.
  */
 
 import type { Context } from '@deepseek-ai/cordis';
@@ -203,8 +204,8 @@ export class AutoContinueRunner {
   private disposed = false;
 
   /**
-   * @param ctx - host plugin context (agents registry, session events, settings).
-   * @param getConfig - read the current resolved configuration (settings service).
+   * @param ctx - host plugin context (agents registry, session events).
+   * @param getConfig - read the current resolved configuration (entry config).
    */
   constructor(
     private readonly ctx: Context,
@@ -1060,6 +1061,10 @@ export class AutoContinueRunner {
       (left, right) =>
         right.lastActivityAt - left.lastActivityAt || left.listIndex - right.listIndex,
     );
+    // 宿主就绪 ≠ 对话就绪: 会话是被浏览器按需 resume 的(typert lookup), 重启后
+    // 此刻 agents.list() 可能还是空的。空 pass 不算完成——继续 3s 轮询, 直到
+    // 某个 pass 真正看到 live 会话(那时中断标记才有机会被扫描到)。
+    if (candidates.length === 0) return false;
     for (const candidate of candidates.slice(0, config.scanLimit)) {
       if (this.disposed) return true;
       const state = this.state(candidate.sessionId);
