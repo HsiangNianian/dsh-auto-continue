@@ -47,7 +47,7 @@
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test:runtime": "node tests/settings-host-live.mjs",
-    "test": "node tests/scan-on-boot.mjs && node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/client-settings-services.mjs && node tests/locale-mirror-bounded.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
+    "test": "node tests/scan-on-boot.mjs && node tests/silent-turn-boundaries.mjs && node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/client-settings-services.mjs && node tests/locale-mirror-bounded.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
     "prepack": "npm run build"
   },
   "keywords": [

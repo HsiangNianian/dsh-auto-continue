@@ -23,6 +23,10 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens: z<string, string>;
+    /** Resume observed model activity that completes without visible output. */
+    resumeSilentTurns: z<boolean, boolean>;
+    /** Text sent to resume a silent turn (same placeholders as `continueText`). */
+    continueTextSilent: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -76,6 +80,10 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens: z<string, string>;
+    /** Resume observed model activity that completes without visible output. */
+    resumeSilentTurns: z<boolean, boolean>;
+    /** Text sent to resume a silent turn (same placeholders as `continueText`). */
+    continueTextSilent: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -134,6 +142,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens: z<string, string>;
+    /** Resume observed model activity that completes without visible output. */
+    resumeSilentTurns: z<boolean, boolean>;
+    /** Text sent to resume a silent turn (same placeholders as `continueText`). */
+    continueTextSilent: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -187,6 +199,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
     continueTextMaxTokens: z<string, string>;
+    /** Resume observed model activity that completes without visible output. */
+    resumeSilentTurns: z<boolean, boolean>;
+    /** Text sent to resume a silent turn (same placeholders as `continueText`). */
+    continueTextSilent: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

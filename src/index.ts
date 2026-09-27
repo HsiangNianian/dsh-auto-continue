@@ -30,6 +30,10 @@ export const AutoContinueSchema = z.object({
   continueText: z.string().default(''),
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
   continueTextMaxTokens: z.string().default(''),
+  /** Resume observed model activity that completes without visible output. */
+  resumeSilentTurns: z.boolean().default(true),
+  /** Text sent to resume a silent turn (same placeholders as `continueText`). */
+  continueTextSilent: z.string().default(''),
   /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
   guardTools: z.boolean().default(true),
   /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

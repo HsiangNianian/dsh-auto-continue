@@ -371,22 +371,56 @@ export class AutoContinueRunner {
     if (event.type === 'tool/call') {
       const state = this.state(sessionId);
       // 任何新鲜调用都代表进展（即使缺关联 id）；旧帧重放不能清短句 streak。
-      if (state.tools.recordCall(event)) state.shortRun = 0;
+      if (state.tools.recordCall(event)) {
+        state.shortRun = 0;
+        if (this.tracksOutput(state, event)) state.turnOutput = 'visible';
+      }
     } else if (event.type === 'tool/result') {
       const state = this.state(sessionId);
       state.tools.recordResult(event);
     } else if (event.type === 'step/start') {
       const state = this.state(sessionId);
+      if (this.tracksOutput(state, event) && state.turnOutput === 'empty') state.turnOutput = 'silent';
       const repeat = state.tools.confirmRepeatAtStep(event.seq);
       if (repeat !== undefined) this.checkLoop(sessionId, state, repeat);
     } else if (event.type === 'assistant/chunk') {
       const state = this.state(sessionId);
+      if (this.tracksOutput(state, event)) {
+        const chunk = event.data.chunk;
+        const visible = (chunk.type === 'text-delta' && chunk.text.trim() !== '') ||
+          chunk.type === 'tool-call-delta' ||
+          (chunk.type === 'block-end' && this.hasVisibleContent([chunk.block])) ||
+          (chunk.type === 'block-start' && chunk.blockType !== 'reasoning' && chunk.blockType !== 'text');
+        if (visible) state.turnOutput = 'visible';
+        else if (state.turnOutput === 'empty' && chunk.type !== 'usage' && chunk.type !== 'finish') state.turnOutput = 'silent';
+      }
       this.onAssistantChunk(sessionId, state, event);
     } else if (event.type === 'assistant/message') {
       const state = this.state(sessionId);
+      if (this.tracksOutput(state, event)) {
+        if (this.hasVisibleContent(event.data.message.content)) state.turnOutput = 'visible';
+        else if (state.turnOutput === 'empty') state.turnOutput = 'silent';
+      }
       this.onAssistantMessage(sessionId, state, event);
     }
     this.onSessionEvent(sessionId, event);
+  }
+
+  private tracksOutput(state: SessionState, event: SessionEvent): boolean {
+    return state.running === true && state.outputTurn === (event.data as { turn?: number }).turn &&
+      event.seq > state.outputStartSeq;
+  }
+
+  /** Treat unknown block kinds conservatively: only reasoning and blank text are silent. */
+  private hasVisibleContent(content: unknown): boolean {
+    if (!Array.isArray(content)) return false;
+    return content.some((part: unknown) => {
+      if (part === null || typeof part !== 'object') return true;
+      const block = part as { type?: unknown; text?: unknown };
+      if (block.type === 'reasoning') return false;
+      if (block.type === 'text') return typeof block.text !== 'string' || block.text.trim() !== '';
+      return true;
+    });
   }
 
   /** 从 assistant/message 事件提取纯文本。 */
@@ -609,6 +643,9 @@ export class AutoContinueRunner {
         state.streamLastSegment = '';
         state.streamRepeatRun = 0;
         state.loopFired = false;
+        state.turnOutput = 'empty';
+        state.outputTurn = event.data.turn;
+        state.outputStartSeq = event.seq;
         if (state.loopRetryTimer !== undefined) {
           clearTimeout(state.loopRetryTimer);
           state.loopRetryTimer = undefined;
@@ -620,17 +657,34 @@ export class AutoContinueRunner {
         const loopCancelPending = state.loopFired;
         state.loopFired = false;
         this.cancelPending(sessionId, '收到新的 turn/end');
+        const turnOutput = state.outputTurn === event.data.turn ? state.turnOutput : 'unknown';
+        state.turnOutput = 'unknown';
+        state.outputTurn = undefined;
         const reason = event.data.reason;
         const reasonKind = readReasonKind(reason);
         if (reasonKind === undefined) {
           console.error(`[auto-continue] 忽略畸形 turn/end ${sessionId}: reason 无法解释`);
           break;
         }
-        if (reasonKind === 'completed') {
-          // 成功回合: 恢复健康状态, 并确认上一次自动发送的效果
-          state.consecutive = 0;
+        if (reasonKind === 'no-visible-output' || (reasonKind === 'completed' && turnOutput === 'silent')) {
+          // 已观察到模型活动但没有可见输出; 没有模型活动的空回合不属于此类。
+          // 不清零 consecutive: 每轮都卡住的模型仍受冷却与连续上限约束。
+          // `no-visible-output` 是 DSH 为同一种回合提议的结束原因, 按同样方式处理。
           state.lastFailure = undefined;
-          this.noteRecovery(sessionId, 'completed');
+          state.lastTurn = event.data.turn;
+          state.lastFailureAt = Date.now();
+          this.noteRecovery(sessionId, 'error');
+          if (this.getConfig().resumeSilentTurns) this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
+          break;
+        }
+        if (reasonKind === 'completed') {
+          // Only observed visible output proves recovery; no-op and unknown
+          // turns must not erase the retry budget or count as successful.
+          if (turnOutput === 'visible') {
+            state.consecutive = 0;
+            state.lastFailure = undefined;
+            this.noteRecovery(sessionId, 'completed');
+          }
         } else if (reasonKind === 'aborted') {
           if (isLoopGuardCancelReason((reason as { reason?: unknown }).reason)) {
             // 我们自己的 loop guard 打断: 视为可恢复中断, 用循环提示文本重启回合。
@@ -870,14 +924,18 @@ export class AutoContinueRunner {
       }
     }, config.graceMs);
     state.pendingTimer = timer;
-    const template = reason.startsWith('loop:')
-      ? config.loopText
-      : reason.includes('max-tokens')
-        ? config.continueTextMaxTokens
-        : config.continueText;
+    const template = this.templateFor(config, reason);
     this.log(
       `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${template}」`,
     );
+  }
+
+  /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens, 其余用通用继续文本。 */
+  private templateFor(config: AutoContinueConfig, reason: string): string {
+    if (reason.startsWith('loop:')) return config.loopText;
+    if (reason.endsWith(':silent')) return config.continueTextSilent;
+    if (reason.includes('max-tokens')) return config.continueTextMaxTokens;
+    return config.continueText;
   }
 
   private cancelPending(sessionId: SessionId, why: string): void {
@@ -892,6 +950,7 @@ export class AutoContinueRunner {
     if (this.disposed) return;
     const state = this.state(sessionId);
     const config = this.getConfig();
+    if (reason.endsWith(':silent') && !config.resumeSilentTurns) return;
     if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused) {
       this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
@@ -911,11 +970,7 @@ export class AutoContinueRunner {
       return;
     }
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
-    const template = reason.startsWith('loop:')
-      ? config.loopText
-      : reason.includes('max-tokens')
-        ? config.continueTextMaxTokens
-        : config.continueText;
+    const template = this.templateFor(config, reason);
     const text = this.buildContinueText(config, state, template);
     // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
@@ -1072,11 +1127,12 @@ export class AutoContinueRunner {
         if (event?.type === 'turn/end') { lastEnd = event; break; }
       }
       const reasonKind = readReasonKind(lastEnd?.data.reason);
+      const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
       const superseded = lastEnd !== undefined && events.some((event) =>
         event.seq > lastEnd!.seq && (event.type === 'turn/start' ||
           (event.type === 'user/message' && event.data.source.kind === 'user')),
       );
-      if (lastEnd === undefined || reasonKind === undefined || !isNonHumanReason(reasonKind) ||
+      if (lastEnd === undefined || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
           lastEnd.time < now - config.freshMs || superseded) {
         this.bootScannedSessions.add(session);
         continue;
@@ -1109,7 +1165,7 @@ export class AutoContinueRunner {
       this.bootScannedSessions.add(session);
       const state = this.state(session.id);
       this.applyGuardFromEvents(state, events, lastEnd.seq);
-      const scanReason = `scan:turn/end:${reasonKind}`;
+      const scanReason = `scan:turn/end:${reasonKind}${reasonKind === 'no-visible-output' ? ':silent' : ''}`;
       this.log(`扫描发现中断 ${session.id}(turn/end:${reasonKind}), 交给恢复策略处理`);
       if (failure !== undefined) {
         state.lastFailure = failure;
@@ -1117,6 +1173,11 @@ export class AutoContinueRunner {
         state.lastFailureAt = lastEnd.time;
         this.onTurnFailure(session.id, scanReason, failure);
       } else {
+        if (reasonKind === 'no-visible-output') {
+          state.lastFailure = undefined;
+          state.lastTurn = lastEnd.data.turn;
+          state.lastFailureAt = lastEnd.time;
+        }
         this.schedule(session.id, scanReason);
       }
     }

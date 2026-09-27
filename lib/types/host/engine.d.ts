@@ -73,6 +73,9 @@ export declare class AutoContinueRunner {
      * 然后交给回合状态机。
      */
     private onHostEvent;
+    private tracksOutput;
+    /** Treat unknown block kinds conservatively: only reasoning and blank text are silent. */
+    private hasVisibleContent;
     /** 从 assistant/message 事件提取纯文本。 */
     private assistantText;
     private assistantChunkText;
@@ -106,6 +109,8 @@ export declare class AutoContinueRunner {
     /** 本会话当前生效的冷却间隔(自适应退避)。 */
     private cooldownFor;
     private schedule;
+    /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens, 其余用通用继续文本。 */
+    private templateFor;
     private cancelPending;
     private fire;
     /**
