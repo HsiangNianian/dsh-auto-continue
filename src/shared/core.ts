@@ -16,6 +16,7 @@ export const LOCALIZED_TEXT_DEFAULTS = {
     continueTextMaxTokens: '继续',
     continueTextSilent:
       '继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。',
+    continueTextLoop: '继续',
     guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)',
     guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)',
     loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
@@ -25,6 +26,7 @@ export const LOCALIZED_TEXT_DEFAULTS = {
     continueTextMaxTokens: 'Continue',
     continueTextSilent:
       'Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.',
+    continueTextLoop: 'Continue',
     guardPendingText:
       '(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)',
     guardDoneText:
@@ -44,8 +46,12 @@ export interface AutoContinueSettings {
   continueTextMaxTokens?: string;
   /** Resume observed model activity that completes without visible output. */
   resumeSilentTurns?: boolean;
+  /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
+  resumeCompletedTurns?: boolean;
   /** Text sent to resume a silent turn (same placeholders as `continueText`). */
   continueTextSilent?: string;
+  /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
+  continueTextLoop?: string;
   /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
   guardTools?: boolean;
   /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -102,6 +108,8 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   locale: 'zh',
   ...LOCALIZED_TEXT_DEFAULTS.zh,
   resumeSilentTurns: true,
+  resumeCompletedTurns: false,
+  continueTextLoop: '',
   guardTools: true,
   graceMs: 3000,
   cooldownMs: 20000,
@@ -149,6 +157,10 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     typeof value.continueTextSilent === 'string' && value.continueTextSilent.trim() !== ''
       ? value.continueTextSilent
       : localized.continueTextSilent;
+  const loopText =
+    typeof value.continueTextLoop === 'string' && value.continueTextLoop.trim() !== ''
+      ? value.continueTextLoop
+      : localized.continueTextLoop;
   const guardPendingText =
     typeof value.guardPendingText === 'string' && value.guardPendingText.trim() !== ''
       ? value.guardPendingText
@@ -162,7 +174,9 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     continueText: text,
     continueTextMaxTokens: maxTokensText,
     resumeSilentTurns: booleanOr(value.resumeSilentTurns, DEFAULT_CONFIG.resumeSilentTurns),
+    resumeCompletedTurns: booleanOr(value.resumeCompletedTurns, DEFAULT_CONFIG.resumeCompletedTurns),
     continueTextSilent: silentText,
+    continueTextLoop: loopText,
     guardTools: booleanOr(value.guardTools, DEFAULT_CONFIG.guardTools),
     guardPendingText,
     guardDoneText,

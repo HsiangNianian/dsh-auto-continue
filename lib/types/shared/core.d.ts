@@ -13,6 +13,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
         readonly continueText: "继续";
         readonly continueTextMaxTokens: "继续";
         readonly continueTextSilent: "继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。";
+        readonly continueTextLoop: "继续";
         readonly guardPendingText: "(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)";
         readonly guardDoneText: "(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)";
         readonly loopText: "(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)";
@@ -21,6 +22,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
         readonly continueText: "Continue";
         readonly continueTextMaxTokens: "Continue";
         readonly continueTextSilent: "Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.";
+        readonly continueTextLoop: "Continue";
         readonly guardPendingText: "(The previous tool \"{tool}\" may not have completed. Check its state before continuing and do not run it again.)";
         readonly guardDoneText: "(The previous tool \"{tool}\" completed successfully. Result: {result}; do not run it again. Continue from there.)";
         readonly loopText: "(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)";
@@ -36,8 +38,12 @@ export interface AutoContinueSettings {
     continueTextMaxTokens?: string;
     /** Resume observed model activity that completes without visible output. */
     resumeSilentTurns?: boolean;
+    /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
+    resumeCompletedTurns?: boolean;
     /** Text sent to resume a silent turn (same placeholders as `continueText`). */
     continueTextSilent?: string;
+    /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
+    continueTextLoop?: string;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools?: boolean;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
