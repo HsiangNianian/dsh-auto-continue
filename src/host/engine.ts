@@ -845,6 +845,10 @@ export class AutoContinueRunner {
     if (delta.code !== undefined) {
       this.dayStats.byCode[delta.code] = (this.dayStats.byCode[delta.code] ?? 0) + 1;
     }
+    // Stats are only observable through the status bridge, so every bump must
+    // publish. Previously the panel only moved when a notification happened to
+    // fire (notify=false by default), leaving "Auto-continued" frozen at 0.
+    this.emitState();
   }
 
   /** 通知桥: 产生一条通知事件, SSE 端点推给 browser 侧展示。 */
