@@ -674,19 +674,27 @@ export class AutoContinueRunner {
           state.lastTurn = event.data.turn;
           state.lastFailureAt = Date.now();
           this.noteRecovery(sessionId, 'error');
-          if (this.getConfig().resumeSilentTurns) this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
+          if (this.getConfig().resumeCompletedTurns) {
+            // 自主循环同样覆盖无可见输出的回合。原因串用 completed: 既能命中循环文本,
+            // 也避开 fire() 里「:silent 且开关关闭就跳过」的检查, 循环不会被它挡掉。
+            this.schedule(sessionId, 'turn/end:completed', true);
+          } else if (this.getConfig().resumeSilentTurns) {
+            this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
+          }
           break;
         }
         if (reasonKind === 'completed') {
           // Only observed visible output proves recovery; no-op and unknown
           // turns must not erase the retry budget or count as successful.
+          // 自主循环的例外只在于「是否续跑」, 不在于「是否清零预算」: 循环对每个
+          // completed 回合都强制续跑, 但失败预算依旧只在可见输出时清零, 否则
+          // 空回合/未观察到的回合会不断抹掉连续计数, 令连续上限永远无法生效。
           if (this.getConfig().resumeCompletedTurns) {
-            // Autonomous loop: every completed turn hands the thread back.
-            // Successes never count toward the consecutive cap (always reset),
-            // so the cap keeps throttling failures only.
-            state.consecutive = 0;
-            state.lastFailure = undefined;
-            this.noteRecovery(sessionId, 'completed');
+            if (turnOutput === 'visible') {
+              state.consecutive = 0;
+              state.lastFailure = undefined;
+              this.noteRecovery(sessionId, 'completed');
+            }
             this.schedule(sessionId, 'turn/end:completed', true);
           } else if (turnOutput === 'visible') {
             state.consecutive = 0;
