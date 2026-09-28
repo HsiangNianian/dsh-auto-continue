@@ -81,13 +81,13 @@ The diagram summarizes the automatic recovery path, the loop-guard restart path,
 
 ## Quick Start
 
-DSH plugins install into a **profile** (`dsh web` → `web` profile). Install, restart `dsh web`, done.
+DSH plugins install into a **profile** (`dsh web` → `web` profile). The commands below install into the web profile; restart `dsh web` after installation. In the desktop app, install through its **Plugins** page instead.
 
-> **Use the latest DSH (recommended: 0.1.2-alpha.4 or newer).** Run `dsh --version` before installing. Plugin v0.11.1 supports the settings API used by DSH 0.1.2-alpha.2+ (including alpha.3 and alpha.4) while retaining compatibility with DSH 0.1.0-rc.7 through 0.1.1; rc.6 and earlier remain unsupported (`list slot ... requires options.id`). Preview releases may appear on the [official DSH releases page](https://github.com/deepseek-ai/deepseek-harness/releases) before the public npm tag catches up.
+> **For DSH 0.1.7, use plugin v0.11.9 or newer.** This guide and its screenshots use DSH **0.1.7-rc.2** with plugin **0.11.9**. Run `dsh --version` before installing and check the [official DSH releases](https://github.com/deepseek-ai/deepseek-harness/releases): preview releases may arrive before the public npm `latest` tag catches up.
 
-Plugin v0.11.9 drops the host engine's dependency on the legacy `settings` register/get namespace: entry config is injected directly via `apply(ctx, config)` and merged with schema defaults, fixing the host-half startup failure on the newer settings API (the client's `configForms` support is unchanged).
+On DSH 0.1.7, open **Plugins → dsh-client-auto-continue → Auto continue** to configure the plugin. **Settings → Built-in plugins** only shows component status; it has no editable configuration fields.
 
-Plugin v0.11.8 also supports DSH 0.1.7-alpha.2's `configForms` API. Open **Plugins → dsh-client-auto-continue** for its settings; older DSH versions retain **Settings → Plugins**. This fixes the startup error `pending (waiting for service: settingsScope)` on the newer API.
+Older hosts retain **Settings → Plugins → Plugin configuration**. DSH 0.1.0-rc.6 and earlier are unsupported. If you previously installed with a symlink or edited the loader config by hand, follow [Migrating an older installation](#migrating-an-older-installation).
 
 ### From npm (recommended)
 
@@ -126,32 +126,37 @@ dsh plugin --profile web add link:$(pwd)
 dsh web
 ```
 
-### Manual (no pnpm / dsh plugin needed)
+### Migrating an older installation
 
-```bash
-ln -sfn "$(pwd)" ~/.dsh/profiles/node_modules/dsh-client-auto-continue
-# then append to ~/.dsh/profiles/web/cordis.patch.yml:
-#   - insert:
-#       - id: auto-continue
-#         name: 'dsh-client-auto-continue'
-dsh web
-```
+A manual loader entry can start the engine without registering a bundle in the **Plugins** page. Use the profile's package manager to install the bundle; a symlink and `insert` entry alone are no longer the recommended setup.
 
-> Switching from a manual install to `dsh plugin add`? Remove the manual `insert` entry first — the bundle patch registers the row and a duplicate would conflict.
+1. Let active work finish, then stop `dsh web`. Back up `package.json`, `cordis.patch.yml` and `pnpm-lock.yaml` in `~/.dsh/profiles/web/`, plus `~/.dsh/settings.yaml` if it exists. If you set `DSH_HOME`, use that directory instead of `~/.dsh`.
+2. Keep your existing auto-continue values. Remove only the manually added `auto-continue` row **inside an `insert` list** (and the list if it becomes empty). The installed bundle supplies that row. A top-level `- id: auto-continue` with `config:` is a configuration override: **keep it**.
+3. Install with either the npm or GitHub command above. In the profile's `package.json`, `dsh.profile.bundles` should now include `dsh-client-auto-continue`, alongside the existing DSH bundles. If it already does and the plugin appears in **Plugins**, this part is already complete.
+4. On DSH 0.1.7, merge any saved values from the old `settings.yaml` → `auto-continue` section or the removed row's `config` into the profile's `cordis.patch.yml`. For example, a custom cooldown becomes:
 
-> **Settings exposure:** since DSH 0.1.0-rc.7 the web settings surface is **registry-driven** — every namespace a plugin registers is served, so the settings card works out of the box, no vendor patch needed (the plugin requires rc.7+, see Quick Start).
+   ```yaml
+   - id: auto-continue
+     config:
+       cooldownMs: 45000 # example: preserve your own saved value
+   ```
+
+   Merge into an existing override instead of adding another one. Keep unrelated settings intact. DSH 0.1.7 reads this entry config; editing the old `settings.yaml` section will not update the new form.
+5. Start `dsh web` again and reload the browser. Open **Plugins → dsh-client-auto-continue**, expand **Auto continue**, and check that your values are present. Save a change and reload to confirm it persists.
+
+The `include:auto-continue` label in **Built-in plugins** is a normal loader prefix. It does not, by itself, indicate a legacy install or a duplicate engine.
 
 ### Verify & uninstall
 
 ```bash
-dsh --profile web --dump-config | grep auto-continue   # config layer mounted
+dsh --profile web --dump-config | grep -A 4 'id: auto-continue'
 ```
 
-In the browser console (Ctrl/Cmd+Shift+I): `[auto-continue] 已启动(文本="继续", …)` — every detection and auto-send is logged.
+The composed config should contain one `id: auto-continue` entry. In **Plugins → dsh-client-auto-continue**, check that the component is **Running** and that expanding **Auto continue** shows editable fields. With verbose logging enabled, engine activity appears in the terminal running DSH.
 
 ```bash
 dsh plugin --profile web remove dsh-client-auto-continue   # npm / repo install
-# or remove the symlink + the insert entry                  # manual install
+# also remove this plugin's config override from cordis.patch.yml, if present
 dsh web
 ```
 
@@ -159,51 +164,70 @@ dsh web
 
 ## Configuration
 
-Everything is configurable from the GUI — no file or console edits needed. Open **Settings → Plugins → Plugin configuration**. **Auto Continue** appears as a collapsed card alongside the other plugins; click the card or its right-hand chevron to expand the full configuration in place. Besides the fields below, the expanded card shows a live **stats panel** (today's activity with a reset button) and the list of **paused sessions** (each with a per-session resume button).
+On **DSH 0.1.7**, open **Plugins** from the main sidebar, choose **dsh-client-auto-continue**, then expand the **Auto continue** card. This is separate from **Settings → Built-in plugins**, which only lists component status. Older DSH versions use **Settings → Plugins → Plugin configuration**.
+
+![DSH 0.1.7 Plugins page with the Auto continue card collapsed](docs/screenshots/01-settings-section.png)
+
+Click the card header or its right-hand chevron to show the fields. The expanded card also contains a live **stats panel** (today's activity with a reset button) and **paused sessions** (each with a resume button).
 
 The settings card groups controls by handoff, safety, recovery, loop breaking, and live status. Its header also keeps the open-source repository and a **Star on GitHub** shortcut within reach.
 
-DSH 0.1.7 stores these values in the `auto-continue` entry's config in the active profile patch. The GUI applies edits live without restarting the engine. Older hosts use the `auto-continue` section in `~/.dsh/settings.yaml`; the YAML example below shows that legacy format. Omitted fields use the defaults below.
+DSH 0.1.7 stores these values in the `auto-continue` entry's config in the active profile patch (`~/.dsh/profiles/web/cordis.patch.yml` for the default web profile). **Save** applies changes live without restarting the engine. Omitted fields use the defaults below.
 
 Startup recovery polls every three seconds for sessions that load late, up to `freshMs` after the engine starts. Each settled session history is inspected once. `scanLimit` limits eligible recoveries per pass, so healthy or permanent-error sessions cannot crowd out interrupted ones. Pausing suspends recovery within the same window; unloading cancels the poller.
 
 The browser mirrors DSH's active language into the internal `locale` field. Leave the six localized text fields empty or omit them to follow that language automatically; any non-empty value is treated as your own template and is never rewritten when the language changes:
 
 ```yaml
-auto-continue:
-  locale: 'en' # normally managed by the browser
-  paused: false
-  continueText: ''
-  resumeSilentTurns: true
-  continueTextSilent: ''
-  continueTextMaxTokens: ''
-  guardTools: true
-  guardPendingText: ''
-  guardDoneText: ''
-  graceMs: 3000
-  cooldownMs: 20000
-  maxConsecutive: 3
-  scanOnBoot: true
-  scanLimit: 8
-  freshMs: 900000
-  verbose: true
-  classify: true
-  retryableErrorPatterns: ''
-  backoffFactor: 2
-  backoffMaxMs: 300000
-  notify: false
-  loopGuard: true
-  loopShortChars: 40
-  loopWindowMs: 30000
-  loopShortCount: 12
-  loopRepeatText: 4
-  loopToolRepeat: 5
-  loopText: ''
+- id: auto-continue
+  config:
+    locale: 'en' # normally managed by the browser
+    paused: false
+    continueText: ''
+    resumeSilentTurns: true
+    continueTextSilent: ''
+    continueTextMaxTokens: ''
+    guardTools: true
+    guardPendingText: ''
+    guardDoneText: ''
+    graceMs: 3000
+    cooldownMs: 20000
+    maxConsecutive: 3
+    scanOnBoot: true
+    scanLimit: 8
+    freshMs: 900000
+    verbose: true
+    classify: true
+    retryableErrorPatterns: ''
+    backoffFactor: 2
+    backoffMaxMs: 300000
+    notify: false
+    loopGuard: true
+    loopShortChars: 40
+    loopWindowMs: 30000
+    loopShortCount: 12
+    loopRepeatText: 4
+    loopToolRepeat: 5
+    loopText: ''
 ```
+
+<details>
+<summary>Configuration files on older DSH versions</summary>
+
+Older hosts store user settings in `~/.dsh/settings.yaml` under the plugin namespace instead of a profile entry:
+
+```yaml
+auto-continue:
+  cooldownMs: 45000
+```
+
+When upgrading to DSH 0.1.7, move these values into the profile entry's `config` as described in [Migrating an older installation](#migrating-an-older-installation).
+
+</details>
 
 **How the card works:**
 
-![The collapsed Auto Continue card in the plugin configuration list](docs/screenshots/02-settings-card.png)
+![Expanded Auto continue configuration on DSH 0.1.7](docs/screenshots/02-settings-card.png)
 
 - Edits are **staged** — nothing reaches the disk until you hit **Save**; an unsaved badge marks the card while drafts are pending, and **Discard** drops them
 - A field you changed shows an **Overridden** badge with a per-field **Reset to default** button that restores the built-in value
@@ -211,6 +235,13 @@ auto-continue:
 - Invalid drafts (non-numbers, values below the minimum) block the save with a hint
 - In a read-only deployment the card shows the stored values but disables every control
 - Changes apply immediately after Save and persist in the active profile config (or `~/.dsh/settings.yaml` on older hosts)
+
+<details>
+<summary>Live status and the Save / Discard buttons</summary>
+
+![Live status and save controls at the bottom of the DSH 0.1.7 configuration card](docs/screenshots/07-card-panels.png)
+
+</details>
 
 | Field | Default | Description |
 | --- | --- | --- |
@@ -235,7 +266,7 @@ auto-continue:
 | Scan on host startup | `on` | Recover interrupted sessions that become available during the startup window |
 | Scan limit | `8` | Maximum eligible recoveries per pass, most recently active first |
 | Scan window (ms) | `900000` | Maximum interruption age and duration of startup polling |
-| Verbose logs | `on` | `[auto-continue]` console logs |
+| Verbose logs | `on` | `[auto-continue]` engine logs in the DSH terminal |
 | Classify errors | `on` | Auto-resume transient failures only; auth / balance / model errors are skipped and notified |
 | Custom retryable errors | empty | One case-insensitive literal per line; matching the error code, HTTP status, or message explicitly overrides the built-in classifier |
 | Backoff factor | `2` | Cooldown multiplier per consecutive failure (2 = 20s → 40s → 80s…) |
@@ -245,9 +276,10 @@ auto-continue:
 For a provider-specific error that is safe to resume (confirm first that manually sending "continue" recovers), add a narrow, stable fragment rather than disabling classification globally:
 
 ```yaml
-auto-continue:
-  retryableErrorPatterns: |-
-    Upstream rejected the request as invalid
+- id: auto-continue
+  config:
+    retryableErrorPatterns: |-
+      Upstream rejected the request as invalid
 ```
 
 Patterns are literal substrings, not regular expressions. Blank lines are ignored; any matching line wins before the built-in permanent-error rules. Cooldown and consecutive-attempt limits still apply.
@@ -258,11 +290,12 @@ Patterns are literal substrings, not regular expressions. Blank lines are ignore
 
 ## Privacy & permissions
 
-The plugin is browser-only and touches **no files, credentials, or network beyond the dsh host**:
+The recovery engine runs inside the DSH host. The browser provides the configuration card, live status and optional notifications:
 
-- It opens the same two read-only event streams the web UI already uses (no extra server, no third-party endpoints)
-- The engine's **only automatic write** is `sessions.prompt` — the same call the Send button makes — with the text you configured (saving the settings card writes the `auto-continue` section of `~/.dsh/settings.yaml` through the normal settings API, exactly like any other setting)
-- No browser storage at all: the single host-side engine keeps its cooldowns, send caps, pauses and stats in process memory
+- The engine reads session events and history through DSH's services. The browser talks to that host; the plugin adds no third-party service or credential store
+- Recovery sends your configured text through `agent.followup`. The loop guard can cancel a looping turn through `agent.cancel` before sending its recovery prompt. Resumed agents continue with the session's existing tools and permissions
+- Saving configuration uses DSH's settings API: the active profile patch on DSH 0.1.7, or `~/.dsh/settings.yaml` on older hosts
+- Cooldowns, send caps, pauses and stats stay in host process memory and reset when the engine restarts
 - Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
 
 ---

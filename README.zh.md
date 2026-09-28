@@ -81,13 +81,13 @@
 
 ## 快速开始
 
-DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。安装后重启 `dsh web` 即可。
+DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。下面的命令用于 Web 版, 安装后重启 `dsh web`。桌面版请通过应用内的**插件**页面安装。
 
-> **请使用最新 DSH(推荐 0.1.2-alpha.4 或更高版本)。** 安装前先运行 `dsh --version`。插件 v0.11.1 已支持 DSH 0.1.2-alpha.2+ 使用的设置 API(包括 alpha.3 和 alpha.4), 同时继续兼容 DSH 0.1.0-rc.7 至 0.1.1; rc.6 及更早版本仍不支持(`list slot ... requires options.id`)。预览版可能先发布在 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases), 公开 npm 标签会稍后跟进。
+> **DSH 0.1.7 请使用插件 v0.11.9 或更新版本。** 本文和截图使用 **DSH 0.1.7-rc.2 + 插件 0.11.9**。安装前运行 `dsh --version`, 并核对 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases): 预览版可能先于公开 npm 的 `latest` 标签发布。
 
-插件 v0.11.9 移除了 host 引擎对旧 `settings` register/get 命名空间的依赖: 配置改为通过 `apply(ctx, config)` 直接注入并按 schema 默认值合并, 修复了新 settings API 下 host 侧启动失败的问题(client 的 `configForms` 支持不变)。
+DSH 0.1.7 的配置入口是**插件 → dsh-client-auto-continue → 自动继续**。**设置 → 内置插件**只展示组件状态, 没有可编辑的配置项。
 
-插件 v0.11.8 也已支持 DSH 0.1.7-alpha.2 的 `configForms` API。新版从 **插件 → dsh-client-auto-continue** 进入设置, 旧版仍从 **设置 → 插件** 进入。此适配修复了新版启动时的 `pending (waiting for service: settingsScope)` 错误。
+旧版宿主仍从**设置 → 插件 → 插件配置**进入。DSH 0.1.0-rc.6 及更早版本不受支持。如果之前使用软链或手动修改 Loader 配置安装, 请按[旧安装迁移](#旧安装迁移)操作。
 
 ### 从 npm 安装(推荐)
 
@@ -126,32 +126,37 @@ dsh plugin --profile web add link:$(pwd)
 dsh web
 ```
 
-### 手动安装(无需 pnpm / dsh plugin)
+### 旧安装迁移
 
-```bash
-ln -sfn "$(pwd)" ~/.dsh/profiles/node_modules/dsh-client-auto-continue
-# 然后在 ~/.dsh/profiles/web/cordis.patch.yml 追加:
-#   - insert:
-#       - id: auto-continue
-#         name: 'dsh-client-auto-continue'
-dsh web
-```
+手动添加 Loader 条目可以启动引擎, 但未必会在**插件**页面登记 bundle。请通过 profile 的包管理命令安装; 不再推荐只创建软链并添加 `insert` 条目。
 
-> 从手动安装切换到 `dsh plugin add` 时, 请先删掉手动加的 `insert` 条目——包自带的 bundle patch 会注册插件行, 重复注册会冲突。
+1. 等当前任务结束后停止 `dsh web`。备份 `~/.dsh/profiles/web/` 下的 `package.json`、`cordis.patch.yml`、`pnpm-lock.yaml`, 以及存在时的 `~/.dsh/settings.yaml`。如果设置了 `DSH_HOME`, 请用该目录替代 `~/.dsh`。
+2. 保留已有的自动继续参数。只删除 **`insert` 列表内**手动添加的 `auto-continue` 行; 若列表因此变空, 一并删除空列表。安装包会提供该行。顶层的 `- id: auto-continue` 搭配 `config:` 是配置覆盖项, **应当保留**。
+3. 使用上面的 npm 或 GitHub 命令安装。profile 的 `package.json` 中, `dsh.profile.bundles` 应在原有 DSH bundles 之外包含 `dsh-client-auto-continue`。如果已经包含, 且**插件**页面已有该插件, 这一步已经完成。
+4. 在 DSH 0.1.7 上, 将旧 `settings.yaml` → `auto-continue` 段落或已移除条目的 `config` 参数合并到 profile 的 `cordis.patch.yml`。例如, 自定义冷却时间写成:
 
-> **设置暴露:** DSH 0.1.0-rc.7 起 webui 设置区是**注册表驱动**的——插件注册的命名空间直接可见, 设置卡片开箱即用, 无需任何供应商补丁(插件要求 rc.7+, 见快速开始)。
+   ```yaml
+   - id: auto-continue
+     config:
+       cooldownMs: 45000 # 示例: 请保留你原先设置的值
+   ```
+
+   若已有覆盖项, 请合并到其中, 不要重复添加。保留其他设置。DSH 0.1.7 读取的是条目配置, 修改旧 `settings.yaml` 段落不会更新新版表单。
+5. 重新启动 `dsh web` 并刷新浏览器。打开**插件 → dsh-client-auto-continue**, 展开**自动继续**, 检查旧参数是否保留。保存一次修改并刷新, 确认配置持久化正常。
+
+**内置插件**里显示的 `include:auto-continue` 是正常的 Loader 前缀, 单凭这个名字不能判断为旧安装或重复引擎。
 
 ### 验证与卸载
 
 ```bash
-dsh --profile web --dump-config | grep auto-continue   # 确认配置层已挂载
+dsh --profile web --dump-config | grep -A 4 'id: auto-continue'
 ```
 
-浏览器控制台(Ctrl/Cmd+Shift+I)中应看到 `[auto-continue] 已启动(文本="继续", …)`; 每次检测到中断和自动发送都会打日志。
+合并后的配置应只有一个 `id: auto-continue` 条目。在**插件 → dsh-client-auto-continue**中确认组件**运行中**, 展开**自动继续**后能编辑字段。开启详细日志后, 引擎活动会输出到运行 DSH 的终端。
 
 ```bash
 dsh plugin --profile web remove dsh-client-auto-continue   # npm / 仓库安装
-# 或删除软链 + insert 条目                                  # 手动安装
+# cordis.patch.yml 中若有该插件的配置覆盖项, 也一并移除
 dsh web
 ```
 
@@ -159,51 +164,70 @@ dsh web
 
 ## 配置
 
-所有参数都可以在 GUI 里配置——无需改文件或控制台。打开 **设置 → 插件 → 插件配置**, **自动继续**会像其他插件一样显示为列表中的折叠卡片; 点击卡片或右侧箭头即可在当前位置展开完整配置。除了下面的字段, 展开后的卡片还带一个**统计面板**(今日活动, 可一键清零)和**已暂停会话**列表(每个都可单独解除)。
+在 **DSH 0.1.7** 中, 从主侧栏打开**插件**, 选择 **dsh-client-auto-continue**, 再展开**自动继续**卡片。**设置 → 内置插件**是单独的组件状态列表, 不能在其中编辑配置。旧版 DSH 的入口仍为**设置 → 插件 → 插件配置**。
+
+![DSH 0.1.7 插件页面中的自动继续折叠卡片](docs/screenshots/01-settings-section.zh.png)
+
+点击卡片标题或右侧箭头即可展开字段。卡片内还带有**统计面板**(今日活动, 可一键清零)和**已暂停会话**列表(每个都可单独解除)。
 
 新版配置卡会按接力方式、安全节奏、恢复雷达、循环断路器与现场状态组织配置; 卡片顶部也直接放出了开源仓库和 **Star on GitHub** 入口。
 
-DSH 0.1.7 将这些值保存在当前 profile patch 的 `auto-continue` 条目 config 中，GUI 编辑会实时生效，无需重启引擎。旧版宿主仍使用 `~/.dsh/settings.yaml` 的 `auto-continue` 段落；下面的 YAML 示例展示旧版格式。省略的字段使用下表默认值。
+DSH 0.1.7 将这些值保存在当前 profile patch 的 `auto-continue` 条目 config 中(默认 Web profile 对应 `~/.dsh/profiles/web/cordis.patch.yml`)。点**保存**后实时生效, 无需重启引擎。省略的字段使用下表默认值。
 
 启动恢复会每三秒等待一次延迟加载的会话，在引擎启动后的 `freshMs` 时间窗结束。每个已就绪会话的历史只检查一次，`scanLimit` 只限制每轮符合条件的恢复数量，正常会话或永久错误不会挤占名额。暂停会在同一时间窗内挂起恢复，卸载插件会取消轮询。
 
 浏览器会把 DSH 当前语言同步到内部 `locale` 字段。下面六个本地化文本字段保持留空或直接省略时, 会自动跟随语言; 任何非空值都视为用户自己的模板, 切换语言时不会改写:
 
 ```yaml
-auto-continue:
-  locale: 'zh' # 通常由浏览器自动维护
-  paused: false
-  continueText: ''
-  resumeSilentTurns: true
-  continueTextSilent: ''
-  continueTextMaxTokens: ''
-  guardTools: true
-  guardPendingText: ''
-  guardDoneText: ''
-  graceMs: 3000
-  cooldownMs: 20000
-  maxConsecutive: 3
-  scanOnBoot: true
-  scanLimit: 8
-  freshMs: 900000
-  verbose: true
-  classify: true
-  retryableErrorPatterns: ''
-  backoffFactor: 2
-  backoffMaxMs: 300000
-  notify: false
-  loopGuard: true
-  loopShortChars: 40
-  loopWindowMs: 30000
-  loopShortCount: 12
-  loopRepeatText: 4
-  loopToolRepeat: 5
-  loopText: ''
+- id: auto-continue
+  config:
+    locale: 'zh' # 通常由浏览器自动维护
+    paused: false
+    continueText: ''
+    resumeSilentTurns: true
+    continueTextSilent: ''
+    continueTextMaxTokens: ''
+    guardTools: true
+    guardPendingText: ''
+    guardDoneText: ''
+    graceMs: 3000
+    cooldownMs: 20000
+    maxConsecutive: 3
+    scanOnBoot: true
+    scanLimit: 8
+    freshMs: 900000
+    verbose: true
+    classify: true
+    retryableErrorPatterns: ''
+    backoffFactor: 2
+    backoffMaxMs: 300000
+    notify: false
+    loopGuard: true
+    loopShortChars: 40
+    loopWindowMs: 30000
+    loopShortCount: 12
+    loopRepeatText: 4
+    loopToolRepeat: 5
+    loopText: ''
 ```
+
+<details>
+<summary>旧版 DSH 的配置文件</summary>
+
+旧版宿主将用户设置保存在 `~/.dsh/settings.yaml` 的插件命名空间下, 而非 profile 条目中:
+
+```yaml
+auto-continue:
+  cooldownMs: 45000
+```
+
+升级到 DSH 0.1.7 时, 请按[旧安装迁移](#旧安装迁移)将这些值移入 profile 条目的 `config`。
+
+</details>
 
 **卡片操作说明:**
 
-![插件配置列表中的自动继续折叠卡片](docs/screenshots/02-settings-card.png)
+![DSH 0.1.7 中展开后的自动继续配置](docs/screenshots/02-settings-card.zh.png)
 
 - 修改是**暂存式**的——点「保存」之前不会写入磁盘; 有待保存草稿时卡片显示「未保存」徽章, 「放弃」可丢弃草稿
 - 改动过的字段会带「已覆盖」徽章, 并有逐字段的「恢复默认」按钮(回到内置默认值)
@@ -211,6 +235,13 @@ auto-continue:
 - 非法输入(非数字、小于最小值)会阻止保存并给出提示
 - 只读部署中卡片只显示已存值, 所有控件禁用
 - 保存后立即生效，持久化在当前 profile 配置中（旧版宿主使用 `~/.dsh/settings.yaml`）
+
+<details>
+<summary>现场状态与底部的保存 / 放弃按钮</summary>
+
+![DSH 0.1.7 配置卡底部的现场状态与保存按钮](docs/screenshots/07-card-panels.zh.png)
+
+</details>
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
@@ -235,7 +266,7 @@ auto-continue:
 | 启动恢复扫描 | 开 | 恢复启动时间窗内延迟加载的中断会话 |
 | 扫描会话数 | `8` | 每轮最多恢复的符合条件的会话数，优先最近活动的会话 |
 | 扫描时间窗 (ms) | `900000` | 中断的最大年龄，同时限制启动轮询的持续时间 |
-| 详细日志 | 开 | 控制台输出 `[auto-continue]` 日志 |
+| 详细日志 | 开 | 在运行 DSH 的终端输出 `[auto-continue]` 引擎日志 |
 | 错误分类 | 开 | 仅自动恢复临时性错误; 认证 / 余额 / 模型等永久性错误跳过并通知 |
 | 自定义可恢复错误 | 空 | 每行一个大小写不敏感的普通文本片段; 命中错误码、HTTP 状态或消息时显式覆盖内置分类 |
 | 退避系数 | `2` | 连续失败时冷却间隔的倍率(2 = 20s → 40s → 80s…) |
@@ -245,9 +276,10 @@ auto-continue:
 遇到确认可以安全续跑的 provider 专属错误时(先确认手动发送「继续」确实能恢复), 应添加足够具体、稳定的片段, 而不是全局关闭错误分类:
 
 ```yaml
-auto-continue:
-  retryableErrorPatterns: |-
-    Upstream rejected the request as invalid
+- id: auto-continue
+  config:
+    retryableErrorPatterns: |-
+      Upstream rejected the request as invalid
 ```
 
 匹配项是普通子串, 不是正则表达式。空行会被忽略; 任一行命中后会优先于内置永久错误规则。冷却与最大连续次数仍然生效。
@@ -258,11 +290,12 @@ auto-continue:
 
 ## 隐私与权限
 
-插件是纯浏览器端, **不触碰任何文件、凭据, 也不访问 dsh 宿主以外的网络**:
+恢复引擎运行在 DSH 宿主进程中, 浏览器负责配置卡片、实时状态和可选通知:
 
-- 只复用 webui 本身就在用的两条只读事件流(无额外服务、无第三方端点)
-- 引擎**唯一会自动执行的写入**是 `sessions.prompt`——与点「发送」按钮完全相同的调用, 内容为你配置的文本(设置卡片里保存配置会通过常规设置 API 写入 `~/.dsh/settings.yaml` 的 `auto-continue` 段落, 与任何其他设置一样)
-- 不使用任何浏览器存储: 宿主侧单实例引擎的冷却、发送上限、暂停与统计全部保存在进程内存里
+- 引擎通过 DSH 服务读取会话事件和历史, 浏览器与该宿主通信; 插件不新增第三方服务或凭据存储
+- 恢复时通过 `agent.followup` 发送你配置的文本。循环守卫可先通过 `agent.cancel` 停止空转回合, 再发送恢复提示; 续跑的 Agent 沿用会话已有的工具和权限
+- 保存配置使用 DSH 的设置 API: DSH 0.1.7 写入当前 profile patch, 旧版宿主写入 `~/.dsh/settings.yaml`
+- 冷却、发送上限、暂停与统计保存在宿主进程内存中, 引擎重启后重置
 - 浏览器通知是可选开启的(`notify` 设置), 仅在首次使用时请求一次权限
 
 ---
