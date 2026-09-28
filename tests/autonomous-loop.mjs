@@ -10,6 +10,16 @@ const flush = async (ms = 20) => {
   mock.timers.tick(ms);
   for (let i = 0; i < 8; i += 1) await Promise.resolve();
 };
+/** Advance the fake clock in slices. node:test's mock timers do not run timers
+ * created during the same tick(), so a deferred retry (cooldown timer → grace
+ * timer) needs more than one tick before the send actually happens. */
+const advance = async (ms, slices = 10) => {
+  const step = Math.ceil(ms / slices);
+  for (let i = 0; i < slices; i += 1) {
+    mock.timers.tick(step);
+    for (let j = 0; j < 4; j += 1) await Promise.resolve();
+  }
+};
 const hosts = [];
 const host = (options) => {
   const h = makeHost({ scanOnBoot: false, ...options });
@@ -159,6 +169,68 @@ try {
   await flush();
   assert.equal(twice.followups.length, 1, 'a silent turn in loop mode sends once, not twice');
   assert.equal(followupText(twice, 0), '继续', 'the loop text wins in loop mode');
+
+  // 27l: a silent (no visible output) turn is a *failure* in loop mode. The
+  // loop covers it, but coverage must not exempt it from the retry budget or
+  // from backoff — force-scheduling it forever retries a stuck model without
+  // limit.
+  // (a) cap: six silent turns under maxConsecutive 1 produce a single send.
+  const silentCap = host({ resumeCompletedTurns: true, maxConsecutive: 1 });
+  const drained = silentCap.agent('silent-cap');
+  for (const turn of [1, 2, 3, 4, 5, 6]) {
+    silentCap.emit(drained, turnStart(turn));
+    silentCap.emit(drained, turnEnd(turn, 'no-visible-output'));
+    await flush();
+  }
+  assert.equal(drained.followups.length, 1, 'silent failures consume the retry budget');
+  // (b) backoff: the second silent turn lands inside the default cooldown and
+  // must be deferred, not sent immediately. The shared fixture defaults
+  // cooldownMs to 0, which is exactly why the old failure test missed this.
+  const slowSilent = host({ resumeCompletedTurns: true, maxConsecutive: 5, cooldownMs: 20000 });
+  const sulk = slowSilent.agent('sulk');
+  slowSilent.emit(sulk, turnStart(1));
+  slowSilent.emit(sulk, turnEnd(1, 'no-visible-output'));
+  await flush();
+  assert.equal(sulk.followups.length, 1, 'the first silent failure is retried');
+  mock.timers.tick(1000);
+  slowSilent.emit(sulk, turnStart(2));
+  slowSilent.emit(sulk, turnEnd(2, 'no-visible-output'));
+  await flush(5);
+  assert.equal(sulk.followups.length, 1, 'the second is held until the cooldown expires');
+  await advance(100000);
+  assert.equal(sulk.followups.length, 2, 'and then retried after the cooldown');
+
+  // 27m: a transient failure that lands inside the cooldown must be retried
+  // once the cooldown expires. Dropping it strands the session until the user
+  // intervenes by hand.
+  const paced = host({ resumeCompletedTurns: true, cooldownMs: 20000 });
+  const paced$ = paced.agent('paced');
+  paced.emit(paced$, turnStart(1));
+  paced.emit(paced$, text(1));
+  paced.emit(paced$, turnEnd(1, 'completed'));
+  await flush();
+  assert.equal(paced$.followups.length, 1, 'the loop sends its continuation');
+  mock.timers.tick(1000); // the continuation runs for a second, then the network drops
+  paced.emit(paced$, turnStart(2));
+  paced.emit(paced$, turnEnd(2, 'error', { error: { message: 'read ECONNRESET' } }));
+  await flush(5);
+  assert.equal(paced$.followups.length, 1, 'the recovery is not sent inside the cooldown');
+  await advance(100000);
+  assert.equal(paced$.followups.length, 2, 'the recovery is sent after the cooldown expires');
+
+  // 27n: turning the loop off inside the grace window must cancel the pending
+  // send — fire() has to recheck the flag, as it already does for silent-turn
+  // recovery and global pause.
+  const toggle = host({ resumeCompletedTurns: true, graceMs: 1000 });
+  const toggled = toggle.agent('toggled');
+  toggle.emit(toggled, turnStart(1));
+  toggle.emit(toggled, text(1));
+  toggle.emit(toggled, turnEnd(1, 'completed'));
+  await flush(10);
+  assert.equal(toggled.followups.length, 0, 'still inside the grace period');
+  toggle.config.resumeCompletedTurns = false;
+  await flush(2000);
+  assert.equal(toggled.followups.length, 0, 'disabling the loop cancelled the pending send');
 
   console.log('Autonomous loop behavior ✅');
 } finally {
