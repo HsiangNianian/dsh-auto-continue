@@ -45,6 +45,7 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh we
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("Continue ({tool} failed: {code})"); a **separate template** fires on `max-tokens` (e.g. "Continue the output without repeating anything already generated")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Silent turn resume** — recover an observed model step or reasoning-only response that completes without visible output. A no-op turn with no model activity is left alone. Text, tool calls, images and extension blocks count as visible, including streamed output. Unobserved turns are not guessed to be silent. Explicit `no-visible-output` markers also recover after restart. Disabling **Resume silent turns** cancels queued silent sends; silent turns never reset the retry cap, even while the option is off.
+- **Autonomous loop** — when enabled, resumes after every normally completed turn, looping until stopped manually. Successful resumes do not count toward the consecutive cap; only failures do — a turn that completes with no visible output counts as a failure, so a stuck model still stops at the cap instead of retrying forever. Global and per-session pause still apply, and the loop text is configurable (defaults to `Continue`).
 - **Pause** — a global **Pause auto-continue** toggle in the settings card stops everything (live + scan) instantly; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
 - **Loop guard** — watches **running** turns too. Four signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), repeated near-duplicate paragraphs **inside one streamed assistant message**, many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
@@ -176,7 +177,7 @@ DSH 0.1.7 stores these values in the `auto-continue` entry's config in the activ
 
 Startup recovery polls every three seconds for sessions that load late, up to `freshMs` after the engine starts. Each settled session history is inspected once. `scanLimit` limits eligible recoveries per pass, so healthy or permanent-error sessions cannot crowd out interrupted ones. Pausing suspends recovery within the same window; unloading cancels the poller.
 
-The browser mirrors DSH's active language into the internal `locale` field. Leave the six localized text fields empty or omit them to follow that language automatically; any non-empty value is treated as your own template and is never rewritten when the language changes:
+The browser mirrors DSH's active language into the internal `locale` field. Leave the seven localized text fields empty or omit them to follow that language automatically; any non-empty value is treated as your own template and is never rewritten when the language changes:
 
 ```yaml
 - id: auto-continue
@@ -185,7 +186,9 @@ The browser mirrors DSH's active language into the internal `locale` field. Leav
     paused: false
     continueText: ''
     resumeSilentTurns: true
+    resumeCompletedTurns: false
     continueTextSilent: ''
+    continueTextLoop: ''
     continueTextMaxTokens: ''
     guardTools: true
     guardPendingText: ''
@@ -250,6 +253,8 @@ When upgrading to DSH 0.1.7, move these values into the profile entry's `config`
 | Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
 | Resume silent turns | `on` | Resume a turn that ended normally with reasoning only (no text, no tool call); does not reset the consecutive count |
 | Continue text (silent turn) | `Continue. Your previous turn ended with internal reasoning only, ...` | Text sent to resume a silent turn (same placeholders) |
+| Autonomous loop (continue after every turn) | `off` | Resume after every normally completed turn until stopped manually; successful resumes do not count toward the consecutive cap (no-visible-output turns do count) |
+| Continue text (autonomous loop) | `Continue` | Text sent on each autonomous-loop resume (same placeholders) |
 | Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
 | Loop guard | `on` | Detect a running turn spinning in place and restart it (see What It Does) |
 | Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |

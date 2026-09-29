@@ -40,6 +40,8 @@ export interface AutoContinueSettingsCardState extends CardShell {
   continueText: CardFieldState;
   continueTextMaxTokens: CardFieldState;
   resumeSilentTurns: CardFieldState;
+  resumeCompletedTurns: CardFieldState;
+  continueTextLoop: CardFieldState;
   continueTextSilent: CardFieldState;
   guardTools: CardFieldState;
   guardPendingText: CardFieldState;
@@ -87,6 +89,8 @@ export class AutoContinueSettingsCardController {
       textField('continueText'),
       textField('continueTextMaxTokens'),
       booleanField('resumeSilentTurns'),
+      booleanField('resumeCompletedTurns'),
+      textField('continueTextLoop'),
       textField('continueTextSilent'),
       booleanField('guardTools'),
       textField('guardPendingText'),
@@ -121,6 +125,8 @@ export class AutoContinueSettingsCardController {
       continueText: this.form.field('continueText'),
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
       resumeSilentTurns: this.form.field('resumeSilentTurns'),
+      resumeCompletedTurns: this.form.field('resumeCompletedTurns'),
+      continueTextLoop: this.form.field('continueTextLoop'),
       continueTextSilent: this.form.field('continueTextSilent'),
       guardTools: this.form.field('guardTools'),
       guardPendingText: this.form.field('guardPendingText'),
@@ -412,7 +418,7 @@ function BooleanField(props: FieldProps) {
   );
 }
 
-type SettingsSectionTone = 'handoff' | 'safety' | 'recovery' | 'loop' | 'live';
+type SettingsSectionTone = 'handoff' | 'autoloop' | 'safety' | 'recovery' | 'loop' | 'live';
 
 /** A real behavior group, not a decorative divider: each section maps to one phase of the relay. */
 function SettingsSection(props: {
@@ -619,6 +625,35 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
             onEdit={(text) => props.edit('continueTextSilent', text)}
             placeholder={t('default.continueTextSilent')}
             onReset={() => props.resetField('continueTextSilent')}
+          />
+        </SettingsSection>
+
+        <SettingsSection
+          t={t}
+          titleKey="section.autoloop.title"
+          descriptionKey="section.autoloop.description"
+          tone="autoloop"
+        >
+          <BooleanField
+            wide
+            id="auto-continue-resume-completed-turns"
+            label={t('field.resumeCompletedTurns')}
+            hint={t('field.resumeCompletedTurnsHint')}
+            {...shared}
+            {...state.resumeCompletedTurns}
+            onEdit={(text) => props.edit('resumeCompletedTurns', text)}
+            onReset={() => props.resetField('resumeCompletedTurns')}
+          />
+          <ValueField
+            wide
+            id="auto-continue-continue-text-loop"
+            label={t('field.continueTextLoop')}
+            hint={t('field.continueTextLoopHint')}
+            {...shared}
+            {...state.continueTextLoop}
+            onEdit={(text) => props.edit('continueTextLoop', text)}
+            placeholder={t('default.continueTextLoop')}
+            onReset={() => props.resetField('continueTextLoop')}
           />
         </SettingsSection>
 

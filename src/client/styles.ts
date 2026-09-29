@@ -10,6 +10,7 @@ const css = `
   --dsh-ac-violet: #8b7cff;
   --dsh-ac-cyan: #45cce5;
   --dsh-ac-mint: #46d69d;
+  --dsh-ac-red: #e5484d;
   --dsh-ac-amber: #f1b95c;
   isolation: isolate;
   position: relative;
@@ -232,6 +233,7 @@ const css = `
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-3) 95%, var(--dsh-ac-section) 5%);
 }
 .dshAcFormSection-handoff { --dsh-ac-section: var(--dsh-ac-mint); }
+.dshAcFormSection-autoloop { --dsh-ac-section: var(--dsh-ac-red); }
 .dshAcFormSection-safety { --dsh-ac-section: var(--dsh-ac-amber); }
 .dshAcFormSection-recovery { --dsh-ac-section: var(--dsh-ac-cyan); }
 .dshAcFormSection-loop { --dsh-ac-section: var(--dsh-ac-violet); }

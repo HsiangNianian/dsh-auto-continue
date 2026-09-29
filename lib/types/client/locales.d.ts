@@ -9,6 +9,8 @@ export declare const zh: {
     'repo.aria': string;
     'section.handoff.title': string;
     'section.handoff.description': string;
+    'section.autoloop.title': string;
+    'section.autoloop.description': string;
     'section.safety.title': string;
     'section.safety.description': string;
     'section.recovery.title': string;
@@ -27,6 +29,11 @@ export declare const zh: {
     'default.continueTextMaxTokens': "继续";
     'field.resumeSilentTurns': string;
     'field.resumeSilentTurnsHint': string;
+    'field.resumeCompletedTurns': string;
+    'field.resumeCompletedTurnsHint': string;
+    'field.continueTextLoop': string;
+    'field.continueTextLoopHint': string;
+    'default.continueTextLoop': "继续";
     'field.continueTextSilent': string;
     'field.continueTextSilentHint': string;
     'default.continueTextSilent': "继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。";

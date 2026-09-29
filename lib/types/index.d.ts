@@ -25,8 +25,12 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueTextMaxTokens: z<string, string>;
     /** Resume observed model activity that completes without visible output. */
     resumeSilentTurns: z<boolean, boolean>;
+    /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
+    resumeCompletedTurns: z<boolean, boolean>;
     /** Text sent to resume a silent turn (same placeholders as `continueText`). */
     continueTextSilent: z<string, string>;
+    /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
+    continueTextLoop: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -82,8 +86,12 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueTextMaxTokens: z<string, string>;
     /** Resume observed model activity that completes without visible output. */
     resumeSilentTurns: z<boolean, boolean>;
+    /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
+    resumeCompletedTurns: z<boolean, boolean>;
     /** Text sent to resume a silent turn (same placeholders as `continueText`). */
     continueTextSilent: z<string, string>;
+    /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
+    continueTextLoop: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -144,8 +152,12 @@ export declare const Config: z<Schemastery.ObjectS<{
     continueTextMaxTokens: z<string, string>;
     /** Resume observed model activity that completes without visible output. */
     resumeSilentTurns: z<boolean, boolean>;
+    /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
+    resumeCompletedTurns: z<boolean, boolean>;
     /** Text sent to resume a silent turn (same placeholders as `continueText`). */
     continueTextSilent: z<string, string>;
+    /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
+    continueTextLoop: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -201,8 +213,12 @@ export declare const Config: z<Schemastery.ObjectS<{
     continueTextMaxTokens: z<string, string>;
     /** Resume observed model activity that completes without visible output. */
     resumeSilentTurns: z<boolean, boolean>;
+    /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
+    resumeCompletedTurns: z<boolean, boolean>;
     /** Text sent to resume a silent turn (same placeholders as `continueText`). */
     continueTextSilent: z<string, string>;
+    /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
+    continueTextLoop: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

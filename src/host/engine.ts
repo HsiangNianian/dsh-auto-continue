@@ -80,6 +80,21 @@ const LOOP_GUARD_CANCEL_CAUSE = {
   reason: 'dsh-auto-continue:loop-guard',
 } as const;
 
+/**
+ * Autonomous-loop resume reasons.
+ * - `turn/end:completed` is a *successful* visible completion: the loop hands
+ *   the thread back and the send is exempt from the failure budget.
+ * - `turn/end:loop-silent` is a loop-covered turn with no visible output. The
+ *   loop still continues it, but it is a failure: it must consume the retry
+ *   budget and obey backoff, or a stuck model retries forever.
+ * The silent reason must not end in `:silent` — `fire()` skips those when
+ * silent-turn resume is off, which would stall the loop (27j).
+ */
+const LOOP_COMPLETED_REASON = 'turn/end:completed';
+const LOOP_SILENT_REASON = 'turn/end:loop-silent';
+const isLoopReason = (reason: string): boolean =>
+  reason === LOOP_COMPLETED_REASON || reason === LOOP_SILENT_REASON;
+
 /** Keep fuzzy matching off the unbounded host event path; exact repeats remain unlimited. */
 const STREAM_NEAR_DUPLICATE_MAX_CHARS = 2_048;
 /** Bound unfinished text copied between token chunks when a provider emits no paragraph break. */
@@ -340,6 +355,7 @@ export class AutoContinueRunner {
     for (const state of this.states.values()) {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
       if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
+      if (state.cooldownRetryTimer !== undefined) clearTimeout(state.cooldownRetryTimer);
     }
     this.states.clear();
   }
@@ -674,13 +690,29 @@ export class AutoContinueRunner {
           state.lastTurn = event.data.turn;
           state.lastFailureAt = Date.now();
           this.noteRecovery(sessionId, 'error');
-          if (this.getConfig().resumeSilentTurns) this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
+          if (this.getConfig().resumeCompletedTurns) {
+            // 自主循环覆盖无可见输出的回合, 但这类回合是「失败」而非成功:
+            // 不 force, 否则会绕过连续上限与冷却, 让卡住的模型无限重试。
+            this.schedule(sessionId, LOOP_SILENT_REASON);
+          } else if (this.getConfig().resumeSilentTurns) {
+            this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
+          }
           break;
         }
         if (reasonKind === 'completed') {
           // Only observed visible output proves recovery; no-op and unknown
           // turns must not erase the retry budget or count as successful.
-          if (turnOutput === 'visible') {
+          // 自主循环的例外只在于「是否续跑」, 不在于「是否清零预算」: 循环对每个
+          // completed 回合都强制续跑, 但失败预算依旧只在可见输出时清零, 否则
+          // 空回合/未观察到的回合会不断抹掉连续计数, 令连续上限永远无法生效。
+          if (this.getConfig().resumeCompletedTurns) {
+            if (turnOutput === 'visible') {
+              state.consecutive = 0;
+              state.lastFailure = undefined;
+              this.noteRecovery(sessionId, 'completed');
+            }
+            this.schedule(sessionId, LOOP_COMPLETED_REASON, true);
+          } else if (turnOutput === 'visible') {
             state.consecutive = 0;
             state.lastFailure = undefined;
             this.noteRecovery(sessionId, 'completed');
@@ -829,6 +861,10 @@ export class AutoContinueRunner {
     if (delta.code !== undefined) {
       this.dayStats.byCode[delta.code] = (this.dayStats.byCode[delta.code] ?? 0) + 1;
     }
+    // Stats are only observable through the status bridge, so every bump must
+    // publish. Previously the panel only moved when a notification happened to
+    // fire (notify=false by default), leaving "Auto-continued" frozen at 0.
+    this.emitState();
   }
 
   /** 通知桥: 产生一条通知事件, SSE 端点推给 browser 侧展示。 */
@@ -893,7 +929,7 @@ export class AutoContinueRunner {
     );
   }
 
-  private schedule(sessionId: SessionId, reason: string): void {
+  private schedule(sessionId: SessionId, reason: string, force = false): void {
     const state = this.state(sessionId);
     const config = this.getConfig();
     if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
@@ -906,19 +942,29 @@ export class AutoContinueRunner {
       return;
     }
     if (state.pendingTimer !== undefined) return; // 已有待发送
-    if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return; // 冷却期(含失败尝试, 自适应退避)
-    if (state.consecutive >= config.maxConsecutive) {
+    // 连续上限优先于冷却: 已经放弃的会话不该再安排冷却后的重试。
+    // 自主循环的完成续跑(force)不受二者约束。
+    if (!force && state.consecutive >= config.maxConsecutive) {
       this.log(
         `跳过 ${sessionId}(${reason}): 已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`,
       );
       return;
+    }
+    // 冷却(含失败尝试, 自适应退避): 不能直接丢弃这次恢复, 否则一次瞬时失败
+    // 会把会话搁置到用户手动介入为止。
+    if (!force) {
+      const remaining = this.cooldownFor(state) - (Date.now() - state.lastAttemptAt);
+      if (remaining > 0) {
+        this.deferCooldownRetry(sessionId, reason, remaining);
+        return;
+      }
     }
     const timer = setTimeout(() => {
       if (state.pendingTimer !== timer) return;
       state.pendingTimer = undefined;
       // 保险丝: 定时器回调内任何异常(含 inactive context)都不得成为未捕获异常炸掉进程。
       try {
-        void this.fire(sessionId, reason);
+        void this.fire(sessionId, reason, force);
       } catch (error) {
         console.error(`[auto-continue] 定时发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -930,9 +976,29 @@ export class AutoContinueRunner {
     );
   }
 
-  /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens, 其余用通用继续文本。 */
+  /**
+   * 冷却期内的恢复: 等到冷却结束再重新调度。
+   * 直接丢弃会让一次瞬时失败把会话搁置, 直到用户手动发消息才恢复。
+   */
+  private deferCooldownRetry(sessionId: SessionId, reason: string, remaining: number): void {
+    const state = this.state(sessionId);
+    if (state.cooldownRetryTimer !== undefined) clearTimeout(state.cooldownRetryTimer);
+    state.cooldownRetryTimer = setTimeout(() => {
+      state.cooldownRetryTimer = undefined;
+      try {
+        this.schedule(sessionId, reason);
+      } catch (error) {
+        console.error(`[auto-continue] 冷却后重试异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }, remaining + 10); // +10ms: 同 loop 重启; 否则 1ms 抖动可能让重检仍判为冷却期而再次丢弃
+    this.log(`冷却中 ${sessionId}(${reason}), ${remaining}ms 后重试`);
+  }
+
+  /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens、自主循环, 其余用通用继续文本。 */
   private templateFor(config: AutoContinueConfig, reason: string): string {
     if (reason.startsWith('loop:')) return config.loopText;
+    // 自主循环的两种原因都用循环文本(顺序在 `:silent` 之前: 循环模式决定文本)。
+    if (isLoopReason(reason)) return config.continueTextLoop;
     if (reason.endsWith(':silent')) return config.continueTextSilent;
     if (reason.includes('max-tokens')) return config.continueTextMaxTokens;
     return config.continueText;
@@ -940,10 +1006,19 @@ export class AutoContinueRunner {
 
   private cancelPending(sessionId: SessionId, why: string): void {
     const state = this.state(sessionId);
-    if (state.pendingTimer === undefined) return;
-    clearTimeout(state.pendingTimer);
-    state.pendingTimer = undefined;
-    this.log(`取消 ${sessionId} 的自动继续(${why})`);
+    let cancelled = false;
+    if (state.pendingTimer !== undefined) {
+      clearTimeout(state.pendingTimer);
+      state.pendingTimer = undefined;
+      cancelled = true;
+    }
+    // 冷却后的重试同样属于「待发送」: 新回合或用户介入必须让它作废。
+    if (state.cooldownRetryTimer !== undefined) {
+      clearTimeout(state.cooldownRetryTimer);
+      state.cooldownRetryTimer = undefined;
+      cancelled = true;
+    }
+    if (cancelled) this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
   private fire(sessionId: SessionId, reason: string, force = false): void {
@@ -951,6 +1026,9 @@ export class AutoContinueRunner {
     const state = this.state(sessionId);
     const config = this.getConfig();
     if (reason.endsWith(':silent') && !config.resumeSilentTurns) return;
+    // 宽限期内循环被关闭: 发送前必须重新检查开关, 与 :silent 恢复同样处理。
+    // 否则「关掉循环」后仍会多发出一次续跑。
+    if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
     if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused) {
       this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
@@ -996,7 +1074,8 @@ export class AutoContinueRunner {
         this.prioritizedFollowups.delete(message.id);
       }
       const now = Date.now();
-      state.consecutive += 1;
+      // 自主循环的成功续跑不计入连续上限: 上限只约束失败(网络中断等)。
+      if (reason !== LOOP_COMPLETED_REASON) state.consecutive += 1;
       state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
       this.bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
       this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);

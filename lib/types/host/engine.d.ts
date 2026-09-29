@@ -109,7 +109,12 @@ export declare class AutoContinueRunner {
     /** 本会话当前生效的冷却间隔(自适应退避)。 */
     private cooldownFor;
     private schedule;
-    /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens, 其余用通用继续文本。 */
+    /**
+     * 冷却期内的恢复: 等到冷却结束再重新调度。
+     * 直接丢弃会让一次瞬时失败把会话搁置, 直到用户手动发消息才恢复。
+     */
+    private deferCooldownRetry;
+    /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens、自主循环, 其余用通用继续文本。 */
     private templateFor;
     private cancelPending;
     private fire;
