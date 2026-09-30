@@ -1,12 +1,14 @@
-/** Exercise the published DSH 0.1.7 Settings, Loader and HTTP services together. */
+/** Exercise a published DSH cohort's Settings, Loader and HTTP services together. */
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const modules = join(project, 'tests/fixtures/dsh-0.1.7/node_modules');
+const cohort = process.argv[2] ?? '0.1.7';
+const modules = join(project, `tests/fixtures/dsh-${cohort}/node_modules`);
+const runtimeVersion = JSON.parse(readFileSync(join(modules, '@deepseek-ai/dsh-settings/package.json'), 'utf8')).version;
 const load = (name) => import(pathToFileURL(join(modules, '@deepseek-ai', name, 'lib/index.js')).href);
 const { Context } = await load('cordis');
 const { default: Loader } = await load('cordis-plugin-loader');
@@ -49,7 +51,7 @@ try {
   const entry = ctx.loader.resolve('auto-continue');
   const uid = entry.fiber.uid;
   const form = () => ctx.settings.describe().find((row) => row.ns === 'auto-continue');
-  assert.ok(form(), 'the plugin exposes its settings in DSH 0.1.7');
+  assert.ok(form(), `the plugin exposes its settings in DSH ${runtimeVersion}`);
   assert.equal(form().value.paused, false);
 
   const bridge = await fetch(`http://127.0.0.1:${ctx.webServer.port}/api/auto-continue-bridge`);
@@ -78,7 +80,7 @@ try {
   const removed = await fetch(`http://127.0.0.1:${ctx.webServer.port}/api/auto-continue-bridge`);
   assert.equal(removed.status, 404, 'removing the plugin withdraws the HTTP route');
   await removed.text();
-  console.log('DSH 0.1.7 settings, live edits, HTTP bridge and teardown ✅');
+  console.log(`DSH ${runtimeVersion} settings, live edits, HTTP bridge and teardown ✅`);
 } finally {
   await ctx.fiber.dispose();
   rmSync(fixture, { recursive: true, force: true });

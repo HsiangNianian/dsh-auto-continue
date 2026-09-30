@@ -2,10 +2,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { Context, Service } from '@deepseek-ai/cordis';
 import * as React from 'react';
 import * as jsxRuntime from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+const { Context, Service } = await import(process.argv[2]
+  ? new URL(`./fixtures/dsh-${process.argv[2]}/node_modules/@deepseek-ai/cordis/lib/index.js`, import.meta.url).href
+  : '@deepseek-ai/cordis');
 
 const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -124,6 +127,8 @@ async function scenario(service, slot, { delayed = false } = {}) {
     // Do not await a pending fiber: that would mask the original boot hang.
     const fiber = ctx.plugin(plugin);
     await flush();
+    assert.equal(ctx.get(service === 'configForms' ? 'settingsScope' : 'configForms'), undefined,
+      'the other settings provider is absent, as it is in the corresponding DSH cohort');
     assert.equal(fiber.state, 2, `${service}: browser entry activates without the other settings service`);
     assert.equal(bridgeStarts, 1, 'host bridge starts exactly once');
     if (delayed) {
