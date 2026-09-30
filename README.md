@@ -342,7 +342,7 @@ npm run test:runtime
 
 `npm test` covers recovery, autonomous-loop limits and toggles, startup scanning, queue ordering, statistics, localization and settings UI lifecycle. `npm run test:runtime` uses published DSH **0.1.7-rc.2** and **0.2.0-rc.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation with Cordis 4.0.4 when one settings provider is absent. The runtime harness controls agent events; it does not send requests to a model provider.
 
-`npm run watch` rebuilds local changes. If the host has client HMR enabled, it can reload the linked client bundle; otherwise restart DSH and refresh the browser after rebuilding.
+After editing a linked checkout, run `npm run build` to write the updated `lib/` files, then restart DSH and refresh the browser. Hosts with client HMR enabled can reload a rebuilt client bundle automatically.
 
 CI typechecks, rebuilds, runs both test suites, verifies committed `lib/` artifacts and runs [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check). The same checks gate releases. See [screenshot capture notes](docs/screenshots/README.md) when updating the UI documentation.
 

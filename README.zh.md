@@ -342,7 +342,7 @@ npm run test:runtime
 
 `npm test` 覆盖错误恢复、自主循环上限与开关、启动扫描、队列顺序、统计、本地化以及设置界面的生命周期。`npm run test:runtime` 使用已发布的 DSH **0.1.7-rc.2** 和 **0.2.0-rc.1** Settings、Loader、HTTP 组件，并运行真实的 0.2 profile 兼容检查，以及 Cordis 4.0.4 中缺少其中一种设置服务时的客户端激活测试。运行时测试使用受控的 agent 事件，不会向模型服务发送请求。
 
-`npm run watch` 监听本地代码并重新构建。宿主开启 client HMR 时可以热重载链接的客户端包；否则构建后重启 DSH 并刷新浏览器。
+修改链接的本地仓库后，运行 `npm run build` 写入最新的 `lib/` 产物，再重启 DSH 并刷新浏览器。开启 client HMR 的宿主可自动重新加载已构建的客户端包。
 
 CI 执行类型检查、构建、两组测试、已提交 `lib/` 产物校验及 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check)，发布也受这些检查约束。更新界面文档时请参考[截图采集说明](docs/screenshots/README.md)。
 
