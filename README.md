@@ -42,11 +42,11 @@ Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Provider-specific exceptions can be opted into with literal custom retryable patterns; turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **English / Chinese localization** — the settings card, built-in resume / guard / loop text, and browser notifications follow DSH's active UI language (initially selected from the browser language). Only `en` and `zh` are supported; other languages fall back to Chinese. Switching languages updates built-in defaults without overwriting custom text
-- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{sessionTitle}` `{elapsed}` placeholders, so the resume message can carry the failure context ("Continue ({tool} failed: {code})"); a **separate template** fires on `max-tokens` (e.g. "Continue the output without repeating anything already generated")
+- **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{elapsed}` placeholders, so the resume message can carry the failure context ("Continue ({tool} failed: {code})"); a **separate template** fires on `max-tokens` (e.g. "Continue the output without repeating anything already generated")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Silent turn resume** — recover an observed model step or reasoning-only response that completes without visible output. A no-op turn with no model activity is left alone. Text, tool calls, images and extension blocks count as visible, including streamed output. Unobserved turns are not guessed to be silent. Explicit `no-visible-output` markers also recover after restart. Disabling **Resume silent turns** cancels queued silent sends; silent turns never reset the retry cap, even while the option is off.
 - **Autonomous loop** — off by default (`resumeCompletedTurns`). When enabled, normally completed turns continue after the grace period, without the recovery cooldown or attempt cap. Reasoning-only turns and explicit `no-visible-output` endings still consume the recovery budget and obey backoff. Global pause, session pause, manual Stop and disabling the option stop the loop. Its prompt is separate from the loop guard’s prompt (`continueTextLoop`, default `Continue`).
-- **Pause** — a global **Pause auto-continue** toggle in the settings card stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. The **Resume now** notification button is the one explicit exception: pressing it is the user asking for exactly one send, pause or not
+- **Pause** — a global **Pause auto-continue** toggle in the settings card stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. **Resume now** requests one send even when both pauses are active. It leaves the pauses in place, so later automatic recovery and autonomous-loop sends remain paused
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
 - **Loop guard** — watches **running** turns too. Four signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), repeated near-duplicate paragraphs **inside one streamed assistant message**, many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips, give-ups and loop breaks, broken down by error code, with a one-click reset
@@ -61,9 +61,10 @@ It watches the live event streams and reacts to:
 | `turn/end` → `max-tokens` | Output token ceiling reached |
 | `turn/end` → `completed` / `no-visible-output` with no visible output | Observed model activity without visible output, or an explicit silent-ending marker |
 | `turn/end` → `completed` | Continue a normal completion only when autonomous loop is enabled |
-| `host/agent-error` | Agent failure with no turn position (only network/timeout-class messages auto-resume) |
 
 **Recovery stops for:** manual Stop, policy rejection (`blocked`), paused sessions, subagent sessions and the consecutive-attempt cap. A new turn or manual user message cancels a queued continuation. Live `interrupted` markers are left to the startup recovery scan. Recoverable failures during cooldown are **deferred**, not discarded. If an interrupted session already has queued turns, the continuation runs first and the existing turns retain their order behind it. The loop guard can separately cancel and restart a running turn that is repeating itself.
+
+Subagent sessions stay under their parent agent's control. The plugin skips them during live recovery and startup scanning, ignores **Resume now** for them, and leaves them out of loop-guard cancellation. Any queued recovery is cancelled when a session is identified as a subagent.
 
 ---
 
@@ -254,6 +255,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 ![Expanded Auto continue configuration on DSH 0.2](docs/screenshots/02-settings-card.png)
 
 - Edits are **staged** — nothing reaches the disk until you hit **Save**; an unsaved badge marks the card while drafts are pending, and **Discard** drops them
+- If you edit or reset a field while a save is in progress, the newer draft stays in the card. Click **Save** again after the current save finishes to apply it
 - A field you changed shows an **Overridden** badge with a per-field **Reset to default** button that removes the override and restores the inherited value (normally the built-in default)
 - Boolean fields are **tri-state**: *Inherit* (use the default) / *On* / *Off*
 - Invalid drafts (non-numbers, values below the minimum) block the save with a hint
@@ -310,7 +312,7 @@ For a provider-specific error that is safe to resume (confirm first that manuall
 
 Patterns are literal substrings, not regular expressions. Blank lines are ignored; any matching line wins before the built-in permanent-error rules. Cooldown and consecutive-attempt limits still apply.
 
-`continueText` (and `continueTextMaxTokens`, `continueTextSilent`, `continueTextLoop`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one), `{sessionTitle}` (from the session list) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output).
+`continueText` (and `continueTextMaxTokens`, `continueTextSilent`, `continueTextLoop`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output). The host engine currently leaves `{sessionTitle}` empty.
 
 ---
 
@@ -340,7 +342,7 @@ npm test
 npm run test:runtime
 ```
 
-`npm test` covers recovery, autonomous-loop limits and toggles, startup scanning, queue ordering, statistics, localization and settings UI lifecycle. `npm run test:runtime` uses published DSH **0.1.7-rc.2** and **0.2.0-rc.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation with Cordis 4.0.4 when one settings provider is absent. The runtime harness controls agent events; it does not send requests to a model provider.
+`npm test` covers recovery, autonomous-loop limits and toggles, child-session exclusion, manual resume during pauses, startup scanning, queue ordering, statistics, localization, settings UI lifecycle and edits made during pending saves. `npm run test:runtime` uses published DSH **0.1.7-rc.2** and **0.2.0-rc.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation with Cordis 4.0.4 when one settings provider is absent. The runtime harness controls agent events; it does not send requests to a model provider.
 
 After editing a linked checkout, run `npm run build` to write the updated `lib/` files, then restart DSH and refresh the browser. Hosts with client HMR enabled can reload a rebuilt client bundle automatically.
 
