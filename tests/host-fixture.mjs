@@ -51,6 +51,24 @@ export function makeHost(overrides = {}) {
       close();
       return state.stats;
     },
+    postAction(payload) {
+      const route = routes.get('/api/auto-continue-action');
+      if (route === undefined) throw new Error('action route is not registered');
+      return new Promise((resolve) => {
+        const handlers = new Map();
+        const req = {
+          on(name, callback) { handlers.set(name, callback); return req; },
+          destroy() {},
+        };
+        const res = {
+          writeHead() {},
+          end(body) { resolve(JSON.parse(body)); },
+        };
+        route.handler(req, res);
+        handlers.get('data')?.(Buffer.from(JSON.stringify(payload)));
+        handlers.get('end')?.();
+      });
+    },
     dispose() { for (const stop of cleanups.splice(0).reverse()) stop(); },
   };
 }
