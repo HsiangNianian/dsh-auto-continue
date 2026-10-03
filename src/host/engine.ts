@@ -92,6 +92,7 @@ const LOOP_GUARD_CANCEL_CAUSE = {
  */
 const LOOP_COMPLETED_REASON = 'turn/end:completed';
 const LOOP_SILENT_REASON = 'turn/end:loop-silent';
+const MANUAL_NOTIFICATION_REASON = 'manual:notification';
 const isLoopReason = (reason: string): boolean =>
   reason === LOOP_COMPLETED_REASON || reason === LOOP_SILENT_REASON;
 
@@ -934,7 +935,7 @@ export class AutoContinueRunner {
       state.pendingTimer = undefined;
     }
     try {
-      await this.fire(sessionId, 'manual:notification', true);
+      await this.fire(sessionId, MANUAL_NOTIFICATION_REASON, true);
     } catch (error) {
       console.error(`[auto-continue] 手动续跑异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1047,16 +1048,17 @@ export class AutoContinueRunner {
     if (this.disposed) return;
     const state = this.state(sessionId);
     const config = this.getConfig();
+    const manualResume = force && reason === MANUAL_NOTIFICATION_REASON;
     if (reason.endsWith(':silent') && !config.resumeSilentTurns) return;
     // 宽限期内循环被关闭: 发送前必须重新检查开关, 与 :silent 恢复同样处理。
     // 否则「关掉循环」后仍会多发出一次续跑。
     if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
     if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
-    if (config.paused) {
+    if (config.paused && !manualResume) {
       this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
       return;
     }
-    if (Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
+    if (!manualResume && Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
       this.log(`跳过 ${sessionId}(${reason}): 会话暂停中`);
       return;
     }
