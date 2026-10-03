@@ -214,9 +214,9 @@ export class CardForm<T> {
     const plan = this.plan();
     const writes = plan.flatMap((item) => (item.run === undefined ? [] : [item.run]));
     if (plan.length === 0 || this.saving || writes.length !== plan.length) return;
-    // Snapshot the fields this save writes, so edits staged while it is in
-    // flight survive: only the staged keys this save actually wrote are cleared.
-    const fields = new Set(plan.map((item) => item.field));
+    // Keep the staged edits this save writes. A field can be staged again
+    // while a write is pending, so clear it only if that exact edit remains.
+    const edits = plan.map(({ field, staged }) => ({ field, staged }));
     this.saving = true;
     this.failed = false;
     this.publish();
@@ -225,7 +225,9 @@ export class CardForm<T> {
       landed = (await write()) && landed;
     }
     if (landed) {
-      for (const field of fields) this.staged.delete(field);
+      for (const { field, staged } of edits) {
+        if (this.staged.get(field) === staged) this.staged.delete(field);
+      }
     }
     this.saving = false;
     this.failed = !landed;
@@ -238,19 +240,19 @@ export class CardForm<T> {
    * refuses rather than dropping the edit. A staged edit that matches the
    * effective section is not a write at all.
    */
-  private plan(): { field: string; run: (() => Promise<boolean>) | undefined }[] {
-    const plan: { field: string; run: (() => Promise<boolean>) | undefined }[] = [];
+  private plan(): { field: string; staged: StagedEdit; run: (() => Promise<boolean>) | undefined }[] {
+    const plan: { field: string; staged: StagedEdit; run: (() => Promise<boolean>) | undefined }[] = [];
     for (const [field, staged] of this.staged) {
       const spec = this.specOf(field);
       if (staged.clear) {
-        if (this.stored(field)) plan.push({ field, run: () => this.clear(field) });
+        if (this.stored(field)) plan.push({ field, staged, run: () => this.clear(field) });
         continue;
       }
       if (staged.text === spec.format(this.sectionValue(field))) continue;
       const write = spec.parse(staged.text);
-      if (write === undefined) plan.push({ field, run: undefined });
-      else if (write.kind === 'clear') plan.push({ field, run: () => this.clear(field) });
-      else plan.push({ field, run: () => this.store(field, write.value) });
+      if (write === undefined) plan.push({ field, staged, run: undefined });
+      else if (write.kind === 'clear') plan.push({ field, staged, run: () => this.clear(field) });
+      else plan.push({ field, staged, run: () => this.store(field, write.value) });
     }
     return plan;
   }

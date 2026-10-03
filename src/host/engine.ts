@@ -370,12 +370,33 @@ export class AutoContinueRunner {
     return state;
   }
 
+  /** Mark a child session and clear queued grace/cooldown sends. */
+  private markSubagent(sessionId: SessionId, state: SessionState): void {
+    state.subagent = true;
+    this.cancelPending(sessionId, '子代理会话');
+  }
+
+  /** Read durable origin from the live agent for direct action paths as well. */
+  private isSubagent(sessionId: SessionId, state: SessionState): boolean {
+    if (state.subagent) return true;
+    const agent = this.ctx.agents.get(sessionId);
+    if (agent?.session?.header?.origin !== 'subagent') return false;
+    this.markSubagent(sessionId, state);
+    return true;
+  }
+
   /**
    * 事件入口(host 单实例): 预处理工具调用/结果/模型消息(护栏与循环信号),
    * 然后交给回合状态机。
    */
   private onHostEvent(session: Session, event: SessionEvent): void {
     const sessionId = session.id;
+    const sessionState = this.states.get(sessionId);
+    if (session.header?.origin === 'subagent') {
+      this.markSubagent(sessionId, sessionState ?? this.state(sessionId));
+      return;
+    }
+    if (sessionState?.subagent) return;
     if (
       (event.type === 'user/message' || event.type === 'assistant/message') &&
       typeof event.surfaceOp === 'object' &&
@@ -621,6 +642,7 @@ export class AutoContinueRunner {
    * 才会用 loopText 重启回合——DSH 的 first-cause 语义保证用户 Stop 优先。
    */
   private interruptLoop(sessionId: SessionId, state: SessionState): void {
+    if (this.isSubagent(sessionId, state)) return;
     if (state.loopFired) return;
     // 打断本身受冷却约束: 距上次打断/发送太近时不再打断, 防止反复打断刷屏
     if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) {
@@ -907,7 +929,7 @@ export class AutoContinueRunner {
   async resumeNow(sessionId: SessionId): Promise<void> {
     if (this.disposed) return;
     const state = this.state(sessionId);
-    if (state.subagent) return;
+    if (this.isSubagent(sessionId, state)) return;
     if (state.pendingTimer !== undefined) {
       clearTimeout(state.pendingTimer);
       state.pendingTimer = undefined;
@@ -933,7 +955,7 @@ export class AutoContinueRunner {
   private schedule(sessionId: SessionId, reason: string, force = false): void {
     const state = this.state(sessionId);
     const config = this.getConfig();
-    if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
+    if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused) {
       this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
       return;
@@ -1031,7 +1053,7 @@ export class AutoContinueRunner {
     // 宽限期内循环被关闭: 发送前必须重新检查开关, 与 :silent 恢复同样处理。
     // 否则「关掉循环」后仍会多发出一次续跑。
     if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
-    if (state.subagent) return; // 子代理会话由父代理处理, 不抢跑
+    if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused && !manualResume) {
       this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
       return;

@@ -4,6 +4,7 @@
  *
  * 覆盖场景:
  *   1. turn/end error → 宽限期后 followup 配置的文本
+ *   1a. subagent 会话不走实时恢复、手动续跑或 loop guard
  *   1b. English locale → 默认发送 "Continue"
  *   1c. 本地化只替换默认值, 不覆盖用户自定义文本
  *   1d. 未支持的 locale → 回落中文
@@ -460,6 +461,50 @@ const stepStart = (turn, step, seq) => ({
   time: Date.now(),
   data: { turn, step },
 });
+
+// ---------- 测试 1a: 实时路径完整排除子代理会话 ----------
+{
+  console.log('测试 1a: subagent 会话 → 不自动续跑、不手动续跑、不被 loop guard 打断');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10 });
+  const parent = host.makeAgent('parent');
+  const childError = host.makeAgent('child-error', { origin: 'subagent' });
+  const childTokens = host.makeAgent('child-tokens', { origin: 'subagent' });
+  await sleep(20);
+  host.emit(parent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  host.emit(childError.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  host.emit(childTokens.session, turnEnd(1, { kind: 'max-tokens' }));
+  await sleep(50);
+  check('普通会话仍可从 error 恢复', parent.followups.length === 1);
+  check('subagent error 不触发实时恢复', childError.followups.length === 0);
+  check('subagent max-tokens 不触发实时恢复', childTokens.followups.length === 0);
+  await sleep(20);
+
+  const manualHost = startPlugin({ scanOnBoot: false });
+  const manualChild = manualHost.makeAgent('manual-child', { origin: 'subagent' });
+  const response = await postAction(manualHost, { action: 'resume', sessionId: 'manual-child' });
+  await sleep(20);
+  check('subagent 手动 resume 被安全忽略', response.ok === true && manualChild.followups.length === 0);
+  await sleep(20);
+
+  let loopChild;
+  const loopHost = startPlugin({ scanOnBoot: false, loopRepeatText: 2, graceMs: 10, cooldownMs: 0 });
+  loopChild = loopHost.makeAgent('loop-child', {
+    origin: 'subagent',
+    cancel(cause) {
+      loopHost.emit(loopChild.session, turnEnd(1, { kind: 'aborted', reason: cause }));
+    },
+  });
+  await sleep(20);
+  // Exercise interruptLoop's direct origin guard even if this event view lacks header metadata.
+  const loopEventSession = { ...loopChild.session, header: {} };
+  loopHost.emit(loopEventSession, turnStart(1));
+  const repeated = 'Repeated child output that should never reach the loop guard.';
+  loopHost.emit(loopEventSession, assistantMsg(repeated, 10));
+  loopHost.emit(loopEventSession, assistantMsg(repeated, 11));
+  await sleep(50);
+  check('loop guard 不 cancel 或续跑 subagent', loopChild.cancels.length === 0 && loopChild.followups.length === 0);
+  await sleep(20);
+}
 
 // ---------- 测试 1: turn/end error → 宽限期后自动发送 ----------
 {
