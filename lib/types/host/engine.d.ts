@@ -68,6 +68,10 @@ export declare class AutoContinueRunner {
     handleNoticeAction(sessionId: SessionId | undefined, action: string): void;
     dispose(): void;
     private state;
+    /** Mark a child session and clear queued grace/cooldown sends. */
+    private markSubagent;
+    /** Read durable origin from the live agent for direct action paths as well. */
+    private isSubagent;
     /**
      * 事件入口(host 单实例): 预处理工具调用/结果/模型消息(护栏与循环信号),
      * 然后交给回合状态机。

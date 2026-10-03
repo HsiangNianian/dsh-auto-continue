@@ -830,7 +830,7 @@ export interface SessionState {
   running: boolean | undefined;
   /** 当前排队消息数(来自 session/queue 帧)。 */
   queued: number;
-  /** 子代理会话(host/session-added 带 parentSessionId)。 */
+  /** 子代理会话(session header origin is `subagent`). */
   subagent: boolean;
   /** 最近一次回合失败的事实(用于分类与模板填充)。 */
   lastFailure: FailureFacts | undefined;
