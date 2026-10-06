@@ -35,7 +35,12 @@
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Web 界面和桌面应用提供自动恢复。会话因可恢复错误中断时，插件通过 DSH 发送你配置的继续提示。引擎运行在**宿主进程**中，浏览器标签页关闭后仍会工作，多个标签页共享同一个引擎。默认开启中断恢复；成功回合后也继续工作的**自主循环需要手动开启**。
 
-![demo](docs/demo-zh.svg)
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/demo-zh-static.svg">
+    <img src="docs/demo-zh.svg" alt="自动恢复示意：网络中断后等待 3 秒，自动发送继续，助手恢复工作。" width="720">
+  </picture>
+</p>
 
 **智能恢复**(全部可配置):
 
@@ -91,7 +96,7 @@ DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。下面的命�
 
 | DSH 内核 | 插件版本 | 配置入口 |
 | --- | --- | --- |
-| **0.2.1-alpha.1** | **已验证 0.14.0** | **插件 → dsh-client-auto-continue** |
+| **0.2.1-alpha.1** | **已验证 0.14.1** | **插件 → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 或更新版本** | **插件 → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 或更新版本** | 同上，从主侧栏的插件页进入 |
 | 使用旧设置 API 的宿主 | 保留旧版设置界面兼容 | **设置 → 插件 → 插件配置** |

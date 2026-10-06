@@ -1,1 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" viewBox="0 0 1200 260"><defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="60%" stop-color="#e0f2fe"/><stop offset="100%" stop-color="#e0e7ff"/></linearGradient><linearGradient id="bar" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#0ea5e9"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><rect width="1200" height="260" fill="url(#bg)"/><rect width="1200" height="8" x="0" y="252" fill="url(#bar)"/><rect width="116" height="116" x="76" y="70" fill="#0f172a" rx="26"/><text x="134" y="150" fill="#e2e8f0" font-size="58" font-weight="700" text-anchor="middle">继续</text><text x="236" y="122" fill="#0f172a" font-size="54" font-weight="800">dsh-auto-continue</text><text x="238" y="164" fill="#475569" font-size="26">DSH Web UI plugin — auto-continue interrupted requests</text><text x="238" y="202" fill="#64748b" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="21">turn/end · error | interrupted | max-tokens → prompt(&quot;继续&quot;)</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="260" viewBox="0 0 960 260" role="img" lang="zh" aria-labelledby="title description">
+  <title id="title">dsh-auto-continue</title>
+  <desc id="description">HsiangNianian 的 DeepSeek Harness 插件。恢复意外中断的会话，按你的节奏继续。</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .wordmark { font-size: 46px; font-weight: 650; letter-spacing: -1.5px; }
+    .tagline { font-size: 24px; }
+    .compact { display: none; }
+    @media (max-width: 520px) {
+      .eyebrow { font-size: 23px; letter-spacing: 0; }
+      .wordmark { font-size: 49px; }
+      .tagline { font-size: 32px; }
+      .credit { font-size: 25px; }
+      .full { display: none; }
+      .compact { display: inline; }
+    }
+  </style>
+  <rect width="960" height="260" rx="18" fill="#f4f4f5"/>
+  <rect x="40" y="48" width="112" height="112" rx="28" fill="#e4e4e7"/>
+  <g transform="translate(57 64) scale(1.25)">
+    <path d="M49 17A24 24 0 1 0 56 38" fill="none" stroke="#24262b" stroke-width="5" stroke-linecap="round"/>
+    <path d="M49 6v12H37" fill="none" stroke="#24262b" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M27 22l16 10-16 10Z" fill="#24262b" stroke="#24262b" stroke-width="2" stroke-linejoin="round"/>
+  </g>
+  <g fill="#24262b">
+    <text class="eyebrow" x="188" y="61" fill="#545961" font-size="15" letter-spacing="1.6">DEEPSEEK HARNESS PLUGIN</text>
+    <text class="wordmark" x="185" y="118">dsh-auto-continue</text>
+    <text class="tagline full" x="188" y="163" fill="#545961">恢复意外中断的会话，按你的节奏继续。</text>
+    <text class="tagline compact" x="188" y="163" fill="#545961">会话意外中断？接着来。</text>
+  </g>
+  <path d="M40 200H920" stroke="#d4d4d8"/>
+  <text class="credit" x="40" y="236" fill="#545961" font-size="16">by HsiangNianian</text>
+  <!-- A broken thread joining back into one line. -->
+  <g fill="none" stroke="#545961" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M700 230h44m12 0h3m12 0h3m12 0h126"/>
+    <path d="m902 224 10 6-10 6"/>
+  </g>
+</svg>

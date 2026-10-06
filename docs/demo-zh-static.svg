@@ -4,51 +4,19 @@
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
     .body { font-size: 24px; }
-    .compact { display: none; }
-    /* One 12-second cycle: work 0–2s, wait 2–5s, send 5–6.5s, resume 6.5–12s. */
-    .notice { animation: notice 12s linear infinite; }
-    .auto-message { animation: sent 12s ease-out infinite; }
-    .resumed-message { animation: resumed 12s ease-out infinite; }
-    .countdown, .step-active, .state-result { opacity: 0; animation: 12s linear infinite; }
-    .count-3 { animation-name: count3; }
-    .count-2 { animation-name: count2; }
-    .count-1 { animation-name: count1; }
-    .state-result { animation-name: result; }
-    .progress { stroke-dasharray: 100; stroke-dashoffset: 0; animation: progress 12s linear infinite; }
-    .step-1 { animation-name: step1; }
-    .step-2 { animation-name: step2; }
-    .step-3 { animation-name: step3; }
-    .step-4 { animation-name: step4; }
-    @keyframes notice { 0%, 16% { opacity: 0; } 17%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
-    @keyframes sent { 0%, 41.66% { opacity: 0; transform: translateY(5px); } 44%, 96% { opacity: 1; transform: translateY(0); } 98%, 100% { opacity: 0; transform: translateY(0); } }
-    @keyframes resumed { 0%, 54.16% { opacity: 0; transform: translateY(5px); } 57%, 96% { opacity: 1; transform: translateY(0); } 98%, 100% { opacity: 0; transform: translateY(0); } }
-    @keyframes count3 { 0%, 16.66% { opacity: 0; } 16.67%, 24.99% { opacity: 1; } 25%, 100% { opacity: 0; } }
-    @keyframes count2 { 0%, 24.99% { opacity: 0; } 25%, 33.32% { opacity: 1; } 33.33%, 100% { opacity: 0; } }
-    @keyframes count1 { 0%, 33.32% { opacity: 0; } 33.33%, 41.66% { opacity: 1; } 41.67%, 100% { opacity: 0; } }
-    @keyframes result { 0%, 54.16% { opacity: 0; } 54.17%, 100% { opacity: 1; } }
-    @keyframes progress { 0%, 16.67% { stroke-dashoffset: 100; } 41.67%, 100% { stroke-dashoffset: 0; } }
-    @keyframes step1 { 0%, 16.66% { opacity: 1; } 16.67%, 100% { opacity: 0; } }
-    @keyframes step2 { 0%, 16.66% { opacity: 0; } 16.67%, 41.66% { opacity: 1; } 41.67%, 100% { opacity: 0; } }
-    @keyframes step3 { 0%, 41.66% { opacity: 0; } 41.67%, 54.16% { opacity: 1; } 54.17%, 100% { opacity: 0; } }
-    @keyframes step4 { 0%, 54.16% { opacity: 0; } 54.17%, 100% { opacity: 1; } }
+    .compact, .countdown { display: none; }
+    .step-active { opacity: 0; }
+    .step-4 { opacity: 1; }
     @media (max-width: 520px) {
       .full { display: none; }
       .compact { display: inline; }
       .body { font-size: 34px; }
       .heading { font-size: 28px; }
       .role, .annotation, .status, .toggle-label { font-size: 26px; }
-      .step-label { font-size: 29px; }
+      .step-label { font-size: 29px; transform: translateX(-32px); }
       .step-number { display: none; }
-      .step-label { transform: translateX(-32px); }
       .footnote { font-size: 24px; }
       .composer-switch { transform: translate(212px, 532px); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .notice, .auto-message, .resumed-message, .state-result { animation: none; opacity: 1; transform: none; }
-      .countdown { display: none; }
-      .progress { animation: none; stroke-dashoffset: 0; }
-      .step-active { animation: none; opacity: 0; }
-      .step-4 { opacity: 1; }
     }
   </style>
   <rect width="960" height="660" rx="18" fill="#141414"/>

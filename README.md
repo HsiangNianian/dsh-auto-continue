@@ -35,7 +35,12 @@
 
 Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), in the Web UI and desktop app. When a recoverable failure interrupts a session, the plugin sends your configured continuation prompt through DSH. The engine runs **inside the host process**, so it keeps watching while browser tabs are closed; all tabs share that engine. Recovery is enabled by default. Continuing after successful turns is a separate, **opt-in autonomous loop**.
 
-![demo](docs/demo.svg)
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/demo-static.svg">
+    <img src="docs/demo.svg" alt="Recovery demo: a network interruption, a 3-second wait, an automatic Continue message, and resumed work." width="720">
+  </picture>
+</p>
 
 **Smart recovery** (all configurable):
 
@@ -91,7 +96,7 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
-| **0.2.1-alpha.1** | **0.14.0 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.1-alpha.1** | **0.14.1 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |
