@@ -76,6 +76,8 @@ export interface AutoContinueSettings {
     notify?: boolean;
     /** Globally pause auto-continue: no live or scan send, queued pending sends cancelled. */
     paused?: boolean;
+    /** Show the global auto-continue switch in the conversation composer. */
+    showComposerToggle?: boolean;
     /** Loop guard: detect a running turn spinning in place (short talk without tools, or the same tool repeating) and restart it. */
     loopGuard?: boolean;
     /** A model message shorter than this many chars counts as a "short sentence" (loop signal). */

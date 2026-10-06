@@ -39,6 +39,7 @@ Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 **Smart recovery** (all configurable):
 
+- **Composer switch** — enable or pause auto-continue directly beside the message input, using DSH's native switch. It controls all sessions in the current profile and saves immediately. Prefer a quieter toolbar? Hide it in the plugin settings without pausing recovery
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Provider-specific exceptions can be opted into with literal custom retryable patterns; turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **English / Chinese localization** — the settings card, built-in resume / guard / loop text, and browser notifications follow DSH's active UI language (initially selected from the browser language). Only `en` and `zh` are supported; other languages fall back to Chinese. Switching languages updates built-in defaults without overwriting custom text
@@ -74,7 +75,7 @@ The host-side engine subscribes to the session event firehose inside the dsh hos
 
 On host boot it also scans the live sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed — the agent-loop resumes the session and the engine picks it up).
 
-The browser half is a thin shell: the settings card, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
+The browser provides the settings card and composer switch, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
 
 ### Recovery workflow
 
@@ -90,15 +91,16 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
+| **0.2.1-alpha.1** | **0.13.0 verified** | **Plugins → dsh-client-auto-continue → Auto continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue → Auto continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |
 
-DSH 0.1.0-rc.6 and earlier are unsupported. Automated runtime checks cover **0.1.7-rc.2** and **0.2.0-rc.1**. Desktop app versions and embedded DSH runtime versions are different; use the runtime version when checking compatibility. For the CLI, run `dsh --version`; see [official DSH releases](https://github.com/deepseek-ai/deepseek-harness/releases) for available versions.
+DSH 0.1.0-rc.6 and earlier are unsupported. Automated runtime checks cover **0.1.7-rc.2**, **0.2.0-rc.1** and **0.2.1-alpha.1**. Desktop app versions and embedded DSH runtime versions are different; use the runtime version when checking compatibility. For the CLI, run `dsh --version`; see [official DSH releases](https://github.com/deepseek-ai/deepseek-harness/releases) for available versions.
 
 **Plugins 0.11.9 and 0.12.0 are rejected by DSH 0.2.0-rc.1’s version check.** Upgrade the plugin to 0.12.1 or newer; its existing configuration-form integration works on this runtime. See [#50](https://github.com/HsiangNianian/dsh-auto-continue/issues/50).
 
-On current DSH, **Settings → Built-in plugins** is a component inventory, not the configuration editor. Use the main **Plugins** page. The screenshots below use **DSH 0.2.0-rc.1 + plugin 0.12.1**. If you previously installed with a symlink or hand-written loader entry, see [Migrating an older installation](#migrating-an-older-installation).
+On current DSH, **Settings → Built-in plugins** is a component inventory, not the configuration editor. Use the main **Plugins** page. The screenshots below use **DSH 0.2.1-alpha.1 + plugin 0.13.0**. If you previously installed with a symlink or hand-written loader entry, see [Migrating an older installation](#migrating-an-older-installation).
 
 ### From npm (recommended)
 
@@ -185,6 +187,16 @@ dsh web
 
 ---
 
+## Composer switch
+
+Starting with **0.13.0**, an **Auto-continue** switch appears beside the message input by default. It uses DSH's native `Switch` and follows the active theme.
+
+![Native Auto-continue switch beside the message input](docs/screenshots/08-composer-toggle.png)
+
+**On** allows automatic recovery; **Off** sets the existing global `paused` option. The change saves immediately and applies to **all sessions in the current profile**, with other open tabs updating too. This is separate from the notification action that pauses one session for an hour. Enabling it does not clear a session's individual pause.
+
+To hide the switch, open **Plugins → dsh-client-auto-continue → Auto continue**, turn off **Show auto-continue switch in the composer**, then click **Save**. This only changes visibility; recovery keeps its current state. The corresponding config key is `showComposerToggle`, default `true`. Older hosts without the composer slot retain the settings card.
+
 ## Configuration
 
 On **DSH 0.1.7 / 0.2**, open **Plugins** from the main sidebar, choose **dsh-client-auto-continue**, then expand the **Auto continue** card. This is separate from **Settings → Built-in plugins**, which only lists component status. Older DSH versions use **Settings → Plugins → Plugin configuration**.
@@ -206,6 +218,7 @@ The browser mirrors DSH's active language into the internal `locale` field. Leav
   config:
     locale: 'en' # normally managed by the browser
     paused: false
+    showComposerToggle: true
     continueText: ''
     resumeSilentTurns: true
     resumeCompletedTurns: false
@@ -257,7 +270,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 - Edits are **staged** — nothing reaches the disk until you hit **Save**; an unsaved badge marks the card while drafts are pending, and **Discard** drops them
 - If you edit or reset a field while a save is in progress, the newer draft stays in the card. Click **Save** again after the current save finishes to apply it
 - A field you changed shows an **Overridden** badge with a per-field **Reset to default** button that removes the override and restores the inherited value (normally the built-in default)
-- Boolean fields are **tri-state**: *Inherit* (use the default) / *On* / *Off*
+- **Show auto-continue switch in the composer** uses a native switch and is staged until Save. Other boolean fields are **tri-state**: *Inherit* (use the default) / *On* / *Off*
 - Invalid drafts (non-numbers, values below the minimum) block the save with a hint
 - In a read-only deployment the card shows the stored values but disables every control
 - Changes apply immediately after Save and persist in the active profile config (or `~/.dsh/settings.yaml` on older hosts)
@@ -272,6 +285,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Field | Default | Description |
 | --- | --- | --- |
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
+| Show auto-continue switch in the composer | `on` | Show the composer switch (`showComposerToggle`); hiding it does not pause recovery |
 | Continue text | `Continue` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
 | Resume silent turns | `on` | Resume a turn that ended normally with reasoning only (no text, no tool call); does not reset the consecutive count |

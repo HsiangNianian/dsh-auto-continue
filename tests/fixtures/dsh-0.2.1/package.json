@@ -1,0 +1,13 @@
+{
+  "name": "auto-continue-runtime-test-0.2.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.6-alpha.1",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-alpha.1",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.1",
+    "@deepseek-ai/dsh-settings": "0.2.1-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  }
+}

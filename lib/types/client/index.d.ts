@@ -4,6 +4,7 @@
  * Since 0.8.0 the auto-continue ENGINE runs inside the host process (single
  * instance — see src/host/engine.ts), so this half only:
  * - registers the `auto-continue` settings card in the available plugin UI,
+ * - adds a native composer switch backed by the same global pause setting,
  * - subscribes to the host status bridge (SSE) and shows browser
  *   notifications with action buttons (Resume now / Pause 1h) via the bridge
  *   action endpoint,
@@ -13,6 +14,11 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import { type SettingsCardKey } from './locales.ts';
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface SlotMap {
+        /** Official compact composer tools; never occupy the resident single slot. */
+        'conversation.input.left': {
+            kind: 'list';
+            scope: 'session';
+        };
         /** DSH 0.1.7's bundle configuration seat; only the owner props we consume. */
         'plugins.bundle.config': {
             kind: 'keyed';

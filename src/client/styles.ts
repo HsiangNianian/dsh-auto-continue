@@ -6,6 +6,20 @@
  */
 
 const css = `
+.dshAcComposer { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; flex: 0 0 auto; font: inherit; }
+.dshAcComposerLabel { color: var(--dsw-alias-label-secondary); font-size: 12px; white-space: nowrap; }
+.dshAcSwitchTarget { display: inline-flex; align-items: center; min-height: 32px; }
+.dshAcSwitchTarget > button { position: relative; }
+.dshAcSwitchTarget > button::before { content: ''; position: absolute; inset: -6px -3px; }
+.dshAcComposerError { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-secondary)); font-size: 12px; max-width: 160px; }
+.dshAcComposerError:empty { display: none; }
+.dshAcSwitch { position: relative; box-sizing: border-box; flex: none; width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 999px; background: var(--dsw-alias-border-l3); cursor: pointer; }
+.dshAcSwitch[aria-checked='true'] { background: var(--dsw-alias-brand-primary); }
+.dshAcSwitch > span { display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--dsw-alias-label-primary-foreground); }
+.dshAcSwitch[aria-checked='true'] > span { transform: translateX(16px); }
+.dshAcSwitch[aria-checked='false'] > span { background: var(--dsw-alias-switch-thumb, var(--dsw-alias-label-primary-foreground)); }
+.dshAcSwitch:disabled { opacity: .5; cursor: default; }
+.dshAcSwitch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .dshAcCard {
   --dsh-ac-violet: #8b7cff;
   --dsh-ac-cyan: #45cce5;

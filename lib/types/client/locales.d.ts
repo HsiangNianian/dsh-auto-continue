@@ -20,6 +20,12 @@ export declare const zh: {
     'section.live.title': string;
     'section.live.description': string;
     'field.paused': string;
+    'field.showComposerToggle': string;
+    'field.showComposerToggleHint': string;
+    'composer.label': string;
+    'composer.scope': string;
+    'composer.saving': string;
+    'composer.saveFailed': string;
     'field.pausedHint': string;
     'field.continueText': string;
     'field.continueTextHint': string;

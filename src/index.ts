@@ -74,6 +74,8 @@ export const AutoContinueSchema = z.object({
   notify: z.boolean().default(false),
   /** Globally pause auto-continue: no live or scan send. */
   paused: z.boolean().default(false),
+  /** Show the global auto-continue switch in the conversation composer. */
+  showComposerToggle: z.boolean().default(true),
   /** Loop guard: detect a running turn spinning in place and restart it. */
   loopGuard: z.boolean().default(true),
   /** A model message shorter than this many chars counts as a short sentence (loop signal). */

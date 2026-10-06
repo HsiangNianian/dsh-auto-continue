@@ -63,6 +63,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     notify: z<boolean, boolean>;
     /** Globally pause auto-continue: no live or scan send. */
     paused: z<boolean, boolean>;
+    /** Show the global auto-continue switch in the conversation composer. */
+    showComposerToggle: z<boolean, boolean>;
     /** Loop guard: detect a running turn spinning in place and restart it. */
     loopGuard: z<boolean, boolean>;
     /** A model message shorter than this many chars counts as a short sentence (loop signal). */
@@ -124,6 +126,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     notify: z<boolean, boolean>;
     /** Globally pause auto-continue: no live or scan send. */
     paused: z<boolean, boolean>;
+    /** Show the global auto-continue switch in the conversation composer. */
+    showComposerToggle: z<boolean, boolean>;
     /** Loop guard: detect a running turn spinning in place and restart it. */
     loopGuard: z<boolean, boolean>;
     /** A model message shorter than this many chars counts as a short sentence (loop signal). */
@@ -190,6 +194,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     notify: z<boolean, boolean>;
     /** Globally pause auto-continue: no live or scan send. */
     paused: z<boolean, boolean>;
+    /** Show the global auto-continue switch in the conversation composer. */
+    showComposerToggle: z<boolean, boolean>;
     /** Loop guard: detect a running turn spinning in place and restart it. */
     loopGuard: z<boolean, boolean>;
     /** A model message shorter than this many chars counts as a short sentence (loop signal). */
@@ -251,6 +257,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     notify: z<boolean, boolean>;
     /** Globally pause auto-continue: no live or scan send. */
     paused: z<boolean, boolean>;
+    /** Show the global auto-continue switch in the conversation composer. */
+    showComposerToggle: z<boolean, boolean>;
     /** Loop guard: detect a running turn spinning in place and restart it. */
     loopGuard: z<boolean, boolean>;
     /** A model message shorter than this many chars counts as a short sentence (loop signal). */

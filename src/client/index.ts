@@ -4,6 +4,7 @@
  * Since 0.8.0 the auto-continue ENGINE runs inside the host process (single
  * instance — see src/host/engine.ts), so this half only:
  * - registers the `auto-continue` settings card in the available plugin UI,
+ * - adds a native composer switch backed by the same global pause setting,
  * - subscribes to the host status bridge (SSE) and shows browser
  *   notifications with action buttons (Resume now / Pause 1h) via the bridge
  *   action endpoint,
@@ -24,6 +25,7 @@ import {
   AutoContinueSettingsPage,
 } from './settings-card.tsx';
 import { startBridge } from './bridge.ts';
+import { AutoContinueComposerToggle } from './composer-toggle.tsx';
 import type { SettingsScope } from './dsh-store-compat.ts';
 
 /** Dictionary namespace owned by this plugin. */
@@ -34,6 +36,11 @@ const SETTINGS_NS = 'auto-continue';
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
+    /** Official compact composer tools; never occupy the resident single slot. */
+    'conversation.input.left': {
+      kind: 'list';
+      scope: 'session';
+    };
     /** DSH 0.1.7's bundle configuration seat; only the owner props we consume. */
     'plugins.bundle.config': {
       kind: 'keyed';
@@ -136,6 +143,18 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
 
   const controller = new AutoContinueSettingsCardController(scope);
   ctx.effect(() => () => controller.dispose(), 'auto-continue: settings form');
+
+  ctx.slots.inject('conversation.input.left', () =>
+    ctx.slots.register(
+      {
+        name: 'conversation.input.left',
+        id: 'auto-continue',
+        locale: NS,
+        inject: () => controller.injectComposer(),
+      },
+      AutoContinueComposerToggle,
+    ),
+  );
 
   // Slot injection waits for the matching UI declaration. Keep the old
   // settings card and the new bundle page independent of service migration.

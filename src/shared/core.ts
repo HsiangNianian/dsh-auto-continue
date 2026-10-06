@@ -84,6 +84,8 @@ export interface AutoContinueSettings {
   notify?: boolean;
   /** Globally pause auto-continue: no live or scan send, queued pending sends cancelled. */
   paused?: boolean;
+  /** Show the global auto-continue switch in the conversation composer. */
+  showComposerToggle?: boolean;
   /** Loop guard: detect a running turn spinning in place (short talk without tools, or the same tool repeating) and restart it. */
   loopGuard?: boolean;
   /** A model message shorter than this many chars counts as a "short sentence" (loop signal). */
@@ -124,6 +126,7 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   backoffMaxMs: 300000,
   notify: false,
   paused: false,
+  showComposerToggle: true,
   loopGuard: true,
   loopShortChars: 40,
   loopWindowMs: 30000,
@@ -196,6 +199,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     backoffMaxMs: numberOr(value.backoffMaxMs, DEFAULT_CONFIG.backoffMaxMs),
     notify: booleanOr(value.notify, DEFAULT_CONFIG.notify),
     paused: booleanOr(value.paused, DEFAULT_CONFIG.paused),
+    showComposerToggle: booleanOr(value.showComposerToggle, DEFAULT_CONFIG.showComposerToggle),
     loopGuard: booleanOr(value.loopGuard, DEFAULT_CONFIG.loopGuard),
     loopShortChars: Math.max(1, numberOr(value.loopShortChars, DEFAULT_CONFIG.loopShortChars)),
     loopWindowMs: Math.max(1000, numberOr(value.loopWindowMs, DEFAULT_CONFIG.loopWindowMs)),

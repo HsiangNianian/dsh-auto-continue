@@ -1,7 +1,7 @@
 {
   "name": "dsh-client-auto-continue",
   "description": "DSH Web UI plugin: automatically sends a localized continue prompt when a request is interrupted by network errors or other non-human causes",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -46,8 +46,8 @@
     "build": "node build.mjs && tsc -p tsconfig.build.json",
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test:runtime": "node tests/settings-host-live.mjs 0.1.7 && node tests/settings-host-live.mjs 0.2.0 && node tests/profile-compatibility.mjs && node tests/client-settings-services.mjs 0.2.0",
-    "test": "node tests/scan-on-boot.mjs && node tests/silent-turn-boundaries.mjs && node tests/autonomous-loop.mjs && node tests/manual-resume-pauses.mjs && node tests/stats-freshness.mjs && node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/client-settings-services.mjs && node tests/client-settings-form.mjs && node tests/locale-mirror-bounded.mjs && node tests/settings-card-ui.mjs && node tests/prepare-github-package.mjs",
+    "test:runtime": "node tests/settings-host-live.mjs 0.1.7 && node tests/settings-host-live.mjs 0.2.0 && node tests/settings-host-live.mjs 0.2.1 && node tests/profile-compatibility.mjs 0.2.0 && node tests/profile-compatibility.mjs 0.2.1 && node tests/client-settings-services.mjs 0.2.0 && node tests/client-settings-services.mjs 0.2.1",
+    "test": "node tests/scan-on-boot.mjs && node tests/silent-turn-boundaries.mjs && node tests/autonomous-loop.mjs && node tests/manual-resume-pauses.mjs && node tests/stats-freshness.mjs && node tests/simulate-host.mjs && node tests/settings-host-compat.mjs && node tests/simulate-client-loader.mjs && node tests/client-settings-services.mjs && node tests/client-settings-form.mjs && node tests/locale-mirror-bounded.mjs && node tests/settings-card-ui.mjs && node tests/composer-toggle.mjs && node tests/prepare-github-package.mjs",
     "prepack": "npm run build"
   },
   "keywords": [

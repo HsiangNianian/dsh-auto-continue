@@ -1,10 +1,12 @@
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import { type AutoContinueSettings } from './engine.ts';
+import type { ComposerToggleFace } from './composer-toggle.tsx';
 import { type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
 import { type CardActions, type CardFieldState, type CardShell } from './settings-form.ts';
 /** What the auto-continue card renders. */
 export interface AutoContinueSettingsCardState extends CardShell {
     paused: CardFieldState;
+    showComposerToggle: CardFieldState;
     continueText: CardFieldState;
     continueTextMaxTokens: CardFieldState;
     resumeSilentTurns: CardFieldState;
@@ -43,8 +45,13 @@ export interface AutoContinueSettingsCardFace extends CardActions {
 }
 /** Bridges the `auto-continue` scope onto the card's staged form. */
 export declare class AutoContinueSettingsCardController {
+    private readonly scope;
     private readonly form;
     private readonly store;
+    private readonly composer;
+    private composerSaving;
+    private composerFailed;
+    private disposed;
     /**
      * @param scope - the bound settings scope for the `auto-continue` namespace.
      */
@@ -55,6 +62,9 @@ export declare class AutoContinueSettingsCardController {
      * @returns the card's snapshot and its form actions.
      */
     inject(): AutoContinueSettingsCardFace;
+    injectComposer(): ComposerToggleFace;
+    private composerProjection;
+    private setEnabled;
     /** Release this card's subscription to the provider-owned settings form. */
     dispose(): void;
 }

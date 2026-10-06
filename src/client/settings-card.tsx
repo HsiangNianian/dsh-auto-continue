@@ -9,7 +9,9 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
-import { type AutoContinueSettings } from './engine.ts';
+import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
+import type { ComposerToggleFace, ComposerToggleState } from './composer-toggle.tsx';
+import { NativeSwitch } from './native-switch.tsx';
 import { createSnapshotStore, type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
 import {
   pausedSessions,
@@ -37,6 +39,7 @@ injectStyles();
 /** What the auto-continue card renders. */
 export interface AutoContinueSettingsCardState extends CardShell {
   paused: CardFieldState;
+  showComposerToggle: CardFieldState;
   continueText: CardFieldState;
   continueTextMaxTokens: CardFieldState;
   resumeSilentTurns: CardFieldState;
@@ -79,13 +82,18 @@ export interface AutoContinueSettingsCardFace extends CardActions {
 export class AutoContinueSettingsCardController {
   private readonly form: CardForm<AutoContinueSettings>;
   private readonly store: SnapshotStore<AutoContinueSettingsCardState>;
+  private readonly composer: SnapshotStore<ComposerToggleState>;
+  private composerSaving = false;
+  private composerFailed = false;
+  private disposed = false;
 
   /**
    * @param scope - the bound settings scope for the `auto-continue` namespace.
    */
-  constructor(scope: SettingsScope<AutoContinueSettings>) {
+  constructor(private readonly scope: SettingsScope<AutoContinueSettings>) {
     this.form = new CardForm(scope, [
       booleanField('paused'),
+      booleanField('showComposerToggle'),
       textField('continueText'),
       textField('continueTextMaxTokens'),
       booleanField('resumeSilentTurns'),
@@ -116,12 +124,14 @@ export class AutoContinueSettingsCardController {
       textField('loopText'),
     ]);
     this.store = this.form.bind(() => this.projection(), createSnapshotStore);
+    this.composer = this.form.bind(() => this.composerProjection(), createSnapshotStore);
   }
 
   private projection(): AutoContinueSettingsCardState {
     return {
       ...this.form.shell(),
       paused: this.form.field('paused'),
+      showComposerToggle: this.form.field('showComposerToggle'),
       continueText: this.form.field('continueText'),
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
       resumeSilentTurns: this.form.field('resumeSilentTurns'),
@@ -161,8 +171,40 @@ export class AutoContinueSettingsCardController {
     return { hooks: { autoContinueSettingsCard: this.store }, ...this.form.actions() };
   }
 
+  injectComposer(): ComposerToggleFace {
+    return { hooks: { autoContinueComposer: this.composer }, setEnabled: (enabled) => void this.setEnabled(enabled) };
+  }
+
+  private composerProjection(): ComposerToggleState {
+    const snapshot = this.scope.getSnapshot();
+    return {
+      visible: snapshot.status === 'ready' && (snapshot.value?.showComposerToggle ?? DEFAULT_CONFIG.showComposerToggle),
+      enabled: !(snapshot.value?.paused ?? DEFAULT_CONFIG.paused),
+      writable: snapshot.status === 'ready' && snapshot.writable && snapshot.mode === 'host',
+      saving: this.composerSaving,
+      failed: this.composerFailed,
+    };
+  }
+
+  private async setEnabled(enabled: boolean): Promise<void> {
+    if (this.disposed || this.composerSaving || !this.composerProjection().writable) return;
+    this.composerSaving = true;
+    this.composerFailed = false;
+    this.composer.set(this.composerProjection());
+    try {
+      const result = await this.scope.set('paused', !enabled);
+      this.composerFailed = result === false || this.composerProjection().enabled !== enabled;
+    } catch {
+      this.composerFailed = true;
+    } finally {
+      this.composerSaving = false;
+      if (!this.disposed) this.composer.set(this.composerProjection());
+    }
+  }
+
   /** Release this card's subscription to the provider-owned settings form. */
   dispose(): void {
+    this.disposed = true;
     this.form.dispose();
   }
 }
@@ -418,6 +460,29 @@ function BooleanField(props: FieldProps) {
   );
 }
 
+/** Visibility is staged with the rest of the form, including Reset/Discard. */
+function ComposerVisibilityField(props: FieldProps) {
+  return (
+    <div className="dshAcField dshAcFieldWide">
+      <div className="dshAcHead">
+        <span className="dshAcLabel">{props.label}</span>
+        <span className="dshAcBadges">
+          {props.overridden ? <>
+            <span className="dshAcBadge">{props.t('chrome.overridden')}</span>
+            <button type="button" className="dshAcReset" disabled={props.disabled}
+              onClick={props.onReset}>{props.t('chrome.reset')}</button>
+          </> : null}
+          <span className="dshAcSwitchTarget">
+            <NativeSwitch checked={props.text === '' ? DEFAULT_CONFIG.showComposerToggle : props.text === 'true'}
+              onChange={(checked) => props.onEdit(String(checked))} label={props.label} disabled={props.disabled} />
+          </span>
+        </span>
+      </div>
+      <p className="dshAcHint">{props.hint}</p>
+    </div>
+  );
+}
+
 type SettingsSectionTone = 'handoff' | 'autoloop' | 'safety' | 'recovery' | 'loop' | 'live';
 
 /** A real behavior group, not a decorative divider: each section maps to one phase of the relay. */
@@ -584,6 +649,15 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
             {...state.paused}
             onEdit={(text) => props.edit('paused', text)}
             onReset={() => props.resetField('paused')}
+          />
+          <ComposerVisibilityField
+            id="auto-continue-show-composer-toggle"
+            label={t('field.showComposerToggle')}
+            hint={t('field.showComposerToggleHint')}
+            {...shared}
+            {...state.showComposerToggle}
+            onEdit={(text) => props.edit('showComposerToggle', text)}
+            onReset={() => props.resetField('showComposerToggle')}
           />
           <ValueField
             id="auto-continue-continue-text"

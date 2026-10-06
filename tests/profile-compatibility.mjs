@@ -6,11 +6,13 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const runtime = join(project, 'tests/fixtures/dsh-0.2.0');
+const cohort = process.argv[2] ?? '0.2.0';
+const runtime = join(project, `tests/fixtures/dsh-${cohort}`);
 const { evaluatePluginCompatibility, getDshRuntimeVersion, loadProfileDirectory } = await import(
   pathToFileURL(join(runtime, 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js')).href
 );
-assert.equal(getDshRuntimeVersion(), '0.2.0-rc.1');
+const runtimeVersion = JSON.parse(readFileSync(join(runtime, 'node_modules/@deepseek-ai/dsh-app-boot/package.json'), 'utf8')).version;
+assert.equal(getDshRuntimeVersion(), runtimeVersion);
 const manifest = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8'));
 const fixture = mkdtempSync(join(tmpdir(), 'auto-continue-profile-compat-'));
 const bundle = join(fixture, 'node_modules', manifest.name);
@@ -32,7 +34,7 @@ try {
   const rejected = load();
   assert.equal(rejected.layers.length, 0);
   assert.equal(rejected.skippedBundles.length, 1);
-  assert.match(rejected.skippedBundles[0].reason, /incompatible with dsh 0\.2\.0-rc\.1/);
+  assert.ok(rejected.skippedBundles[0].reason.includes(`incompatible with dsh ${runtimeVersion}`));
 
   // The actual release manifest must load without compatibility exemptions.
   copyFileSync(join(project, 'package.json'), join(bundle, 'package.json'));
@@ -41,11 +43,11 @@ try {
   assert.equal(accepted.layers.length, 1);
   assert.equal(accepted.layers[0].packageName, manifest.name);
   assert.ok(accepted.layers[0].patches.length > 0, 'the host plugin row is admitted');
-  for (const version of ['0.1.0-rc.7', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0']) {
+  for (const version of ['0.1.0-rc.7', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0', '0.2.1-alpha.1']) {
     assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined, version);
   }
   assert.ok(evaluatePluginCompatibility(manifest, {}, '0.3.0'), 'future minor versions need review');
-  console.log('DSH 0.2 profile admission, optional-peer rejection and supported versions ✅');
+  console.log(`DSH ${runtimeVersion} profile admission, optional-peer rejection and supported versions ✅`);
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }
