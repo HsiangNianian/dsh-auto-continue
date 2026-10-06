@@ -61,7 +61,14 @@ function instantiate(reactModule = React) {
   });
 }
 
-const exported = instantiate();
+let activeCategory = 'general';
+const exported = instantiate({
+  ...React,
+  useState(initial) {
+    const state = React.useState(initial);
+    return initial === 'general' ? [activeCategory, state[1]] : state;
+  },
+});
 
 let snapshot = {
   status: 'ready',
@@ -122,67 +129,52 @@ function render(locale) {
   }));
 }
 
-const en = render('en');
-assert.doesNotMatch(en, /Continuity relay/);
-assert.match(en, /Interrupted/);
-assert.match(en, /Safe pause/);
-assert.match(en, />Continue</);
-assert.match(en, /Star on GitHub/);
-assert.match(en, /HsiangNianian\/dsh-auto-continue/);
-assert.match(en, /href="https:\/\/github\.com\/HsiangNianian\/dsh-auto-continue"/);
-assert.match(en, /target="_blank"/);
-assert.match(en, /rel="noreferrer"/);
-for (const button of en.matchAll(/<button\b[\s\S]*?<\/button>/g)) {
-  assert.doesNotMatch(button[0], /<a\b/, 'external link must not be nested inside the disclosure button');
+
+for (const locale of ['en', 'zh']) {
+  const html = render(locale);
+  assert.match(html, /href="https:\/\/github\.com\/HsiangNianian\/dsh-auto-continue"/);
+  assert.match(html, /target="_blank"/);
+  assert.match(html, /rel="noopener noreferrer"/);
+  assert.match(html, /HsiangNianian/);
+  assert.match(html, /role="tablist"/);
+  assert.equal([...html.matchAll(/role="tab"/g)].length, 6);
+  assert.match(html, /role="tabpanel"/);
+  assert.doesNotMatch(html, /dshAcJourney|pv-switcher|pv-root/);
+  for (const button of html.matchAll(/<button\b[\s\S]*?<\/button>/g)) {
+    assert.doesNotMatch(button[0], /<a\b/, 'external link must not be nested in a button');
+  }
 }
+assert.match(render('zh'), /觉得好用的话，点个 Star 吧/);
+assert.match(render('en'), /Finding it useful\? Leave a Star/);
+assert.match(render('en'), /<button\b(?=[^>]*aria-label="Auto-continue")(?=[^>]*aria-checked="true")/);
+face.edit('paused', 'true');
+assert.match(render('en'), /<button\b(?=[^>]*aria-label="Auto-continue")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
+assert.match(render('en'), /dshAcStatus">Enabled</, 'header reports committed state until Save');
+face.discard();
 
-const zh = render('zh');
-assert.doesNotMatch(zh, /中断接力器/);
-assert.match(zh, /检测中断/);
-assert.match(zh, /安全等待/);
-assert.match(zh, /发送继续/);
-assert.match(zh, /去 GitHub 点 Star/);
-
-const openReact = {
-  ...React,
-  useState(initial) {
-    const state = React.useState(initial);
-    return initial === false ? [true, state[1]] : state;
-  },
-};
-const openExported = instantiate(openReact);
-let OpenCard;
-let openFace;
-openExported.apply({
-  ...ctx,
-  slots: {
-    ...ctx.slots,
-    register(spec, component) {
-      OpenCard = component;
-      openFace = spec.inject();
-      return () => {};
-    },
-  },
-});
-const openStore = openFace.hooks.autoContinueSettingsCard;
-function renderOpen(locale) {
-  return renderToStaticMarkup(React.createElement(OpenCard, {
-    ...openFace,
-    t: (key) => dictionaries[locale][key],
-    useAutoContinueSettingsCard: (select) => select(openStore.getSnapshot()),
-  }));
+const expected = Object.entries(face.hooks.autoContinueSettingsCard.getSnapshot())
+  .filter(([, value]) => value && typeof value === 'object' && 'text' in value).map(([key]) => key).sort();
+const visible = [];
+for (const category of ['general', 'recovery', 'startup', 'prompts', 'safety', 'status']) {
+  activeCategory = category;
+  for (const locale of ['en', 'zh']) {
+    const html = render(locale);
+    assert.match(html, new RegExp(`data-category="${category}"[^>]*aria-selected="true"`));
+    assert.ok(html.includes(dictionaries[locale][`category.${category}.title`]));
+    if (locale === 'en') visible.push(...[...html.matchAll(/data-field="([^"]+)"/g)].map(match => match[1]));
+    if (category === 'recovery') assert.ok(html.includes(dictionaries[locale]['field.retryableErrorPatternsPlaceholder']));
+    if (category === 'status') assert.ok(html.includes(dictionaries[locale]['stats.empty']));
+  }
 }
+assert.deepEqual(visible.sort(), expected, 'each existing configuration field is reachable exactly once');
 
-const expandedEn = renderOpen('en');
-for (const heading of ['The handoff', 'Safety rhythm', 'Recovery radar', 'Loop breaker', 'Live signal']) {
-  assert.match(expandedEn, new RegExp(`>${heading}<`));
-}
-assert.match(expandedEn, /placeholder="For example: Upstream rejected the request as invalid"/);
-
-const expandedZh = renderOpen('zh');
-for (const heading of ['接力方式', '安全节奏', '恢复雷达', '循环断路器', '现场状态']) {
-  assert.match(expandedZh, new RegExp(`>${heading}<`));
-}
-assert.match(expandedZh, /placeholder="例如：Upstream rejected the request as invalid"/);
-
-console.log('settings card UI + GitHub CTA ✅');
+activeCategory = 'general';
+face.edit('cooldownMs', 'not a number');
+face.edit('continueText', 'Keep this draft');
+assert.match(render('en'), /data-category="recovery"[^>]*aria-label="Retry strategy:/, 'invalid fields remain discoverable in an inactive category');
+assert.match(render('en'), /class="dshAcSave" disabled=""/);
+activeCategory = 'prompts';
+assert.match(render('en'), />Keep this draft<\/textarea>/, 'category changes preserve drafts');
+face.discard();
+assert.doesNotMatch(render('en'), />Keep this draft<\/textarea>/);
+console.log('category settings UI, staged switches, and GitHub invitation ✅');

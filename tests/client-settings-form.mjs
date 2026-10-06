@@ -261,3 +261,24 @@ test('discard removes drafts before and during a pending save', async () => {
   assert.equal(form.field('graceMs').text, '5000');
   assert.equal(form.shell().dirty, false);
 });
+
+test('save reports success only for accepted writes and recovers after a rejected promise', async () => {
+  const scope = createScope();
+  const form = createForm(scope);
+  assert.equal(await form.save(), false, 'no change is not a successful save');
+  form.actions().edit('graceMs', 'invalid');
+  assert.equal(await form.save(), false, 'invalid drafts are not saved');
+  form.actions().edit('graceMs', '5000');
+  const gate = scope.holdNextWrite();
+  const saving = form.save();
+  await gate.started;
+  assert.equal(await form.save(), false, 'a duplicate save does not succeed');
+  gate.reject(new Error('connection closed'));
+  assert.equal(await saving, false);
+  assert.equal(form.shell().saving, false);
+  assert.equal(form.shell().failed, true);
+  assert.equal(form.shell().dirty, true);
+  assert.equal(await form.save(), true, 'the retained draft can be retried');
+  assert.equal(form.shell().failed, false);
+  assert.equal(scope.getSnapshot().value.graceMs, 5000);
+});

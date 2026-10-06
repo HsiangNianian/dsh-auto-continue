@@ -141,7 +141,7 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
   ctx.on('locale/change', syncLocale);
   syncLocale();
 
-  const controller = new AutoContinueSettingsCardController(scope);
+  const controller = new AutoContinueSettingsCardController(scope, () => ctx.locale.getLocale().active);
   ctx.effect(() => () => controller.dispose(), 'auto-continue: settings form');
 
   ctx.slots.inject('conversation.input.left', () =>

@@ -1,41 +1,40 @@
 # Configuration and composer screenshots
 
-Captured on 2026-10-06 using **DSH 0.2.1-alpha.1** and
-the **dsh-client-auto-continue 0.13.0** release build in Chromium, with DSH's dark theme.
-These are screenshots of the running application in an isolated `DSH_HOME`
-with no user sessions or API keys.
+Captured on 2026-10-06 with **DSH 0.2.1-alpha.1** and the **current working-tree build**
+(the package version remains 0.13.0 until release), using Chromium and DSH's dark theme.
+The capture uses an isolated `DSH_HOME` with no API keys or user conversations.
 
 | View | English | Chinese | Viewport |
 | --- | --- | --- | --- |
-| Plugins → dsh-client-auto-continue, collapsed card | [01-settings-section.png](01-settings-section.png) | [01-settings-section.zh.png](01-settings-section.zh.png) | 1440 × 610 |
-| Expanded card, composer visibility, recovery prompts and autonomous loop | [02-settings-card.png](02-settings-card.png) | [02-settings-card.zh.png](02-settings-card.zh.png) | 1440 × 1400 |
-| Live status and Save / Discard controls | [07-card-panels.png](07-card-panels.png) | [07-card-panels.zh.png](07-card-panels.zh.png) | 1440 × 950 |
-| Native composer switch | [08-composer-toggle.png](08-composer-toggle.png) | [08-composer-toggle.zh.png](08-composer-toggle.zh.png) | 1440 × 900, cropped to the 828 × 256 composer area |
+| General category and the inline GitHub invitation | [01-settings-section.png](01-settings-section.png) | [01-settings-section.zh.png](01-settings-section.zh.png) | 1440 × 1100 |
+| Retry strategy category | [02-settings-card.png](02-settings-card.png) | [02-settings-card.zh.png](02-settings-card.zh.png) | 1440 × 1400 |
+| Status and logs, Save / Discard controls | [07-card-panels.png](07-card-panels.png) | [07-card-panels.zh.png](07-card-panels.zh.png) | 1440 × 1100 |
+| Native composer switch | [08-composer-toggle.png](08-composer-toggle.png) | [08-composer-toggle.zh.png](08-composer-toggle.zh.png) | 1440 × 900, cropped to the composer |
 
-To refresh them, first verify `dsh --version` is `0.2.1-alpha.1`, then create
-an empty DSH home and install the released plugin:
+To refresh, build the checked-out code and install it in an empty DSH profile:
 
 ```bash
+npm run build
 capture_home="$(mktemp -d)"
-DSH_HOME="$capture_home" dsh plugin --profile web add dsh-client-auto-continue@0.13.0
+DSH_HOME="$capture_home" dsh plugin --profile web add "file:$PWD"
 DSH_HOME="$capture_home" dsh web --no-open
 ```
 
-Open the authenticated URL printed by DSH without including that URL in any
-screenshot. Dismiss onboarding, select the dark theme, and navigate from the
-main sidebar's **Plugins** button.
+Open the authenticated URL printed by DSH without including its token in any
+screenshot. Dismiss onboarding, select the dark theme, and open **Plugins →
+dsh-client-auto-continue** from the sidebar. Capture **General**, **Retry strategy**,
+and **Status and logs**. The repository invitation should stay beside the plugin
+introduction on one continuous charcoal background, with their vertical centers aligned. There is no collapsed card or
+prototype selector in the finished UI.
 
-Capture the collapsed card, expand it for the top-of-page view, then scroll to
-its Save / Discard footer. For the composer view, open a new session and crop
-the screenshot to the message input and workspace controls. Switch **Settings → General →
-Language** to Chinese and wait for the translated interface to finish rendering
-before repeating the captures. Use device scale factor 1 and the viewports
-above; keep the UI content unchanged.
+For the composer view, open a new session without sending a message and crop to
+the message input and controls. Use a fresh browser context with an English or
+Chinese locale (or change **Settings → General → Language**) and repeat the captures.
+Use device scale factor 1. Do not fabricate activity for the statistics panel.
 
-Before capture, verify that toggling the composer switch updates another open
-tab and persists after a reload. Turn off composer visibility in the settings:
-it should remain visible until Save, then disappear without changing `paused`.
-Reset both overrides before capturing. Wait for the profile writes to finish
-before checking the saved file. Keep the form at its defaults and record the
-host/plugin versions when updating these images. Also check the switch in the
-light theme and at a narrow viewport (393 × 852).
+Before capture, verify the composer switch updates another open tab and persists
+after reload. Changing its visibility in **General** must remain staged until
+Save; hiding it must not change `paused`. Restore both overrides to inherited
+values. Verify that navigation preserves drafts, errors in hidden categories are
+marked, and read-only settings cannot be edited. Also check light theme and a
+393 × 852 viewport: the repository entry condenses and stays beside the introduction.

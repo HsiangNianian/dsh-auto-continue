@@ -208,12 +208,13 @@ export class CardForm<T> {
 
   /**
    * Write every staged edit, then re-seed from what the Host accepted.
-   * @returns settlement after every write and the read-back.
+   * @returns true only when a non-empty save was accepted and read back.
    */
-  async save(): Promise<void> {
+  async save(): Promise<boolean> {
     const plan = this.plan();
     const writes = plan.flatMap((item) => (item.run === undefined ? [] : [item.run]));
-    if (plan.length === 0 || this.saving || writes.length !== plan.length) return;
+    const snapshot = this.scope.getSnapshot();
+    if (plan.length === 0 || this.saving || writes.length !== plan.length || snapshot.status !== 'ready' || !snapshot.writable || snapshot.mode !== 'host') return false;
     // Keep the staged edits this save writes. A field can be staged again
     // while a write is pending, so clear it only if that exact edit remains.
     const edits = plan.map(({ field, staged }) => ({ field, staged }));
@@ -221,8 +222,12 @@ export class CardForm<T> {
     this.failed = false;
     this.publish();
     let landed = true;
-    for (const write of writes) {
-      landed = (await write()) && landed;
+    try {
+      for (const write of writes) {
+        landed = (await write()) && landed;
+      }
+    } catch {
+      landed = false;
     }
     if (landed) {
       for (const { field, staged } of edits) {
@@ -232,6 +237,7 @@ export class CardForm<T> {
     this.saving = false;
     this.failed = !landed;
     this.publish();
+    return landed;
   }
 
   /**
@@ -258,13 +264,13 @@ export class CardForm<T> {
   }
 
   private async clear(field: string): Promise<boolean> {
-    await this.scope.unset(field);
-    return !this.stored(field);
+    const accepted = await this.scope.unset(field);
+    return accepted !== false && !this.stored(field);
   }
 
   private async store(field: string, value: unknown): Promise<boolean> {
-    await this.scope.set(field, value);
-    return this.userLayer()?.[field] === value;
+    const accepted = await this.scope.set(field, value);
+    return accepted !== false && this.userLayer()?.[field] === value;
   }
 
   private stage(field: string, edit: StagedEdit): void {

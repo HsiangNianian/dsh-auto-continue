@@ -104,9 +104,9 @@ export declare class CardForm<T> {
     actions(): CardActions;
     /**
      * Write every staged edit, then re-seed from what the Host accepted.
-     * @returns settlement after every write and the read-back.
+     * @returns true only when a non-empty save was accepted and read back.
      */
-    save(): Promise<void>;
+    save(): Promise<boolean>;
     /**
      * Every staged edit a save would write. An entry whose draft is not a value
      * its field accepts carries no write: the form is still dirty, and the save

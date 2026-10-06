@@ -47,11 +47,11 @@ Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Silent turn resume** — recover an observed model step or reasoning-only response that completes without visible output. A no-op turn with no model activity is left alone. Text, tool calls, images and extension blocks count as visible, including streamed output. Unobserved turns are not guessed to be silent. Explicit `no-visible-output` markers also recover after restart. Disabling **Resume silent turns** cancels queued silent sends; silent turns never reset the retry cap, even while the option is off.
 - **Autonomous loop** — off by default (`resumeCompletedTurns`). When enabled, normally completed turns continue after the grace period, without the recovery cooldown or attempt cap. Reasoning-only turns and explicit `no-visible-output` endings still consume the recovery budget and obey backoff. Global pause, session pause, manual Stop and disabling the option stop the loop. Its prompt is separate from the loop guard’s prompt (`continueTextLoop`, default `Continue`).
-- **Pause** — a global **Pause auto-continue** toggle in the settings card stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. **Resume now** requests one send even when both pauses are active. It leaves the pauses in place, so later automatic recovery and autonomous-loop sends remain paused
+- **Pause** — turning off **Auto-continue** in **General** and saving stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. **Resume now** requests one send even when both pauses are active. It leaves the pauses in place, so later automatic recovery and autonomous-loop sends remain paused
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
 - **Loop guard** — watches **running** turns too. Four signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), repeated near-duplicate paragraphs **inside one streamed assistant message**, many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips, give-ups and loop breaks, broken down by error code, with a one-click reset
-- **Browser notifications** — optional alerts when auto-continue fires, gives up, or hits a permanent error; the browser asks for permission on first use, and nothing is shown again after a denial
+- **Browser notifications** — optional alerts for auto-continue events and successful settings saves. Saving a change to the notification switch confirms its new state, including one final confirmation when turning it off. The browser may ask for permission when you enable it; a denial is explained in the settings page and does not prevent saving.
 
 It watches the live event streams and reacts to:
 
@@ -91,8 +91,8 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
-| **0.2.1-alpha.1** | **0.13.0 verified** | **Plugins → dsh-client-auto-continue → Auto continue** |
-| **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue → Auto continue** |
+| **0.2.1-alpha.1** | **0.13.0 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |
 
@@ -100,7 +100,7 @@ DSH 0.1.0-rc.6 and earlier are unsupported. Automated runtime checks cover **0.1
 
 **Plugins 0.11.9 and 0.12.0 are rejected by DSH 0.2.0-rc.1’s version check.** Upgrade the plugin to 0.12.1 or newer; its existing configuration-form integration works on this runtime. See [#50](https://github.com/HsiangNianian/dsh-auto-continue/issues/50).
 
-On current DSH, **Settings → Built-in plugins** is a component inventory, not the configuration editor. Use the main **Plugins** page. The screenshots below use **DSH 0.2.1-alpha.1 + plugin 0.13.0**. If you previously installed with a symlink or hand-written loader entry, see [Migrating an older installation](#migrating-an-older-installation).
+On current DSH, **Settings → Built-in plugins** is a component inventory, not the configuration editor. Use the main **Plugins** page. The screenshots below show the current working-tree UI on **DSH 0.2.1-alpha.1**. If you previously installed with a symlink or hand-written loader entry, see [Migrating an older installation](#migrating-an-older-installation).
 
 ### From npm (recommended)
 
@@ -159,7 +159,7 @@ A manual loader entry can start the engine without registering a bundle in the *
    ```
 
    Merge into an existing override instead of adding another one. Keep unrelated settings intact. DSH 0.1.7 / 0.2 reads this entry config; editing the old `settings.yaml` section will not update the new form.
-5. Start `dsh web` again and reload the browser. Open **Plugins → dsh-client-auto-continue**, expand **Auto continue**, and check that your values are present. Save a change and reload to confirm it persists.
+5. Start `dsh web` again and reload the browser. Open **Plugins → dsh-client-auto-continue**, select the appropriate settings category, and check that your values are present. Save a change and reload to confirm it persists.
 
 The `include:auto-continue` label in **Built-in plugins** is a normal loader prefix. It does not, by itself, indicate a legacy install or a duplicate engine.
 
@@ -169,7 +169,7 @@ The `include:auto-continue` label in **Built-in plugins** is a normal loader pre
 dsh --profile web --dump-config | grep -A 4 'id: auto-continue'
 ```
 
-The composed config should contain one `id: auto-continue` entry. In **Plugins → dsh-client-auto-continue**, check that the component is **Running** and that expanding **Auto continue** shows editable fields. With verbose logging enabled, engine activity appears in the terminal running DSH.
+The composed config should contain one `id: auto-continue` entry. In **Plugins → dsh-client-auto-continue**, check that the component is **Running** and that the **General** category shows editable fields. With verbose logging enabled, engine activity appears in the terminal running DSH.
 
 ```bash
 dsh plugin --profile web remove dsh-client-auto-continue   # npm / repo install
@@ -182,7 +182,7 @@ dsh web
 ## Troubleshooting
 
 - **“Skipping profile bundle” / “incompatible with dsh 0.2.0-rc.1”:** update to plugin 0.12.1 or newer in the profile the app actually uses, then restart it. A version exemption is not needed for this fix.
-- **Enabled, but no configuration fields:** open the main **Plugins** page, select the package and expand **Auto continue**. The Built-in plugins status page has no editable fields.
+- **Enabled, but no configuration fields:** open the main **Plugins** page, select the package and open **General**. The Built-in plugins status page has no editable fields.
 - **`/api/auto-continue-bridge` returns 404:** check the DSH startup log and composed config to confirm the host component loaded. Refreshing the settings card cannot start a missing host component.
 
 ---
@@ -195,17 +195,19 @@ Starting with **0.13.0**, an **Auto-continue** switch appears beside the message
 
 **On** allows automatic recovery; **Off** sets the existing global `paused` option. The change saves immediately and applies to **all sessions in the current profile**, with other open tabs updating too. This is separate from the notification action that pauses one session for an hour. Enabling it does not clear a session's individual pause.
 
-To hide the switch, open **Plugins → dsh-client-auto-continue → Auto continue**, turn off **Show auto-continue switch in the composer**, then click **Save**. This only changes visibility; recovery keeps its current state. The corresponding config key is `showComposerToggle`, default `true`. Older hosts without the composer slot retain the settings card.
+To hide the switch, open **Plugins → dsh-client-auto-continue → General**, turn off **Show auto-continue switch in the composer**, then click **Save**. This only changes visibility; recovery keeps its current state. The corresponding config key is `showComposerToggle`, default `true`. Older hosts without the composer slot retain the settings card.
 
 ## Configuration
 
-On **DSH 0.1.7 / 0.2**, open **Plugins** from the main sidebar, choose **dsh-client-auto-continue**, then expand the **Auto continue** card. This is separate from **Settings → Built-in plugins**, which only lists component status. Older DSH versions use **Settings → Plugins → Plugin configuration**.
+On **DSH 0.1.7 / 0.2**, open **Plugins** from the main sidebar, choose **dsh-client-auto-continue**, then select a settings category. This is separate from **Settings → Built-in plugins**, which only lists component status. Older DSH versions use **Settings → Plugins → Plugin configuration**.
 
-![DSH 0.2 Plugins page with the Auto continue card collapsed](docs/screenshots/01-settings-section.png)
+![Auto-continue category settings on DSH 0.2](docs/screenshots/01-settings-section.png)
 
-Click the card header or its right-hand chevron to show the fields. The expanded card also contains a live **stats panel** (today's activity with a reset button) and **paused sessions** (each with a resume button).
+Use **General**, **Retry strategy**, **Startup recovery**, **Continue text**, **Safety**, and **Status and logs** to find controls. Switching categories preserves unsaved changes. **Status and logs** contains today's activity and paused sessions.
 
-The settings card groups controls by handoff, safety, recovery, loop breaking, and live status. Its header also keeps the open-source repository and a **Star on GitHub** shortcut within reach.
+The header places the plugin status and GitHub invitation side by side on one shared charcoal background. The status shows the saved global setting; edits take effect when you click **Save**.
+
+With **Browser notifications** enabled, each successful save sends one confirmation from the tab where you saved. Turning notifications off sends a final confirmation if browser permission is already granted; later saves stay quiet. Discarded changes, invalid values, and failed saves do not send success notifications. If the browser blocks notifications, the settings page still confirms the save and explains the permission issue.
 
 DSH 0.1.7 / 0.2 stores these values in the `auto-continue` entry's config in the active profile patch (`~/.dsh/profiles/web/cordis.patch.yml` for the default web profile). **Save** applies changes live without restarting the engine. Omitted fields use the defaults below.
 
@@ -265,14 +267,14 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 
 **How the card works:**
 
-![Expanded Auto continue configuration on DSH 0.2](docs/screenshots/02-settings-card.png)
+![Retry strategy settings on DSH 0.2](docs/screenshots/02-settings-card.png)
 
-- Edits are **staged** — nothing reaches the disk until you hit **Save**; an unsaved badge marks the card while drafts are pending, and **Discard** drops them
+- Edits are **staged** — nothing reaches the disk until you hit **Save**; the footer indicates pending changes, and **Discard** drops them
 - If you edit or reset a field while a save is in progress, the newer draft stays in the card. Click **Save** again after the current save finishes to apply it
-- A field you changed shows an **Overridden** badge with a per-field **Reset to default** button that removes the override and restores the inherited value (normally the built-in default)
-- **Show auto-continue switch in the composer** uses a native switch and is staged until Save. Other boolean fields are **tri-state**: *Inherit* (use the default) / *On* / *Off*
-- Invalid drafts (non-numbers, values below the minimum) block the save with a hint
-- In a read-only deployment the card shows the stored values but disables every control
+- An overridden field shows a **Reset to default** button that removes the override and restores the inherited value (normally the built-in default)
+- Boolean fields use native switches and are staged until Save. **Reset to default** removes the override and restores the inherited value. **Auto-continue** is on when recovery is enabled (`paused: false`)
+- Invalid drafts (non-numbers, values below the minimum) block the save and mark their category, even when another category is selected
+- In a read-only deployment the card shows the stored values but disables editing while keeping category navigation available
 - Changes apply immediately after Save and persist in the active profile config (or `~/.dsh/settings.yaml` on older hosts)
 
 <details>
@@ -313,7 +315,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Custom retryable errors | empty | One case-insensitive literal per line; matching the error code, HTTP status, or message explicitly overrides the built-in classifier |
 | Backoff factor | `2` | Cooldown multiplier per consecutive failure (2 = 20s → 40s → 80s…) |
 | Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
-| Browser notifications | `off` | Notify when auto-continue fires, gives up, or hits a permanent error |
+| Browser notifications | `off` | Notify about auto-continue events and successful settings saves; confirm switching notifications on or off |
 
 For a provider-specific error that is safe to resume (confirm first that manually sending "continue" recovers), add a narrow, stable fragment rather than disabling classification globally:
 
@@ -338,7 +340,7 @@ The recovery engine runs inside the DSH host. The browser provides the configura
 - Recovery sends your configured text through `agent.followup`. The loop guard can cancel a looping turn through `agent.cancel` before sending its recovery prompt. Resumed agents continue with the session's existing tools and permissions
 - Saving configuration uses DSH's settings API: the active profile patch on DSH 0.1.7 / 0.2, or `~/.dsh/settings.yaml` on older hosts
 - Retry counters, cooldown timestamps, per-session pauses and stats stay in host process memory and reset when the engine restarts. The global `paused` setting is saved with your other configuration
-- Browser notifications are opt-in (`notify` setting) and permission is requested on first use only
+- Browser notifications are opt-in (`notify` setting). Enabling and saving can request browser permission; denied permission is not requested again. Turning the option off never requests permission.
 
 ---
 

@@ -7,7 +7,7 @@
  * configuration section; styles live in `styles.ts` and use the DSH design
  * tokens so the card follows the active theme.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
 import type { ComposerToggleFace, ComposerToggleState } from './composer-toggle.tsx';
@@ -31,6 +31,7 @@ import {
   type CardShell,
 } from './settings-form.ts';
 import { injectStyles } from './styles.ts';
+import { prepareSettingsNotification, showSettingsNotification } from './settings-notifications.ts';
 
 // Styles must land during factory materialization so the module system's
 // style bookkeeping (HMR) owns them.
@@ -38,6 +39,10 @@ injectStyles();
 
 /** What the auto-continue card renders. */
 export interface AutoContinueSettingsCardState extends CardShell {
+  /** Committed global state; a staged edit does not pause the engine yet. */
+  enabled: boolean;
+  /** Feedback for the last local save, including browser permission problems. */
+  notificationFeedback: SettingsCardKey | undefined;
   paused: CardFieldState;
   showComposerToggle: CardFieldState;
   continueText: CardFieldState;
@@ -86,11 +91,16 @@ export class AutoContinueSettingsCardController {
   private composerSaving = false;
   private composerFailed = false;
   private disposed = false;
+  private saveSequence = 0;
+  private notificationFeedback: SettingsCardKey | undefined;
 
   /**
    * @param scope - the bound settings scope for the `auto-continue` namespace.
    */
-  constructor(private readonly scope: SettingsScope<AutoContinueSettings>) {
+  constructor(
+    private readonly scope: SettingsScope<AutoContinueSettings>,
+    private readonly getLocale: () => string,
+  ) {
     this.form = new CardForm(scope, [
       booleanField('paused'),
       booleanField('showComposerToggle'),
@@ -130,6 +140,8 @@ export class AutoContinueSettingsCardController {
   private projection(): AutoContinueSettingsCardState {
     return {
       ...this.form.shell(),
+      enabled: !(this.scope.getSnapshot().value?.paused ?? DEFAULT_CONFIG.paused),
+      notificationFeedback: this.notificationFeedback,
       paused: this.form.field('paused'),
       showComposerToggle: this.form.field('showComposerToggle'),
       continueText: this.form.field('continueText'),
@@ -168,7 +180,27 @@ export class AutoContinueSettingsCardController {
    * @returns the card's snapshot and its form actions.
    */
   inject(): AutoContinueSettingsCardFace {
-    return { hooks: { autoContinueSettingsCard: this.store }, ...this.form.actions() };
+    return { hooks: { autoContinueSettingsCard: this.store }, ...this.form.actions(), save: () => void this.save() };
+  }
+
+  private async save(): Promise<void> {
+    const state = this.form.shell();
+    const snapshot = this.scope.getSnapshot();
+    if (this.disposed || !state.available || !state.writable || !state.dirty || state.invalid || state.saving || snapshot.mode !== 'host') return;
+    const sequence = ++this.saveSequence;
+    const before = snapshot.value?.notify ?? DEFAULT_CONFIG.notify;
+    const target = this.form.field('notify').text;
+    // Start the permission prompt in the click handler, but save independently.
+    const permission = prepareSettingsNotification(target === '' ? DEFAULT_CONFIG.notify : target === 'true');
+    this.notificationFeedback = undefined;
+    if (!await this.form.save() || this.disposed) return;
+    const after = this.scope.getSnapshot().value?.notify ?? DEFAULT_CONFIG.notify;
+    if (!before && !after) return;
+    const result = await permission;
+    // A later save or a provider teardown makes this pending confirmation stale.
+    if (this.disposed || sequence !== this.saveSequence || (this.scope.getSnapshot().value?.notify ?? DEFAULT_CONFIG.notify) !== after) return;
+    this.notificationFeedback = showSettingsNotification(before === after ? 'saved' : after ? 'enabled' : 'disabled', this.getLocale(), result);
+    this.store.set(this.projection());
   }
 
   injectComposer(): ComposerToggleFace {
@@ -223,288 +255,63 @@ export function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps) {
 }
 
 const REPOSITORY_URL = 'https://github.com/HsiangNianian/dsh-auto-continue';
-const REPOSITORY_SLUG = 'HsiangNianian/dsh-auto-continue';
 
-function RelayMark() {
-  return (
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path className="dshAcRelayArc" d="M9 30c4-12 10-18 19-18 5 0 9 2 12 6" />
-      <path className="dshAcRelayArc dshAcRelayArcEcho" d="M8 35c6 3 12 3 17 0 5-3 8-8 15-9" />
-      <circle className="dshAcRelayNode dshAcRelayNodeStart" cx="9" cy="30" r="3" />
-      <circle className="dshAcRelayNode dshAcRelayNodeEnd" cx="40" cy="18" r="3" />
-      <circle className="dshAcRelayPulse" cx="28" cy="12" r="2.5" />
-    </svg>
-  );
-}
-
-function ChevronMark() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path d="m3.5 6 4.5 4 4.5-4" />
-    </svg>
-  );
-}
+type FieldName = Exclude<keyof AutoContinueSettingsCardState, keyof CardShell | 'enabled' | 'notificationFeedback'>;
+const groups = [
+  { id: 'general', fields: ['paused', 'showComposerToggle', 'resumeSilentTurns', 'resumeCompletedTurns', 'notify'] },
+  { id: 'recovery', fields: ['graceMs', 'cooldownMs', 'maxConsecutive', 'classify', 'retryableErrorPatterns', 'backoffFactor', 'backoffMaxMs'] },
+  { id: 'startup', fields: ['scanOnBoot', 'scanLimit', 'freshMs'] },
+  { id: 'prompts', fields: ['continueText', 'continueTextMaxTokens', 'continueTextSilent', 'continueTextLoop', 'guardPendingText', 'guardDoneText', 'loopText'] },
+  { id: 'safety', fields: ['guardTools', 'loopGuard', 'loopShortChars', 'loopWindowMs', 'loopShortCount', 'loopRepeatText', 'loopToolRepeat'] },
+  { id: 'status', fields: ['verbose'] },
+] as const satisfies ReadonlyArray<{ id: string; fields: readonly FieldName[] }>;
+type Category = typeof groups[number]['id'];
+const textDefaults: Partial<Record<FieldName, SettingsCardKey>> = {
+  continueText: 'default.continueText', continueTextMaxTokens: 'default.continueTextMaxTokens',
+  continueTextSilent: 'default.continueTextSilent', continueTextLoop: 'default.continueTextLoop',
+  guardPendingText: 'default.guardPendingText', guardDoneText: 'default.guardDoneText', loopText: 'default.loopText',
+};
 
 function GitHubMark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M12 2.4a9.8 9.8 0 0 0-3.1 19.1c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.3 4.6-4.6 4.9.4.3.7.9.7 1.8V21c0 .3.2.6.7.5A9.8 9.8 0 0 0 12 2.4Z" />
-    </svg>
-  );
+  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.4a9.8 9.8 0 0 0-3.1 19.1c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.3 4.6-4.6 4.9.4.3.7.9.7 1.8V21c0 .3.2.6.7.5A9.8 9.8 0 0 0 12 2.4Z" /></svg>;
+}
+function RepositoryInvite({ t }: { t: (key: SettingsCardKey) => string }) {
+  return <aside className="dshAcRepository">
+    <span className="dshAcStar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.78 5.63L21 9.53l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9L12 3Z" /></svg></span>
+    <span className="dshAcRepositoryCopy"><strong>{t('repo.star')}</strong><span>{t('repo.note')}</span></span>
+    <a className="dshAcGithub" href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={t('repo.aria')}>
+      <GitHubMark /><span className="dshAcGithubLong">{t('repo.link')}</span><span className="dshAcGithubShort">GitHub</span>
+      <svg className="dshAcExternal" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3h7v7M13 3 7 9M11 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3" /></svg>
+    </a>
+  </aside>;
 }
 
-function ExternalMark() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path d="M6 3h7v7M13 3 7 9" />
-      <path d="M11 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3" />
-    </svg>
-  );
-}
-
-function RelayJourney(props: { t: (key: SettingsCardKey) => string }) {
-  return (
-    <span className="dshAcJourney">
-      <span className="dshAcJourneyStep dshAcJourneyInterrupted">
-        <span className="dshAcJourneyDot" aria-hidden="true" />
-        {props.t('flow.interrupted')}
-      </span>
-      <span className="dshAcJourneyLine" aria-hidden="true" />
-      <span className="dshAcJourneyStep dshAcJourneyGrace">
-        <span className="dshAcJourneyDot" aria-hidden="true" />
-        {props.t('flow.grace')}
-      </span>
-      <span className="dshAcJourneyLine" aria-hidden="true" />
-      <span className="dshAcJourneyStep dshAcJourneyContinue">
-        <span className="dshAcJourneyDot" aria-hidden="true" />
-        {props.t('flow.continue')}
-      </span>
-    </span>
-  );
-}
-
-/** Card chrome: a disclosure header naming the plugin and what its settings govern, the controls, and the save that writes them. */
-function SettingsCard(props: {
+/** Controls edit the existing staged form; navigation never owns or discards drafts. */
+function SettingField({ name, id, state, actions, disabled, t }: {
+  name: FieldName; id: string; state: CardFieldState; actions: CardActions; disabled: boolean;
   t: (key: SettingsCardKey) => string;
-  titleKey: SettingsCardKey;
-  descriptionKey: SettingsCardKey;
-  state: CardShell;
-  onSave: () => void;
-  onDiscard: () => void;
-  children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const { state } = props;
-  if (!state.available) return null;
-  const title = props.t(props.titleKey);
-  const blocked = !state.dirty || state.invalid || state.saving;
-  return (
-    <li className={open ? 'dshAcCard dshAcCardOpen' : 'dshAcCard'}>
-      <div className="dshAcHeaderFrame">
-        <button
-          type="button"
-          className="dshAcHeader"
-          aria-expanded={open}
-          aria-label={`${props.t(open ? 'chrome.collapse' : 'chrome.expand')}: ${title}`}
-          title={props.t(props.descriptionKey)}
-          onClick={() => setOpen(!open)}
-        >
-          <span className="dshAcRelayMark"><RelayMark /></span>
-          <span className="dshAcHeadText">
-            <span className="dshAcName">{title}</span>
-            <span className="dshAcDescription">{props.t(props.descriptionKey)}</span>
-            <RelayJourney t={props.t} />
-          </span>
-          {state.dirty ? (
-            <span className="dshAcPending" title={props.t('chrome.unsaved')}>
-              {props.t('chrome.unsaved')}
-            </span>
-          ) : null}
-          <span className={open ? 'dshAcChevron dshAcChevronOpen' : 'dshAcChevron'}>
-            <ChevronMark />
-          </span>
-        </button>
-        <a
-          className="dshAcGithub"
-          href={REPOSITORY_URL}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={props.t('repo.aria')}
-        >
-          <span className="dshAcGithubIcon"><GitHubMark /></span>
-          <span className="dshAcGithubText">
-            <span className="dshAcGithubAction">{props.t('repo.star')}</span>
-            <span className="dshAcGithubSlug">{REPOSITORY_SLUG}</span>
-          </span>
-          <span className="dshAcExternal"><ExternalMark /></span>
-        </a>
-      </div>
-      {open ? (
-        <div className="dshAcBody">
-          {!state.writable ? (
-            <p className="dshAcReadOnly" role="status">{props.t('chrome.readOnly')}</p>
-          ) : null}
-          {props.children}
-          <div className="dshAcFooter">
-            {state.failed ? (
-              <p className="dshAcFailed" role="status">{props.t('chrome.saveFailed')}</p>
-            ) : null}
-            <button
-              type="button"
-              className="dshAcDiscard"
-              disabled={!state.dirty || state.saving}
-              onClick={props.onDiscard}
-            >
-              {props.t('chrome.discard')}
-            </button>
-            <button type="button" className="dshAcSave" disabled={blocked} onClick={props.onSave}>
-              {props.t(!state.saving ? 'chrome.save' : 'chrome.saving')}
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </li>
-  );
-}
-
-/** Props every field control needs regardless of its value type. */
-interface FieldProps {
-  id: string;
-  label: string;
-  hint: string;
-  wide?: boolean;
-  text: string;
-  overridden: boolean;
-  invalid: boolean;
-  disabled: boolean;
-  t: (key: SettingsCardKey) => string;
-  onEdit: (text: string) => void;
-  onReset: () => void;
-}
-
-/** A staged value field; `numeric` only hints the keypad, which drafts a field accepts is decided by its spec. */
-function ValueField(props: FieldProps & { numeric?: boolean; multiline?: boolean; placeholder?: string }) {
-  const className = props.invalid ? 'dshAcInput dshAcInputInvalid' : 'dshAcInput';
-  return (
-    <div className={props.wide === true ? 'dshAcField dshAcFieldWide' : 'dshAcField'}>
-      <div className="dshAcHead">
-        <label className="dshAcLabel" htmlFor={props.id}>{props.label}</label>
-        {props.overridden ? (
-          <span className="dshAcBadges">
-            <span className="dshAcBadge">{props.t('chrome.overridden')}</span>
-            <button type="button" className="dshAcReset" disabled={props.disabled} onClick={props.onReset}>
-              {props.t('chrome.reset')}
-            </button>
-          </span>
-        ) : null}
-      </div>
-      {props.multiline === true ? (
-        <textarea
-          id={props.id}
-          className={`${className} dshAcTextArea`}
-          aria-invalid={props.invalid || undefined}
-          value={props.text}
-          placeholder={props.placeholder ?? ''}
-          disabled={props.disabled}
-          rows={4}
-          onChange={(event) => props.onEdit(event.target.value)}
-        />
-      ) : (
-        <input
-          id={props.id}
-          className={className}
-          type="text"
-          inputMode={props.numeric === true ? 'numeric' : undefined}
-          aria-invalid={props.invalid || undefined}
-          value={props.text}
-          placeholder={props.placeholder ?? ''}
-          disabled={props.disabled}
-          onChange={(event) => props.onEdit(event.target.value)}
-        />
-      )}
-      <p className={props.invalid ? 'dshAcInvalid' : 'dshAcHint'}>
-        {props.invalid ? props.t('chrome.invalidNumber') : props.hint}
-      </p>
+  const boolean = typeof DEFAULT_CONFIG[name] === 'boolean';
+  const numeric = typeof DEFAULT_CONFIG[name] === 'number';
+  const label = t(`field.${name}` as SettingsCardKey);
+  const hint = t(`field.${name}Hint` as SettingsCardKey);
+  const value = state.text === '' ? DEFAULT_CONFIG[name] : state.text === 'true';
+  const placeholderKey = textDefaults[name];
+  const placeholder = placeholderKey ? t(placeholderKey) : name === 'retryableErrorPatterns' ? t('field.retryableErrorPatternsPlaceholder') : String(DEFAULT_CONFIG[name]);
+  const common = { id, disabled, 'aria-describedby': `${id}-hint`, 'aria-invalid': state.invalid || undefined, value: state.text, onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => actions.edit(name, event.target.value) };
+  return <div className={`dshAcField${!boolean && !numeric ? ' dshAcFieldText' : ''}`} data-field={name}>
+    <div className="dshAcFieldCopy">
+      {boolean ? <span className="dshAcLabel">{label}</span> : <label className="dshAcLabel" htmlFor={id}>{label}</label>}
+      <p className={state.invalid ? 'dshAcInvalid' : 'dshAcHint'} id={`${id}-hint`}>{state.invalid ? t('chrome.invalidNumber') : hint}</p>
     </div>
-  );
-}
-
-/** A staged boolean field: inherit / on / off. */
-function BooleanField(props: FieldProps) {
-  return (
-    <div className={props.wide === true ? 'dshAcField dshAcFieldWide' : 'dshAcField'}>
-      <div className="dshAcHead">
-        <label className="dshAcLabel" htmlFor={props.id}>{props.label}</label>
-        {props.overridden ? (
-          <span className="dshAcBadges">
-            <span className="dshAcBadge">{props.t('chrome.overridden')}</span>
-            <button type="button" className="dshAcReset" disabled={props.disabled} onClick={props.onReset}>
-              {props.t('chrome.reset')}
-            </button>
-          </span>
-        ) : null}
-      </div>
-      <select
-        id={props.id}
-        className="dshAcSelect"
-        value={props.text}
-        disabled={props.disabled}
-        onChange={(event) => props.onEdit(event.target.value)}
-      >
-        <option value="">{props.t('chrome.inherit')}</option>
-        <option value="true">{props.t('chrome.on')}</option>
-        <option value="false">{props.t('chrome.off')}</option>
-      </select>
-      <p className="dshAcHint">{props.hint}</p>
+    <div className="dshAcFieldControl">
+      {state.overridden && <button type="button" className="dshAcReset" disabled={disabled} aria-label={`${t('chrome.reset')}: ${label}`} onClick={() => actions.resetField(name)}>{t('chrome.reset')}</button>}
+      {boolean ? <span className="dshAcSwitchTarget"><NativeSwitch label={label} title={hint} disabled={disabled}
+        checked={name === 'paused' ? !value : Boolean(value)} onChange={checked => actions.edit(name, String(name === 'paused' ? !checked : checked))} /></span>
+        : numeric ? <input {...common} className="dshAcInput dshAcNumber" type="text" inputMode="numeric" placeholder={placeholder} />
+        : <textarea {...common} className="dshAcInput dshAcTextArea" rows={name === 'retryableErrorPatterns' ? 3 : 2} placeholder={placeholder} />}
     </div>
-  );
-}
-
-/** Visibility is staged with the rest of the form, including Reset/Discard. */
-function ComposerVisibilityField(props: FieldProps) {
-  return (
-    <div className="dshAcField dshAcFieldWide">
-      <div className="dshAcHead">
-        <span className="dshAcLabel">{props.label}</span>
-        <span className="dshAcBadges">
-          {props.overridden ? <>
-            <span className="dshAcBadge">{props.t('chrome.overridden')}</span>
-            <button type="button" className="dshAcReset" disabled={props.disabled}
-              onClick={props.onReset}>{props.t('chrome.reset')}</button>
-          </> : null}
-          <span className="dshAcSwitchTarget">
-            <NativeSwitch checked={props.text === '' ? DEFAULT_CONFIG.showComposerToggle : props.text === 'true'}
-              onChange={(checked) => props.onEdit(String(checked))} label={props.label} disabled={props.disabled} />
-          </span>
-        </span>
-      </div>
-      <p className="dshAcHint">{props.hint}</p>
-    </div>
-  );
-}
-
-type SettingsSectionTone = 'handoff' | 'autoloop' | 'safety' | 'recovery' | 'loop' | 'live';
-
-/** A real behavior group, not a decorative divider: each section maps to one phase of the relay. */
-function SettingsSection(props: {
-  t: (key: SettingsCardKey) => string;
-  titleKey: SettingsCardKey;
-  descriptionKey: SettingsCardKey;
-  tone: SettingsSectionTone;
-  children: ReactNode;
-}) {
-  return (
-    <section className={`dshAcFormSection dshAcFormSection-${props.tone}`}>
-      <header className="dshAcSectionHead">
-        <span className="dshAcSectionSignal" aria-hidden="true" />
-        <span className="dshAcSectionCopy">
-          <span className="dshAcSectionTitle">{props.t(props.titleKey)}</span>
-          <span className="dshAcSectionDescription">{props.t(props.descriptionKey)}</span>
-        </span>
-      </header>
-      <div className="dshAcSectionGrid">{props.children}</div>
-    </section>
-  );
+  </div>;
 }
 
 /** 实时面板: 今日统计 + 已暂停会话。浏览器本地状态, 每 5 秒刷新一次。 */
@@ -614,377 +421,49 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
   );
 }
 
-/**
- * Render the auto-continue card.
- * @param props - locale copy, the card snapshot, and its form actions.
- * @returns the card.
- */
+/** Native category layout, with the selected B3 repository invitation beside the introduction. */
 export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
   const { t } = props;
-  const state = props.useAutoContinueSettingsCard((snapshot) => snapshot);
-  const disabled = !state.writable;
-  const shared = { t, disabled };
-  return (
-    <SettingsCard
-      t={t}
-      titleKey="card.title"
-      descriptionKey="card.description"
-      state={state}
-      onSave={props.save}
-      onDiscard={props.discard}
-    >
-      <div className="dshAcFormCanvas">
-        <SettingsSection
-          t={t}
-          titleKey="section.handoff.title"
-          descriptionKey="section.handoff.description"
-          tone="handoff"
-        >
-          <BooleanField
-            wide
-            id="auto-continue-paused"
-            label={t('field.paused')}
-            hint={t('field.pausedHint')}
-            {...shared}
-            {...state.paused}
-            onEdit={(text) => props.edit('paused', text)}
-            onReset={() => props.resetField('paused')}
-          />
-          <ComposerVisibilityField
-            id="auto-continue-show-composer-toggle"
-            label={t('field.showComposerToggle')}
-            hint={t('field.showComposerToggleHint')}
-            {...shared}
-            {...state.showComposerToggle}
-            onEdit={(text) => props.edit('showComposerToggle', text)}
-            onReset={() => props.resetField('showComposerToggle')}
-          />
-          <ValueField
-            id="auto-continue-continue-text"
-            label={t('field.continueText')}
-            hint={t('field.continueTextHint')}
-            {...shared}
-            {...state.continueText}
-            onEdit={(text) => props.edit('continueText', text)}
-            placeholder={t('default.continueText')}
-            onReset={() => props.resetField('continueText')}
-          />
-          <ValueField
-            id="auto-continue-continue-text-max-tokens"
-            label={t('field.continueTextMaxTokens')}
-            hint={t('field.continueTextMaxTokensHint')}
-            {...shared}
-            {...state.continueTextMaxTokens}
-            onEdit={(text) => props.edit('continueTextMaxTokens', text)}
-            placeholder={t('default.continueTextMaxTokens')}
-            onReset={() => props.resetField('continueTextMaxTokens')}
-          />
-          <BooleanField
-            wide
-            id="auto-continue-resume-silent-turns"
-            label={t('field.resumeSilentTurns')}
-            hint={t('field.resumeSilentTurnsHint')}
-            {...shared}
-            {...state.resumeSilentTurns}
-            onEdit={(text) => props.edit('resumeSilentTurns', text)}
-            onReset={() => props.resetField('resumeSilentTurns')}
-          />
-          <ValueField
-            wide
-            id="auto-continue-continue-text-silent"
-            label={t('field.continueTextSilent')}
-            hint={t('field.continueTextSilentHint')}
-            {...shared}
-            {...state.continueTextSilent}
-            onEdit={(text) => props.edit('continueTextSilent', text)}
-            placeholder={t('default.continueTextSilent')}
-            onReset={() => props.resetField('continueTextSilent')}
-          />
-        </SettingsSection>
-
-        <SettingsSection
-          t={t}
-          titleKey="section.autoloop.title"
-          descriptionKey="section.autoloop.description"
-          tone="autoloop"
-        >
-          <BooleanField
-            wide
-            id="auto-continue-resume-completed-turns"
-            label={t('field.resumeCompletedTurns')}
-            hint={t('field.resumeCompletedTurnsHint')}
-            {...shared}
-            {...state.resumeCompletedTurns}
-            onEdit={(text) => props.edit('resumeCompletedTurns', text)}
-            onReset={() => props.resetField('resumeCompletedTurns')}
-          />
-          <ValueField
-            wide
-            id="auto-continue-continue-text-loop"
-            label={t('field.continueTextLoop')}
-            hint={t('field.continueTextLoopHint')}
-            {...shared}
-            {...state.continueTextLoop}
-            onEdit={(text) => props.edit('continueTextLoop', text)}
-            placeholder={t('default.continueTextLoop')}
-            onReset={() => props.resetField('continueTextLoop')}
-          />
-        </SettingsSection>
-
-        <SettingsSection
-          t={t}
-          titleKey="section.safety.title"
-          descriptionKey="section.safety.description"
-          tone="safety"
-        >
-          <BooleanField
-            wide
-            id="auto-continue-guard-tools"
-            label={t('field.guardTools')}
-            hint={t('field.guardToolsHint')}
-            {...shared}
-            {...state.guardTools}
-            onEdit={(text) => props.edit('guardTools', text)}
-            onReset={() => props.resetField('guardTools')}
-          />
-          <ValueField
-            wide
-            id="auto-continue-guard-pending-text"
-            label={t('field.guardPendingText')}
-            hint={t('field.guardPendingTextHint')}
-            {...shared}
-            {...state.guardPendingText}
-            onEdit={(text) => props.edit('guardPendingText', text)}
-            placeholder={t('default.guardPendingText')}
-            onReset={() => props.resetField('guardPendingText')}
-          />
-          <ValueField
-            wide
-            id="auto-continue-guard-done-text"
-            label={t('field.guardDoneText')}
-            hint={t('field.guardDoneTextHint')}
-            {...shared}
-            {...state.guardDoneText}
-            onEdit={(text) => props.edit('guardDoneText', text)}
-            placeholder={t('default.guardDoneText')}
-            onReset={() => props.resetField('guardDoneText')}
-          />
-          <ValueField
-            id="auto-continue-grace-ms"
-            label={t('field.graceMs')}
-            hint={t('field.graceMsHint')}
-            numeric
-            {...shared}
-            {...state.graceMs}
-            onEdit={(text) => props.edit('graceMs', text)}
-            onReset={() => props.resetField('graceMs')}
-          />
-          <ValueField
-            id="auto-continue-cooldown-ms"
-            label={t('field.cooldownMs')}
-            hint={t('field.cooldownMsHint')}
-            numeric
-            {...shared}
-            {...state.cooldownMs}
-            onEdit={(text) => props.edit('cooldownMs', text)}
-            onReset={() => props.resetField('cooldownMs')}
-          />
-          <ValueField
-            id="auto-continue-max-consecutive"
-            label={t('field.maxConsecutive')}
-            hint={t('field.maxConsecutiveHint')}
-            numeric
-            {...shared}
-            {...state.maxConsecutive}
-            onEdit={(text) => props.edit('maxConsecutive', text)}
-            onReset={() => props.resetField('maxConsecutive')}
-          />
-        </SettingsSection>
-
-        <SettingsSection
-          t={t}
-          titleKey="section.recovery.title"
-          descriptionKey="section.recovery.description"
-          tone="recovery"
-        >
-          <BooleanField
-            id="auto-continue-scan-on-boot"
-            label={t('field.scanOnBoot')}
-            hint={t('field.scanOnBootHint')}
-            {...shared}
-            {...state.scanOnBoot}
-            onEdit={(text) => props.edit('scanOnBoot', text)}
-            onReset={() => props.resetField('scanOnBoot')}
-          />
-          <BooleanField
-            id="auto-continue-classify"
-            label={t('field.classify')}
-            hint={t('field.classifyHint')}
-            {...shared}
-            {...state.classify}
-            onEdit={(text) => props.edit('classify', text)}
-            onReset={() => props.resetField('classify')}
-          />
-          <ValueField
-            id="auto-continue-scan-limit"
-            label={t('field.scanLimit')}
-            hint={t('field.scanLimitHint')}
-            numeric
-            {...shared}
-            {...state.scanLimit}
-            onEdit={(text) => props.edit('scanLimit', text)}
-            onReset={() => props.resetField('scanLimit')}
-          />
-          <ValueField
-            id="auto-continue-fresh-ms"
-            label={t('field.freshMs')}
-            hint={t('field.freshMsHint')}
-            numeric
-            {...shared}
-            {...state.freshMs}
-            onEdit={(text) => props.edit('freshMs', text)}
-            onReset={() => props.resetField('freshMs')}
-          />
-          <ValueField
-            wide
-            id="auto-continue-retryable-error-patterns"
-            label={t('field.retryableErrorPatterns')}
-            hint={t('field.retryableErrorPatternsHint')}
-            multiline
-            {...shared}
-            {...state.retryableErrorPatterns}
-            onEdit={(text) => props.edit('retryableErrorPatterns', text)}
-            placeholder={t('field.retryableErrorPatternsPlaceholder')}
-            onReset={() => props.resetField('retryableErrorPatterns')}
-          />
-          <ValueField
-            id="auto-continue-backoff-factor"
-            label={t('field.backoffFactor')}
-            hint={t('field.backoffFactorHint')}
-            numeric
-            {...shared}
-            {...state.backoffFactor}
-            onEdit={(text) => props.edit('backoffFactor', text)}
-            onReset={() => props.resetField('backoffFactor')}
-          />
-          <ValueField
-            id="auto-continue-backoff-max"
-            label={t('field.backoffMaxMs')}
-            hint={t('field.backoffMaxMsHint')}
-            numeric
-            {...shared}
-            {...state.backoffMaxMs}
-            onEdit={(text) => props.edit('backoffMaxMs', text)}
-            onReset={() => props.resetField('backoffMaxMs')}
-          />
-          <BooleanField
-            id="auto-continue-notify"
-            label={t('field.notify')}
-            hint={t('field.notifyHint')}
-            {...shared}
-            {...state.notify}
-            onEdit={(text) => props.edit('notify', text)}
-            onReset={() => props.resetField('notify')}
-          />
-          <BooleanField
-            id="auto-continue-verbose"
-            label={t('field.verbose')}
-            hint={t('field.verboseHint')}
-            {...shared}
-            {...state.verbose}
-            onEdit={(text) => props.edit('verbose', text)}
-            onReset={() => props.resetField('verbose')}
-          />
-        </SettingsSection>
-
-        <SettingsSection
-          t={t}
-          titleKey="section.loop.title"
-          descriptionKey="section.loop.description"
-          tone="loop"
-        >
-          <BooleanField
-            wide
-            id="auto-continue-loop-guard"
-            label={t('field.loopGuard')}
-            hint={t('field.loopGuardHint')}
-            {...shared}
-            {...state.loopGuard}
-            onEdit={(text) => props.edit('loopGuard', text)}
-            onReset={() => props.resetField('loopGuard')}
-          />
-          <ValueField
-            id="auto-continue-loop-short-chars"
-            label={t('field.loopShortChars')}
-            hint={t('field.loopShortCharsHint')}
-            numeric
-            {...shared}
-            {...state.loopShortChars}
-            onEdit={(text) => props.edit('loopShortChars', text)}
-            onReset={() => props.resetField('loopShortChars')}
-          />
-          <ValueField
-            id="auto-continue-loop-window-ms"
-            label={t('field.loopWindowMs')}
-            hint={t('field.loopWindowMsHint')}
-            numeric
-            {...shared}
-            {...state.loopWindowMs}
-            onEdit={(text) => props.edit('loopWindowMs', text)}
-            onReset={() => props.resetField('loopWindowMs')}
-          />
-          <ValueField
-            id="auto-continue-loop-short-count"
-            label={t('field.loopShortCount')}
-            hint={t('field.loopShortCountHint')}
-            numeric
-            {...shared}
-            {...state.loopShortCount}
-            onEdit={(text) => props.edit('loopShortCount', text)}
-            onReset={() => props.resetField('loopShortCount')}
-          />
-          <ValueField
-            id="auto-continue-loop-repeat-text"
-            label={t('field.loopRepeatText')}
-            hint={t('field.loopRepeatTextHint')}
-            numeric
-            {...shared}
-            {...state.loopRepeatText}
-            onEdit={(text) => props.edit('loopRepeatText', text)}
-            onReset={() => props.resetField('loopRepeatText')}
-          />
-          <ValueField
-            id="auto-continue-loop-tool-repeat"
-            label={t('field.loopToolRepeat')}
-            hint={t('field.loopToolRepeatHint')}
-            numeric
-            {...shared}
-            {...state.loopToolRepeat}
-            onEdit={(text) => props.edit('loopToolRepeat', text)}
-            onReset={() => props.resetField('loopToolRepeat')}
-          />
-          <ValueField
-            wide
-            id="auto-continue-loop-text"
-            label={t('field.loopText')}
-            hint={t('field.loopTextHint')}
-            {...shared}
-            {...state.loopText}
-            onEdit={(text) => props.edit('loopText', text)}
-            placeholder={t('default.loopText')}
-            onReset={() => props.resetField('loopText')}
-          />
-        </SettingsSection>
-
-        <SettingsSection
-          t={t}
-          titleKey="section.live.title"
-          descriptionKey="section.live.description"
-          tone="live"
-        >
-          <LivePanels t={t} />
-        </SettingsSection>
+  const state = props.useAutoContinueSettingsCard(snapshot => snapshot);
+  const [active, setActive] = useState<Category>('general');
+  const prefix = useId();
+  const group = groups.find(item => item.id === active)!;
+  if (!state.available) return null;
+  return <li className="dshAcCard">
+    <header className="dshAcHeaderFrame">
+      <div className="dshAcIntroduction"><div className="dshAcTitleLine"><h2>{t('card.title')}</h2><span className="dshAcStatus">{t(state.enabled ? 'chrome.enabled' : 'chrome.paused')}</span></div><p>{t('card.description')}</p></div>
+      <RepositoryInvite t={t} />
+    </header>
+    {!state.writable && <p className="dshAcReadOnly" role="status">{t('chrome.readOnly')}</p>}
+    <div className="dshAcLayout">
+      <div className="dshAcNav" role="tablist" aria-label={t('chrome.categories')}>
+        {groups.map((item, index) => {
+          const invalid = item.fields.some(name => state[name].invalid);
+          const title = t(`category.${item.id}.title`);
+          return <button type="button" role="tab" key={item.id} id={`${prefix}-tab-${item.id}`} data-category={item.id}
+            aria-controls={`${prefix}-panel-${item.id}`} aria-selected={active === item.id} tabIndex={active === item.id ? 0 : -1}
+            aria-label={invalid ? `${title}: ${t('chrome.invalidNumber')}` : title}
+            onClick={() => setActive(item.id)} onKeyDown={event => {
+              const offset = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+              if (!offset && event.key !== 'Home' && event.key !== 'End') return;
+              event.preventDefault();
+              const next = event.key === 'Home' ? 0 : event.key === 'End' ? groups.length - 1 : (index + offset + groups.length) % groups.length;
+              setActive(groups[next]!.id);
+              const button = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next];
+              button?.focus();
+              button?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            }}>{title}{invalid && <span className="dshAcInvalidMark" aria-hidden="true">!</span>}</button>;
+        })}
       </div>
-    </SettingsCard>
-  );
+      <section className="dshAcCategory" role="tabpanel" id={`${prefix}-panel-${active}`} aria-labelledby={`${prefix}-tab-${active}`}>
+        <div className="dshAcCategoryHeading"><h3>{t(`category.${active}.title`)}</h3><p>{t(`category.${active}.description`)}</p></div>
+        {group.fields.map(name => <SettingField key={name} name={name} id={`${prefix}-${name}`} state={state[name]} actions={props} disabled={!state.writable} t={t} />)}
+        {active === 'status' && <LivePanels t={t} />}
+      </section>
+    </div>
+    <footer className="dshAcFooter" data-dirty={state.dirty}>
+      <p className={state.failed || state.invalid ? 'dshAcInvalid' : 'dshAcHint'} role="status">{t(state.failed ? 'chrome.saveFailed' : state.invalid ? 'chrome.invalidNumber' : state.saving ? 'chrome.saving' : state.dirty ? 'chrome.unsaved' : state.notificationFeedback ?? 'chrome.saved')}</p>
+      <div><button type="button" className="dshAcDiscard" disabled={!state.dirty || state.saving} onClick={props.discard}>{t('chrome.discard')}</button><button type="button" className="dshAcSave" disabled={!state.dirty || state.invalid || state.saving || !state.writable} onClick={props.save}>{t(state.saving ? 'chrome.saving' : 'chrome.save')}</button></div>
+    </footer>
+  </li>;
 }
