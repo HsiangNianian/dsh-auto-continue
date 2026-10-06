@@ -91,7 +91,7 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
-| **0.2.1-alpha.1** | **0.13.0 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.1-alpha.1** | **0.14.0 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |
@@ -100,7 +100,7 @@ DSH 0.1.0-rc.6 and earlier are unsupported. Automated runtime checks cover **0.1
 
 **Plugins 0.11.9 and 0.12.0 are rejected by DSH 0.2.0-rc.1’s version check.** Upgrade the plugin to 0.12.1 or newer; its existing configuration-form integration works on this runtime. See [#50](https://github.com/HsiangNianian/dsh-auto-continue/issues/50).
 
-On current DSH, **Settings → Built-in plugins** is a component inventory, not the configuration editor. Use the main **Plugins** page. The screenshots below show the current working-tree UI on **DSH 0.2.1-alpha.1**. If you previously installed with a symlink or hand-written loader entry, see [Migrating an older installation](#migrating-an-older-installation).
+On current DSH, **Settings → Built-in plugins** is a component inventory, not the configuration editor. Use the main **Plugins** page. The screenshots below show plugin **0.14.0** on **DSH 0.2.1-alpha.1**. If you previously installed with a symlink or hand-written loader entry, see [Migrating an older installation](#migrating-an-older-installation).
 
 ### From npm (recommended)
 

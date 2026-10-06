@@ -1,7 +1,7 @@
 # Configuration and composer screenshots
 
-Captured on 2026-10-06 with **DSH 0.2.1-alpha.1** and the **current working-tree build**
-(the package version remains 0.13.0 until release), using Chromium and DSH's dark theme.
+Captured on 2026-10-06 with **DSH 0.2.1-alpha.1** and **plugin 0.14.0**,
+using Chromium and DSH's dark theme.
 The capture uses an isolated `DSH_HOME` with no API keys or user conversations.
 
 | View | English | Chinese | Viewport |
