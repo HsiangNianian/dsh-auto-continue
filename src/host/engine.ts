@@ -128,9 +128,21 @@ type CompatibleSession = Session & {
 /** Read one stable event-log snapshot on both legacy and DSH 0.1.2 hosts. */
 function snapshotSessionEvents(session: Session): readonly SessionEvent[] {
   const compatible = session as CompatibleSession;
-  if (typeof compatible.snapshotEvents === 'function') return compatible.snapshotEvents();
-  if (compatible.events !== undefined) return compatible.events;
-  throw new TypeError('session exposes neither snapshotEvents() nor events');
+  const snapshot = compatible.snapshotEvents;
+  const events = typeof snapshot === 'function' ? snapshot.call(session) : compatible.events;
+  if (!Array.isArray(events)) throw new TypeError('session history is not an event array');
+  // Do not filter damaged entries: one could have been a manual stop, newer turn,
+  // or tool result. An incomplete history is not safe evidence for a continuation.
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (event === null || typeof event !== 'object' || Array.isArray(event) ||
+        typeof event.type !== 'string' || event.type === '' ||
+        !Number.isSafeInteger(event.seq) || event.seq < 0 ||
+        !Number.isFinite(event.time) || event.time < 0) {
+      throw new TypeError(`invalid session event envelope at index ${index}`);
+    }
+  }
+  return events;
 }
 
 /** Interpret host failure payloads without trusting persisted or plugin-provided event shapes. */
@@ -219,6 +231,8 @@ export class AutoContinueRunner {
   private readonly disposeInboxEvents: () => void;
   private disposed = false;
   private readonly bootScannedSessions = new WeakSet<Session>();
+  /** Also bound diagnostics when even an agent's session getter is unavailable. */
+  private readonly bootScanErrors = new WeakSet<object>();
   private bootScanTimer: ReturnType<typeof setTimeout> | undefined;
   private wakeBootScan: (() => void) | undefined;
 
@@ -1207,6 +1221,7 @@ export class AutoContinueRunner {
     const now = Date.now();
     const candidates: {
       session: Session;
+      sessionId: SessionId;
       events: readonly SessionEvent[];
       lastEnd: SessionEvent<'turn/end'>;
       reasonKind: string;
@@ -1215,76 +1230,107 @@ export class AutoContinueRunner {
       listIndex: number;
     }[] = [];
     for (const agent of this.ctx.agents.list()) {
-      const session = agent.session;
-      if (session.header.origin === 'subagent' || this.bootScannedSessions.has(session)) continue;
-      const state = this.state(session.id);
-      if (state.pendingTimer !== undefined || state.consecutive >= config.maxConsecutive) continue;
-      if (now - state.lastAttemptAt < this.cooldownFor(state)) continue;
-      if (now < (this.pauseUntil.get(session.id) ?? 0)) continue;
-      const events = snapshotSessionEvents(session);
-      // A published session may still be waiting for its first history snapshot.
-      if (events.length === 0) continue;
-      let lastEnd: SessionEvent<'turn/end'> | undefined;
-      for (let i = events.length - 1; i >= 0; i -= 1) {
-        const event = events[i];
-        if (event?.type === 'turn/end') { lastEnd = event; break; }
-      }
-      const reasonKind = readReasonKind(lastEnd?.data.reason);
-      const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
-      const superseded = lastEnd !== undefined && events.some((event) =>
-        event.seq > lastEnd!.seq && (event.type === 'turn/start' ||
-          (event.type === 'user/message' && event.data.source.kind === 'user')),
-      );
-      if (lastEnd === undefined || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
-          lastEnd.time < now - config.freshMs || superseded) {
-        this.bootScannedSessions.add(session);
-        continue;
-      }
-      let failure: FailureFacts | undefined;
-      if (reasonKind === 'error') {
-        failure = parseFailureFacts((lastEnd.data.reason as { error?: unknown }).error);
-        if (failure === undefined) {
+      let session: Session | undefined;
+      let sessionId: SessionId | undefined;
+      try {
+        session = agent.session;
+        // Check quarantine before reading metadata that may have failed previously.
+        if (this.bootScannedSessions.has(session) || session.header?.origin === 'subagent') continue;
+        sessionId = session.id;
+        if (typeof sessionId !== 'string' || sessionId === '') throw new TypeError('session id is unavailable');
+        const state = this.state(sessionId);
+        if (state.pendingTimer !== undefined || state.consecutive >= config.maxConsecutive) continue;
+        if (now - state.lastAttemptAt < this.cooldownFor(state)) continue;
+        if (now < (this.pauseUntil.get(sessionId) ?? 0)) continue;
+        const events = snapshotSessionEvents(session);
+        // An empty, valid snapshot may still be waiting for history hydration.
+        if (events.length === 0) continue;
+        let lastEnd: SessionEvent<'turn/end'> | undefined;
+        for (let i = events.length - 1; i >= 0; i -= 1) {
+          const event = events[i];
+          if (event?.type === 'turn/end') { lastEnd = event; break; }
+        }
+        const reasonKind = readReasonKind(lastEnd?.data.reason);
+        const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
+        const superseded = lastEnd !== undefined && events.some((event) =>
+          event.seq > lastEnd!.seq && (event.type === 'turn/start' ||
+            (event.type === 'user/message' && event.data.source.kind === 'user')),
+        );
+        if (lastEnd === undefined || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
+            lastEnd.time < now - config.freshMs || superseded) {
           this.bootScannedSessions.add(session);
-          console.error(`[auto-continue] 忽略畸形扫描 turn/end ${session.id}: error details 无法解释`);
           continue;
         }
-        if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
-          this.bootScannedSessions.add(session);
-          this.onTurnFailure(session.id, 'scan:turn/end:error', failure);
-          continue;
+        let failure: FailureFacts | undefined;
+        if (reasonKind === 'error') {
+          failure = parseFailureFacts((lastEnd.data.reason as { error?: unknown }).error);
+          if (failure === undefined) {
+            this.bootScannedSessions.add(session);
+            console.error(`[auto-continue] 忽略畸形扫描 turn/end ${sessionId}: error details 无法解释`);
+            continue;
+          }
+          if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
+            this.bootScannedSessions.add(session);
+            this.onTurnFailure(sessionId, 'scan:turn/end:error', failure);
+            continue;
+          }
         }
+        candidates.push({
+          session, sessionId, events, lastEnd, reasonKind, failure,
+          lastActivityAt: events.reduce((latest, event) => Math.max(latest, event.time), 0),
+          listIndex: candidates.length,
+        });
+      } catch (error) {
+        if (session !== null && typeof session === 'object') this.bootScannedSessions.add(session);
+        const identity = session ?? agent;
+        if (identity !== null && typeof identity === 'object') {
+          if (this.bootScanErrors.has(identity)) continue;
+          this.bootScanErrors.add(identity);
+        }
+        this.logBootScanFailure(sessionId, error);
       }
-      candidates.push({
-        session, events, lastEnd, reasonKind, failure,
-        lastActivityAt: events.reduce((latest, event) => Math.max(latest, event.time), 0),
-        listIndex: candidates.length,
-      });
     }
     // Limit recoveries, not healthy/permanent histories that cannot be resumed.
     candidates.sort((left, right) => right.lastActivityAt - left.lastActivityAt || left.listIndex - right.listIndex);
-    for (const candidate of candidates.slice(0, config.scanLimit)) {
+    let recoveries = 0;
+    for (const candidate of candidates) {
+      if (recoveries >= config.scanLimit) break;
       if (this.disposed) return true;
-      const { session, events, lastEnd, reasonKind, failure } = candidate;
+      const { session, sessionId, events, lastEnd, reasonKind, failure } = candidate;
       this.bootScannedSessions.add(session);
-      const state = this.state(session.id);
-      this.applyGuardFromEvents(state, events, lastEnd.seq);
-      const scanReason = `scan:turn/end:${reasonKind}${reasonKind === 'no-visible-output' ? ':silent' : ''}`;
-      this.log(`扫描发现中断 ${session.id}(turn/end:${reasonKind}), 交给恢复策略处理`);
-      if (failure !== undefined) {
-        state.lastFailure = failure;
-        state.lastTurn = lastEnd.data.turn;
-        state.lastFailureAt = lastEnd.time;
-        this.onTurnFailure(session.id, scanReason, failure);
-      } else {
-        if (reasonKind === 'no-visible-output') {
-          state.lastFailure = undefined;
+      const state = this.state(sessionId);
+      try {
+        this.applyGuardFromEvents(state, events, lastEnd.seq);
+        const scanReason = `scan:turn/end:${reasonKind}${reasonKind === 'no-visible-output' ? ':silent' : ''}`;
+        this.log(`扫描发现中断 ${sessionId}(turn/end:${reasonKind}), 交给恢复策略处理`);
+        if (failure !== undefined) {
+          state.lastFailure = failure;
           state.lastTurn = lastEnd.data.turn;
           state.lastFailureAt = lastEnd.time;
+          this.onTurnFailure(sessionId, scanReason, failure);
+        } else {
+          if (reasonKind === 'no-visible-output') {
+            state.lastFailure = undefined;
+            state.lastTurn = lastEnd.data.turn;
+            state.lastFailureAt = lastEnd.time;
+          }
+          this.schedule(sessionId, scanReason);
         }
-        this.schedule(session.id, scanReason);
+        recoveries += 1;
+      } catch (error) {
+        state.tools.reset();
+        this.cancelPending(sessionId, '启动扫描失败');
+        this.logBootScanFailure(sessionId, error);
       }
     }
     return false;
+  }
+
+  /** Captured identity only: even session.id can throw when the header is damaged. */
+  private logBootScanFailure(sessionId: SessionId | undefined, error: unknown): void {
+    console.error(`[auto-continue] 启动扫描跳过会话 ${sessionId ?? '(id unavailable)'}: ${
+      error instanceof Error ? error.message : String(error)
+    }`);
   }
 
   /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */

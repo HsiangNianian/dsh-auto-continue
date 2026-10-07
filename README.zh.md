@@ -80,6 +80,8 @@
 
 宿主启动时还会扫描存活会话: 最后一个回合在**扫描时间窗**(默认 15 分钟)内以非人为原因结束、且其后没有新回合或用户消息的会话, 会被自动续跑(例如浏览器关闭期间宿主崩溃——agent-loop 恢复会话后引擎接着接手)。
 
+启动恢复按会话隔离异常。历史无法读取或含有无效事件时，只在本次启动扫描中跳过该会话并记录错误，其他会话仍可恢复，也不会被它占用恢复名额。插件不会静默删除损坏记录，以免漏掉人工停止或更新的回合。合法的空历史、尚未就绪的会话注册表仍会在扫描窗口内重试；修复后的会话若重新加载为新的 Session 对象，也可再次参与扫描。详见 [#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58)。
+
 浏览器负责设置卡片、会话区开关和一条状态桥(展示通知, 带「立即续跑 / 暂停该会话 1 小时」按钮并把动作回传给宿主引擎; 驱动卡片里的统计与暂停面板)。
 
 ### 恢复流程
@@ -96,12 +98,12 @@ DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。下面的命�
 
 | DSH 内核 | 插件版本 | 配置入口 |
 | --- | --- | --- |
-| **0.2.1-alpha.1** | **已验证 0.14.1** | **插件 → dsh-client-auto-continue** |
+| **0.2.1-alpha.1** | **已验证 0.14.2** | **插件 → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 或更新版本** | **插件 → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 或更新版本** | 同上，从主侧栏的插件页进入 |
 | 使用旧设置 API 的宿主 | 保留旧版设置界面兼容 | **设置 → 插件 → 插件配置** |
 
-不支持 DSH 0.1.0-rc.6 及更早版本。自动化运行时测试覆盖 **0.1.7-rc.2**、**0.2.0-rc.1** 和 **0.2.1-alpha.1**。桌面应用版本不等于内置的 DSH 内核版本，请按内核版本判断兼容性；CLI 可运行 `dsh --version`，可用版本见 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。
+不支持 DSH 0.1.0-rc.6 及更早版本。自动化设置与兼容测试覆盖 **0.1.7-rc.2**、**0.2.0-rc.1** 和 **0.2.1-alpha.1**，另在 **0.2.0-rc.2** 和 **0.2.1-alpha.1** 上验证启动扫描的异常隔离。桌面应用版本不等于内置的 DSH 内核版本，请按内核版本判断兼容性；CLI 可运行 `dsh --version`，可用版本见 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。
 
 **插件 0.11.9 和 0.12.0 会被 DSH 0.2.0-rc.1 的版本检查拦截。** 请升级到 0.12.1 或更新版本；现有配置表单接口可在该内核正常工作。详见 [#50](https://github.com/HsiangNianian/dsh-auto-continue/issues/50)。
 
@@ -351,19 +353,21 @@ auto-continue:
 
 ## 开发
 
-使用 Node.js 22，安装两个锁定版本的运行时测试环境，即可在本地执行 CI 检查：
+使用 Node.js 22，安装锁定版本的运行时测试环境，即可在本地执行 CI 检查：
 
 ```bash
 npm ci
 npm ci --prefix tests/fixtures/dsh-0.1.7
 npm ci --prefix tests/fixtures/dsh-0.2.0
+npm ci --prefix tests/fixtures/dsh-0.2.0-rc.2
+npm ci --prefix tests/fixtures/dsh-0.2.1
 npm run typecheck
 npm run build
 npm test
 npm run test:runtime
 ```
 
-`npm test` 覆盖错误恢复、自主循环上限与开关、子会话排除、暂停期间手动续跑、启动扫描、队列顺序、统计、本地化、设置界面生命周期及保存期间继续编辑的情况。`npm run test:runtime` 使用已发布的 DSH **0.1.7-rc.2** 和 **0.2.0-rc.1** Settings、Loader、HTTP 组件，并运行真实的 0.2 profile 兼容检查，以及 Cordis 4.0.4 中缺少其中一种设置服务时的客户端激活测试。运行时测试使用受控的 agent 事件，不会向模型服务发送请求。
+`npm test` 覆盖错误恢复、自主循环上限与开关、子会话排除、暂停期间手动续跑、启动扫描及畸形会话隔离、队列顺序、统计、本地化、设置界面生命周期及保存期间继续编辑的情况。`npm run test:runtime` 使用已发布的 DSH **0.1.7-rc.2**、**0.2.0-rc.1** 和 **0.2.1-alpha.1** Settings、Loader、HTTP 组件，并运行真实的 0.2 profile 兼容检查及缺少其中一种设置服务时的客户端激活测试。启动恢复测试在真实的 **0.2.0-rc.2** 和 **0.2.1-alpha.1** Session、Cordis、HTTP 组件中注入会话读取故障，验证健康会话仍能恢复；这不代表正常的 DSH 加载流程会产生损坏日志。运行时测试使用受控的 agent 事件，不会向模型服务发送请求。
 
 修改链接的本地仓库后，运行 `npm run build` 写入最新的 `lib/` 产物，再重启 DSH 并刷新浏览器。开启 client HMR 的宿主可自动重新加载已构建的客户端包。
 

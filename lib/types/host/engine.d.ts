@@ -42,6 +42,8 @@ export declare class AutoContinueRunner {
     private readonly disposeInboxEvents;
     private disposed;
     private readonly bootScannedSessions;
+    /** Also bound diagnostics when even an agent's session getter is unavailable. */
+    private readonly bootScanErrors;
     private bootScanTimer;
     private wakeBootScan;
     /**
@@ -135,6 +137,8 @@ export declare class AutoContinueRunner {
     private bootScanLoop;
     /** Inspect newly available sessions; process each settled startup history once. */
     private scanInterrupted;
+    /** Captured identity only: even session.id can throw when the header is damaged. */
+    private logBootScanFailure;
     /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
     private applyGuardFromEvents;
 }
