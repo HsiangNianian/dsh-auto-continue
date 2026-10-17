@@ -233,6 +233,7 @@ The browser mirrors DSH's active language into the internal `locale` field. Leav
     resumeCompletedTurns: false
     continueTextSilent: ''
     continueTextLoop: ''
+    continueTextInterrupted: ''
     continueTextMaxTokens: ''
     guardTools: true
     guardPendingText: ''
@@ -335,7 +336,7 @@ For a provider-specific error that is safe to resume (confirm first that manuall
 
 Patterns are literal substrings, not regular expressions. Blank lines are ignored; any matching line wins before the built-in permanent-error rules. Cooldown and consecutive-attempt limits still apply.
 
-`continueText` (and `continueTextMaxTokens`, `continueTextSilent`, `continueTextLoop`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output). The host engine currently leaves `{sessionTitle}` empty.
+`continueText` (and `continueTextMaxTokens`, `continueTextSilent`, `continueTextLoop`, `continueTextInterrupted`) accept the placeholders `{code}`, `{message}`, `{status}`, `{tool}` (last tool call before the failure), `{turn}`, `{errorCount}` (consecutive failures including this one) and `{elapsed}` (time since the failure, e.g. `1m5s`) — e.g. `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. `continueTextInterrupted` is sent when the boot scan resumes a session that a harness restart had closed mid-turn; its default explains the restart and asks the model to verify external state before retrying. The guard texts accept `{tool}` and `{result}` (a truncated excerpt of the last tool output). The host engine currently leaves `{sessionTitle}` empty.
 
 ---
 

@@ -31,6 +31,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueTextSilent: z<string, string>;
     /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
     continueTextLoop: z<string, string>;
+    /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
+    continueTextInterrupted: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -94,6 +96,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     continueTextSilent: z<string, string>;
     /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
     continueTextLoop: z<string, string>;
+    /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
+    continueTextInterrupted: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -162,6 +166,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     continueTextSilent: z<string, string>;
     /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
     continueTextLoop: z<string, string>;
+    /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
+    continueTextInterrupted: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -225,6 +231,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     continueTextSilent: z<string, string>;
     /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
     continueTextLoop: z<string, string>;
+    /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
+    continueTextInterrupted: z<string, string>;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools: z<boolean, boolean>;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

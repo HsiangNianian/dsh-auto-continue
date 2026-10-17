@@ -233,6 +233,7 @@ DSH 0.1.7 / 0.2 将这些值保存在当前 profile patch 的 `auto-continue` �
     resumeCompletedTurns: false
     continueTextSilent: ''
     continueTextLoop: ''
+    continueTextInterrupted: ''
     continueTextMaxTokens: ''
     guardTools: true
     guardPendingText: ''
@@ -335,7 +336,7 @@ auto-continue:
 
 匹配项是普通子串, 不是正则表达式。空行会被忽略; 任一行命中后会优先于内置永久错误规则。冷却与最大连续次数仍然生效。
 
-`continueText`（以及 `continueTextMaxTokens`、`continueTextSilent`、`continueTextLoop`）支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。护栏文本支持 `{tool}` 与 `{result}`(上一步工具输出的截断摘要)。当前宿主引擎会将 `{sessionTitle}` 替换为空字符串。
+`continueText`（以及 `continueTextMaxTokens`、`continueTextSilent`、`continueTextLoop`、`continueTextInterrupted`）支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。`continueTextInterrupted` 在启动扫描恢复被宿主重启中断的会话时发送, 默认文本会说明重启并要求先核实外部状态再重试。护栏文本支持 `{tool}` 与 `{result}`(上一步工具输出的截断摘要)。当前宿主引擎会将 `{sessionTitle}` 替换为空字符串。
 
 ---
 

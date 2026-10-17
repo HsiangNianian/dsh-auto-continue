@@ -18,6 +18,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
     resumeCompletedTurns: CardFieldState;
     continueTextLoop: CardFieldState;
     continueTextSilent: CardFieldState;
+    continueTextInterrupted: CardFieldState;
     guardTools: CardFieldState;
     guardPendingText: CardFieldState;
     guardDoneText: CardFieldState;

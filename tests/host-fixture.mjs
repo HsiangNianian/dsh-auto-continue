@@ -6,10 +6,22 @@ export function makeHost(overrides = {}) {
   const agents = new Map();
   const handlers = new Map();
   const routes = new Map();
+  const services = new Map();
+  const resumes = [];
+  const logs = [];
   const cleanups = [];
   let listReads = 0;
   const ctx = {
-    agents: { list: () => { listReads += 1; return [...agents.values()]; }, get: (id) => agents.get(id) },
+    agents: {
+      list: () => { listReads += 1; return [...agents.values()]; },
+      get: (id) => agents.get(id),
+      resume: (options) => { resumes.push(options); return Promise.resolve(); },
+    },
+    get: (name) => services.get(name),
+    logger: {
+      info: (message) => { logs.push({ level: 'info', message }); },
+      error: (message) => { logs.push({ level: 'error', message }); },
+    },
     webServer: {
       register(route) { routes.set(route.path, route); return () => routes.delete(route.path); },
     },
@@ -26,6 +38,9 @@ export function makeHost(overrides = {}) {
     config,
     agents,
     listReads: () => listReads,
+    provide: (name, service) => services.set(name, service),
+    resumes: () => resumes,
+    logs,
     start() { apply(ctx, config); },
     emit(agent, event) { for (const callback of handlers.get('session/event') ?? []) callback(agent.session, event); },
     agent(id, events = []) {

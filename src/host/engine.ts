@@ -93,6 +93,22 @@ const LOOP_GUARD_CANCEL_CAUSE = {
 const LOOP_COMPLETED_REASON = 'turn/end:completed';
 const LOOP_SILENT_REASON = 'turn/end:loop-silent';
 const MANUAL_NOTIFICATION_REASON = 'manual:notification';
+
+/** 存储扫描每轮最多观察的持久化会话数(大语料下摊薄冷读 IO)。 */
+const SWEEP_OBSERVE_BATCH = 16;
+
+/**
+ * 存储扫描消费的宿主服务结构类型。这些服务(sessionQuery 等)随 dsh
+ * 版本整组演进, 直接引类型包会拖动 devDependency 时代; 按消费面声明,
+ * 缺服务的宿主在运行时禁用存储扫描即可。
+ */
+interface StoredObservation {
+  readonly events: readonly SessionEvent[];
+  readonly header: { readonly id?: SessionId; readonly origin?: string; readonly agentPreset?: string };
+  readonly projections?: { readonly values: { readonly agentPreset?: string } };
+  [Symbol.dispose]?: () => void;
+}
+
 const isLoopReason = (reason: string): boolean =>
   reason === LOOP_COMPLETED_REASON || reason === LOOP_SILENT_REASON;
 
@@ -233,6 +249,9 @@ export class AutoContinueRunner {
   private readonly bootScannedSessions = new WeakSet<Session>();
   /** Also bound diagnostics when even an agent's session getter is unavailable. */
   private readonly bootScanErrors = new WeakSet<object>();
+  /** 存储扫描已裁决的会话 id, 避免每轮重复冷读大日志。 */
+  private readonly storedSwept = new Set<SessionId>();
+  private storedSweepAnnounced = false;
   private bootScanTimer: ReturnType<typeof setTimeout> | undefined;
   private wakeBootScan: (() => void) | undefined;
 
@@ -1038,6 +1057,7 @@ export class AutoContinueRunner {
     if (isLoopReason(reason)) return config.continueTextLoop;
     if (reason.endsWith(':silent')) return config.continueTextSilent;
     if (reason.includes('max-tokens')) return config.continueTextMaxTokens;
+    if (reason.includes('interrupted')) return config.continueTextInterrupted;
     return config.continueText;
   }
 
@@ -1309,11 +1329,10 @@ export class AutoContinueRunner {
           state.lastFailureAt = lastEnd.time;
           this.onTurnFailure(sessionId, scanReason, failure);
         } else {
-          if (reasonKind === 'no-visible-output') {
-            state.lastFailure = undefined;
-            state.lastTurn = lastEnd.data.turn;
-            state.lastFailureAt = lastEnd.time;
-          }
+          if (reasonKind === 'no-visible-output') state.lastFailure = undefined;
+          // 没有失败事实的恢复(如 interrupted)也要填 {turn}/{elapsed}, README 对所有继续文本承诺这些占位符。
+          state.lastTurn = lastEnd.data.turn;
+          state.lastFailureAt = lastEnd.time;
           this.schedule(sessionId, scanReason);
         }
         recoveries += 1;
@@ -1323,7 +1342,88 @@ export class AutoContinueRunner {
         this.logBootScanFailure(sessionId, error);
       }
     }
+    // 存储扫描: 物化尚未加载为 agent 的中断会话, 下一轮由本扫描接管恢复。
+    await this.sweepStoredSessions(config);
     return false;
+  }
+
+  /**
+   * 存储扫描: 枚举持久化会话, 把尾部命中恢复谓词的未加载会话物化为
+   * live agent。宿主重启后 agent 仅在客户端打开会话时才懒加载, 不物化
+   * 则启动扫描永远看不到它们; 谓词与上方扫描一致, 仅失败类原因。
+   */
+  private async sweepStoredSessions(config: AutoContinueConfig): Promise<void> {
+    const query = this.ctx.get('sessionQuery');
+    if (query === undefined) return;
+    const records = await query.listSessions();
+    if (!this.storedSweepAnnounced) {
+      this.storedSweepAnnounced = true;
+      this.ctx.logger.info(`存储扫描就绪: ${records.length} 个会话记录`);
+    }
+    const now = Date.now();
+    let observed = 0;
+    for (const record of records) {
+      if (this.disposed || observed >= SWEEP_OBSERVE_BATCH) return;
+      const sessionId = record.header.id;
+      if (record.live || this.storedSwept.has(sessionId)) continue;
+      this.storedSwept.add(sessionId);
+      if (record.header.origin === 'subagent') continue;
+      observed += 1;
+      let observation: StoredObservation | undefined;
+      try {
+        const stored: StoredObservation = await query.observeSession(sessionId, { projectionMode: 'all' });
+        observation = stored;
+        const events = stored.events;
+        if (events.length === 0) continue;
+        let lastEnd: SessionEvent<'turn/end'> | undefined;
+        for (let i = events.length - 1; i >= 0; i -= 1) {
+          const event = events[i];
+          if (event?.type === 'turn/end') { lastEnd = event; break; }
+        }
+        const reasonKind = readReasonKind(lastEnd?.data.reason);
+        const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
+        const superseded = lastEnd !== undefined && events.some((event) =>
+          event.seq > lastEnd!.seq && (event.type === 'turn/start' ||
+            (event.type === 'user/message' && event.data.source.kind === 'user')),
+        );
+        if (lastEnd === undefined || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
+            lastEnd.time < now - config.freshMs || superseded) {
+          continue;
+        }
+        const presetId = stored.projections?.values.agentPreset ?? stored.header.agentPreset;
+        await this.materializeStored(sessionId, presetId);
+        this.ctx.logger.info(`扫描物化存储会话 ${sessionId}(turn/end:${reasonKind}), 交给启动扫描接管`);
+      } catch (error) {
+        this.ctx.logger.error(`存储会话 ${sessionId} 物化失败: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        observation?.[Symbol.dispose]?.();
+      }
+    }
+  }
+
+  /**
+   * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
+   * 器的 adopt 路径)。恢复时追加的合成 turn/end(`interrupted`)随后
+   * 由常规扫描按既有关卡恢复。
+   */
+  private async materializeStored(sessionId: SessionId, presetId: string | undefined): Promise<void> {
+    const presets = this.ctx.get('agentPresets');
+    // Mirrors session-controller's adopt: without agent options the agent has no
+    // provider/model, so prompt variables like {{model}} have no value and the
+    // request carries no route.
+    const defaultModel = this.ctx.get('agentDefaultModel');
+    const selection = defaultModel?.currentSelection();
+    const agentOptions = selection === undefined ? undefined : { provider: selection.provider, model: selection.model };
+    if (presets === undefined) {
+      await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions });
+      return;
+    }
+    const resolvedId = (await presets.resolve(presetId)).id;
+    await this.ctx.agents.resume({
+      resumeSessionId: sessionId,
+      agentOptions,
+      setup: async (agentCtx) => { await presets.mount(agentCtx, resolvedId); },
+    });
   }
 
   /** Captured identity only: even session.id can throw when the header is damaged. */

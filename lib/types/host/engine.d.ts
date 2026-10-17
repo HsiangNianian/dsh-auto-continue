@@ -44,6 +44,9 @@ export declare class AutoContinueRunner {
     private readonly bootScannedSessions;
     /** Also bound diagnostics when even an agent's session getter is unavailable. */
     private readonly bootScanErrors;
+    /** 存储扫描已裁决的会话 id, 避免每轮重复冷读大日志。 */
+    private readonly storedSwept;
+    private storedSweepAnnounced;
     private bootScanTimer;
     private wakeBootScan;
     /**
@@ -137,6 +140,18 @@ export declare class AutoContinueRunner {
     private bootScanLoop;
     /** Inspect newly available sessions; process each settled startup history once. */
     private scanInterrupted;
+    /**
+     * 存储扫描: 枚举持久化会话, 把尾部命中恢复谓词的未加载会话物化为
+     * live agent。宿主重启后 agent 仅在客户端打开会话时才懒加载, 不物化
+     * 则启动扫描永远看不到它们; 谓词与上方扫描一致, 仅失败类原因。
+     */
+    private sweepStoredSessions;
+    /**
+     * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
+     * 器的 adopt 路径)。恢复时追加的合成 turn/end(`interrupted`)随后
+     * 由常规扫描按既有关卡恢复。
+     */
+    private materializeStored;
     /** Captured identity only: even session.id can throw when the header is damaged. */
     private logBootScanFailure;
     /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
