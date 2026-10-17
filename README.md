@@ -78,7 +78,7 @@ Subagent sessions stay under their parent agent's control. The plugin skips them
 
 The host-side engine subscribes to the session event firehose inside the dsh host process — one engine shared by every browser tab. On an interruption it waits a **grace period** (default 3 s) — if the host starts a new turn by itself (`turn/start`), the auto-continue is cancelled — then sends the configured text through the agent registry (`agent.followup`, the same queue the Send button uses). When that queue already contains turns, the engine promotes only its newly inserted continuation before the host wakes the agent; it does not remove or reorder the queued user turns.
 
-On host boot it also scans the live sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed — the agent-loop resumes the session and the engine picks it up).
+On host boot it also scans the live sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed — the agent-loop resumes the session and the engine picks it up). Persisted sessions the host never reloaded are enumerated from session storage and materialized into the registry first; a journal that stopped mid-turn is completed with an interrupted marker on read, so restart-orphaned turns are recovered the same way.
 
 Startup recovery isolates failures per session. If history cannot be read or contains invalid events, that session is skipped for the current startup scan and an error is logged; other sessions can still recover, without losing a recovery slot. Invalid entries are not silently removed, since they could hide a manual stop or a newer turn. Valid empty histories and a registry that is still loading remain retryable within the scan window. Reloading a repaired session as a new session object also makes it eligible for scanning again. See [#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58).
 
@@ -302,6 +302,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Continue text (silent turn) | `Continue. Your previous turn ended with internal reasoning only, ...` | Text sent to resume a silent turn (same placeholders) |
 | Autonomous loop (continue after every turn) | `off` | Continue normal completions after grace, bypassing recovery cooldown/cap; reasoning-only and explicit silent endings still consume the retry budget |
 | Continue text (autonomous loop) | `Continue` | Text sent on each autonomous-loop resume (same placeholders) |
+| Continue text (harness restart) | `Continue. The harness was restarted while your previous turn was still running; …` | Text sent when the boot scan resumes a session that a harness restart closed mid-turn (same placeholders) |
 | Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
 | Loop guard | `on` | Detect a running turn spinning in place and restart it (see What It Does) |
 | Short-sentence max (chars) | `40` | A model message shorter than this counts as a short sentence (spinning signal) |

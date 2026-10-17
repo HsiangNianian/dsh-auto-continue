@@ -94,7 +94,8 @@ const LOOP_COMPLETED_REASON = 'turn/end:completed';
 const LOOP_SILENT_REASON = 'turn/end:loop-silent';
 const MANUAL_NOTIFICATION_REASON = 'manual:notification';
 
-/** 存储扫描每轮最多观察的持久化会话数(大语料下摊薄冷读 IO)。 */
+/** 存储扫描每轮最多观察的持久化会话数(大语料下摊薄冷读 IO)。总量由启动窗口
+ * 自然约束(窗口时长 × 每轮上限), scanLimit 只约束每轮恢复数、不约束物化。 */
 const SWEEP_OBSERVE_BATCH = 16;
 /** 单个存储会话连续观察/物化失败达此数后放弃, 避免坏日志反复占满每轮观察配额。 */
 const SWEEP_MAX_FAILURES = 3;
@@ -1390,9 +1391,10 @@ export class AutoContinueRunner {
           const event = events[i];
           if (event?.type === 'turn/start') { lastStart = event; break; }
         }
-        // 日志止于 turn/start = 宿主死在轮次进行中。resume 会让核心补一条合成的
-        // interrupted turn/end, 常规扫描随后接管恢复。live 扫描把尾随 turn/start
-        // 当作用户接管而跳过, 该判定只对仍存活、拥有该轮次的进程成立。
+        // 兜底分支: 真实 sessionQuery 冷读会把内存中的 interruptedTurnClosers
+        // 折叠进返回日志(尾部即合成 turn/end), 上方 closed-tail 才是生产主路
+        // 径。这里覆盖两种例外——不折叠的宿主实现, 以及 listSessions 快照与
+        // observeSession 之间客户端刚打开、切在轮次中间的 live 视图。
         const openTurn = lastStart !== undefined && (lastEnd === undefined || lastStart.seq > lastEnd.seq);
         let reasonKind: string | undefined;
         let freshAt: number;
@@ -1411,26 +1413,40 @@ export class AutoContinueRunner {
               console.error(`[auto-continue] 忽略畸形存储 turn/end ${sessionId}: error details 无法解释`);
               continue;
             }
-            if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) continue;
+            // 永久错误同样走 onTurnFailure, 镜像 live 路径的统计与通知旁效。
+            if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
+              this.onTurnFailure(sessionId, 'sweep:turn/end:error', failure);
+              continue;
+            }
           }
           const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
           // 尾随 turn/start 已按 openTurn 处理, 这里只剩用户接管一种取代形态。
           const superseded = events.some((event) =>
-            event.seq > lastEnd!.seq && event.type === 'user/message' && event.data.source.kind === 'user',
+            lastEnd !== undefined && event.seq > lastEnd.seq && event.type === 'user/message' && event.data.source.kind === 'user',
           );
           if ((!isNonHumanReason(reasonKind) && !silent) || superseded) continue;
         }
+        // 物化与接管发生在不同扫描轮次: 临界于窗口末尾物化的会话可能在下一轮
+        // 已越过 freshMs 而无法接续(约一个轮询周期的窄边带, 打开会话即可手动续跑)。
         if (reasonKind === undefined || freshAt < now - config.freshMs) continue;
+        // 快照之后客户端可能已打开该会话; 归还 live 扫描, 避免物化撞上写归属。
+        if (this.ctx.agents.get(sessionId) !== undefined) continue;
         const presetId = stored.projections?.values.agentPreset ?? stored.header.agentPreset;
         await this.materializeStored(sessionId, presetId);
+        this.storedSweepFailures.delete(sessionId);
         this.ctx.logger.info(openTurn
           ? `扫描物化存储会话 ${sessionId}(日志止于 turn/start, 视作 interrupted), 交给启动扫描接管`
           : `扫描物化存储会话 ${sessionId}(turn/end:${reasonKind}), 交给启动扫描接管`);
       } catch (error) {
-        // 观察或物化的暂时性失败允许下一轮重试; 连续触达上限后放弃。
+        // 观察或物化失败允许下一轮重试; 连续触达上限后放弃, 并清掉计数——
+        // 已永久跳过的会话不再进入该映射, 不给长存活宿主留死重。
         const failures = (this.storedSweepFailures.get(sessionId) ?? 0) + 1;
-        this.storedSweepFailures.set(sessionId, failures);
-        if (failures < SWEEP_MAX_FAILURES) this.storedSwept.delete(sessionId);
+        if (failures < SWEEP_MAX_FAILURES) {
+          this.storedSweepFailures.set(sessionId, failures);
+          this.storedSwept.delete(sessionId);
+        } else {
+          this.storedSweepFailures.delete(sessionId);
+        }
         this.ctx.logger.error(`存储会话 ${sessionId} 物化失败: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         observation?.[Symbol.dispose]?.();
@@ -1440,8 +1456,8 @@ export class AutoContinueRunner {
 
   /**
    * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
-   * 器的 adopt 路径)。恢复时追加的合成 turn/end(`interrupted`)随后
-   * 由常规扫描按既有关卡恢复。
+   * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。恢复时
+   * 追加的合成 turn/end(`interrupted`)随后由常规扫描按既有关卡恢复。
    */
   private async materializeStored(sessionId: SessionId, presetId: string | undefined): Promise<void> {
     const presets = this.ctx.get('agentPresets');
@@ -1452,14 +1468,41 @@ export class AutoContinueRunner {
     const selection = defaultModel?.currentSelection();
     const agentOptions = selection === undefined ? undefined : { provider: selection.provider, model: selection.model };
     if (presets === undefined) {
-      await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions });
+      await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup: (agentCtx) => this.restoreLoggedSelection(agentCtx) });
       return;
     }
     const resolvedId = (await presets.resolve(presetId)).id;
     await this.ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions,
-      setup: async (agentCtx) => { await presets.mount(agentCtx, resolvedId); },
+      setup: async (agentCtx) => {
+        this.restoreLoggedSelection(agentCtx);
+        await presets.mount(agentCtx, resolvedId);
+      },
+    });
+  }
+
+  /**
+   * 回装会话日志记录的 request-header 模型选择(镜像核心 installModel
+   * Selection 的 agent/request 钩子): 不装则首次请求回落宿主默认模型,
+   * 换过模型的会话重启续跑时会悄悄换模型。适配器代填的 effort 不是会话
+   * 的显式选择, 不回装。
+   */
+  private restoreLoggedSelection(agentCtx: Context): void {
+    agentCtx.on('agent/request', async ({ agent }, next) => {
+      const resolved = await next();
+      const logged = agent.session.requestHeader();
+      if (logged === undefined) return resolved;
+      const { reasoningEffort: _inherited, ...rest } = resolved;
+      const effort = logged.config.reasoningEffort !== undefined && logged.adapterDefaults?.reasoningEffort !== true
+        ? logged.config.reasoningEffort
+        : undefined;
+      return {
+        ...rest,
+        provider: logged.config.provider,
+        model: logged.config.model,
+        ...(effort === undefined ? {} : { reasoningEffort: effort }),
+      };
     });
   }
 

@@ -150,10 +150,17 @@ export declare class AutoContinueRunner {
     private sweepStoredSessions;
     /**
      * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
-     * 器的 adopt 路径)。恢复时追加的合成 turn/end(`interrupted`)随后
-     * 由常规扫描按既有关卡恢复。
+     * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。恢复时
+     * 追加的合成 turn/end(`interrupted`)随后由常规扫描按既有关卡恢复。
      */
     private materializeStored;
+    /**
+     * 回装会话日志记录的 request-header 模型选择(镜像核心 installModel
+     * Selection 的 agent/request 钩子): 不装则首次请求回落宿主默认模型,
+     * 换过模型的会话重启续跑时会悄悄换模型。适配器代填的 effort 不是会话
+     * 的显式选择, 不回装。
+     */
+    private restoreLoggedSelection;
     /** Captured identity only: even session.id can throw when the header is damaged. */
     private logBootScanFailure;
     /** 从历史事件恢复上一步工具调用状态(扫描路径的幂等护栏)。 */
