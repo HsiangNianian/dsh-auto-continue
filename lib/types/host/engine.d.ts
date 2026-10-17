@@ -46,6 +46,8 @@ export declare class AutoContinueRunner {
     private readonly bootScanErrors;
     /** 存储扫描已裁决的会话 id, 避免每轮重复冷读大日志。 */
     private readonly storedSwept;
+    /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
+    private readonly storedSweepFailures;
     private storedSweepAnnounced;
     private bootScanTimer;
     private wakeBootScan;

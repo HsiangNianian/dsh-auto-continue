@@ -96,6 +96,8 @@ const MANUAL_NOTIFICATION_REASON = 'manual:notification';
 
 /** 存储扫描每轮最多观察的持久化会话数(大语料下摊薄冷读 IO)。 */
 const SWEEP_OBSERVE_BATCH = 16;
+/** 单个存储会话连续观察/物化失败达此数后放弃, 避免坏日志反复占满每轮观察配额。 */
+const SWEEP_MAX_FAILURES = 3;
 
 /**
  * 存储扫描消费的宿主服务结构类型。这些服务(sessionQuery 等)随 dsh
@@ -251,6 +253,8 @@ export class AutoContinueRunner {
   private readonly bootScanErrors = new WeakSet<object>();
   /** 存储扫描已裁决的会话 id, 避免每轮重复冷读大日志。 */
   private readonly storedSwept = new Set<SessionId>();
+  /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
+  private readonly storedSweepFailures = new Map<SessionId, number>();
   private storedSweepAnnounced = false;
   private bootScanTimer: ReturnType<typeof setTimeout> | undefined;
   private wakeBootScan: (() => void) | undefined;
@@ -1373,6 +1377,7 @@ export class AutoContinueRunner {
       try {
         const stored: StoredObservation = await query.observeSession(sessionId, { projectionMode: 'all' });
         observation = stored;
+        if (this.disposed) return;
         const events = stored.events;
         if (events.length === 0) continue;
         let lastEnd: SessionEvent<'turn/end'> | undefined;
@@ -1380,20 +1385,52 @@ export class AutoContinueRunner {
           const event = events[i];
           if (event?.type === 'turn/end') { lastEnd = event; break; }
         }
-        const reasonKind = readReasonKind(lastEnd?.data.reason);
-        const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
-        const superseded = lastEnd !== undefined && events.some((event) =>
-          event.seq > lastEnd!.seq && (event.type === 'turn/start' ||
-            (event.type === 'user/message' && event.data.source.kind === 'user')),
-        );
-        if (lastEnd === undefined || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
-            lastEnd.time < now - config.freshMs || superseded) {
-          continue;
+        let lastStart: SessionEvent<'turn/start'> | undefined;
+        for (let i = events.length - 1; i >= 0; i -= 1) {
+          const event = events[i];
+          if (event?.type === 'turn/start') { lastStart = event; break; }
         }
+        // 日志止于 turn/start = 宿主死在轮次进行中。resume 会让核心补一条合成的
+        // interrupted turn/end, 常规扫描随后接管恢复。live 扫描把尾随 turn/start
+        // 当作用户接管而跳过, 该判定只对仍存活、拥有该轮次的进程成立。
+        const openTurn = lastStart !== undefined && (lastEnd === undefined || lastStart.seq > lastEnd.seq);
+        let reasonKind: string | undefined;
+        let freshAt: number;
+        if (openTurn) {
+          reasonKind = 'interrupted';
+          freshAt = events[events.length - 1]?.time ?? 0;
+        } else {
+          reasonKind = readReasonKind(lastEnd?.data.reason);
+          freshAt = lastEnd?.time ?? 0;
+        }
+        if (reasonKind !== undefined && !openTurn) {
+          // 镜像 live 扫描的裁决: 畸形/永久错误不值得物化——物化后同样会被拦下。
+          if (reasonKind === 'error') {
+            const failure = parseFailureFacts((lastEnd!.data.reason as { error?: unknown }).error);
+            if (failure === undefined) {
+              console.error(`[auto-continue] 忽略畸形存储 turn/end ${sessionId}: error details 无法解释`);
+              continue;
+            }
+            if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) continue;
+          }
+          const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
+          // 尾随 turn/start 已按 openTurn 处理, 这里只剩用户接管一种取代形态。
+          const superseded = events.some((event) =>
+            event.seq > lastEnd!.seq && event.type === 'user/message' && event.data.source.kind === 'user',
+          );
+          if ((!isNonHumanReason(reasonKind) && !silent) || superseded) continue;
+        }
+        if (reasonKind === undefined || freshAt < now - config.freshMs) continue;
         const presetId = stored.projections?.values.agentPreset ?? stored.header.agentPreset;
         await this.materializeStored(sessionId, presetId);
-        this.ctx.logger.info(`扫描物化存储会话 ${sessionId}(turn/end:${reasonKind}), 交给启动扫描接管`);
+        this.ctx.logger.info(openTurn
+          ? `扫描物化存储会话 ${sessionId}(日志止于 turn/start, 视作 interrupted), 交给启动扫描接管`
+          : `扫描物化存储会话 ${sessionId}(turn/end:${reasonKind}), 交给启动扫描接管`);
       } catch (error) {
+        // 观察或物化的暂时性失败允许下一轮重试; 连续触达上限后放弃。
+        const failures = (this.storedSweepFailures.get(sessionId) ?? 0) + 1;
+        this.storedSweepFailures.set(sessionId, failures);
+        if (failures < SWEEP_MAX_FAILURES) this.storedSwept.delete(sessionId);
         this.ctx.logger.error(`存储会话 ${sessionId} 物化失败: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         observation?.[Symbol.dispose]?.();
