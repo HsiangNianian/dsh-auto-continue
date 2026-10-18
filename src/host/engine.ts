@@ -17,7 +17,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
-import type { Session } from '@deepseek-ai/dsh-session';
+import { foldRequestHeader, type Session } from '@deepseek-ai/dsh-session';
 import {
   DEFAULT_CONFIG,
   RECOVERY_WINDOW_MS,
@@ -880,13 +880,14 @@ export class AutoContinueRunner {
   /** 通知操作按钮与回调(「立即续跑」/「暂停该会话 1 小时」)。 */
   private notifyOptions(sessionId: SessionId, locale: AutoContinueLocale): NotifyOptions {
     const copy = NOTICE_COPY[locale];
-    return {
-      actions: [
+    // 未物化的存储会话没有 live agent, 「立即续跑」只会空转; 只保留暂停。
+    const actions: NotifyAction[] = this.ctx.agents.get(sessionId) === undefined
+      ? [{ action: 'pause1h', title: copy.pauseAction }]
+      : [
         { action: 'resume', title: copy.resumeAction },
         { action: 'pause1h', title: copy.pauseAction },
-      ],
-      onAction: (action) => this.onNotifyAction(sessionId, action),
-    };
+      ];
+    return { actions, onAction: (action) => this.onNotifyAction(sessionId, action) };
   }
 
   private onNotifyAction(sessionId: SessionId, action: string): void {
@@ -1381,6 +1382,9 @@ export class AutoContinueRunner {
         if (this.disposed) return;
         const events = stored.events;
         if (events.length === 0) continue;
+        // 快照之后客户端可能已打开该会话: 归还 live 扫描, 避免与 live 路径
+        // 重复上报, 也避免物化撞上写归属。
+        if (this.ctx.agents.get(sessionId) !== undefined) continue;
         let lastEnd: SessionEvent<'turn/end'> | undefined;
         for (let i = events.length - 1; i >= 0; i -= 1) {
           const event = events[i];
@@ -1405,7 +1409,17 @@ export class AutoContinueRunner {
           reasonKind = readReasonKind(lastEnd?.data.reason);
           freshAt = lastEnd?.time ?? 0;
         }
+        // 物化与接管发生在不同扫描轮次: 临界于窗口末尾物化的会话可能在下一轮
+        // 已越过 freshMs 而无法接续(约一个轮询周期的窄边带, 打开会话即可手动续跑)。
+        // 过期或被取代的永久错误与 live 扫描一致地静默跳过, 不再单独上报。
+        if (reasonKind === undefined || freshAt < now - config.freshMs) continue;
         if (reasonKind !== undefined && !openTurn) {
+          const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
+          // 尾随 turn/start 已按 openTurn 处理, 这里只剩用户接管一种取代形态。
+          const superseded = events.some((event) =>
+            lastEnd !== undefined && event.seq > lastEnd.seq && event.type === 'user/message' && event.data.source.kind === 'user',
+          );
+          if ((!isNonHumanReason(reasonKind) && !silent) || superseded) continue;
           // 镜像 live 扫描的裁决: 畸形/永久错误不值得物化——物化后同样会被拦下。
           if (reasonKind === 'error') {
             const failure = parseFailureFacts((lastEnd!.data.reason as { error?: unknown }).error);
@@ -1419,20 +1433,14 @@ export class AutoContinueRunner {
               continue;
             }
           }
-          const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
-          // 尾随 turn/start 已按 openTurn 处理, 这里只剩用户接管一种取代形态。
-          const superseded = events.some((event) =>
-            lastEnd !== undefined && event.seq > lastEnd.seq && event.type === 'user/message' && event.data.source.kind === 'user',
-          );
-          if ((!isNonHumanReason(reasonKind) && !silent) || superseded) continue;
         }
-        // 物化与接管发生在不同扫描轮次: 临界于窗口末尾物化的会话可能在下一轮
-        // 已越过 freshMs 而无法接续(约一个轮询周期的窄边带, 打开会话即可手动续跑)。
-        if (reasonKind === undefined || freshAt < now - config.freshMs) continue;
-        // 快照之后客户端可能已打开该会话; 归还 live 扫描, 避免物化撞上写归属。
-        if (this.ctx.agents.get(sessionId) !== undefined) continue;
         const presetId = stored.projections?.values.agentPreset ?? stored.header.agentPreset;
-        await this.materializeStored(sessionId, presetId);
+        const loggedConfig = foldRequestHeader(events)?.config;
+        await this.materializeStored(
+          sessionId,
+          presetId,
+          loggedConfig === undefined ? undefined : { provider: loggedConfig.provider, model: loggedConfig.model },
+        );
         this.storedSweepFailures.delete(sessionId);
         this.ctx.logger.info(openTurn
           ? `扫描物化存储会话 ${sessionId}(日志止于 turn/start, 视作 interrupted), 交给启动扫描接管`
@@ -1456,53 +1464,38 @@ export class AutoContinueRunner {
 
   /**
    * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
-   * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。恢复时
-   * 追加的合成 turn/end(`interrupted`)随后由常规扫描按既有关卡恢复。
+   * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。模型选择
+   * 以日志记录的 request-header 播种 agentOptions——{{model}}/{{provider}}
+   * 提示变量与首次请求路由都读它, 驱动器还会因路由吻合而自行回装日志
+   * 记录的 effort; 无落点(从未发过请求的会话)回落宿主默认。恢复时追
+   * 加的合成 turn/end(`interrupted`)随后由常规扫描按既有关卡恢复。
    */
-  private async materializeStored(sessionId: SessionId, presetId: string | undefined): Promise<void> {
+  private async materializeStored(
+    sessionId: SessionId,
+    presetId: string | undefined,
+    logged: { provider: string; model: string } | undefined,
+  ): Promise<void> {
     const presets = this.ctx.get('agentPresets');
     // Mirrors session-controller's adopt: without agent options the agent has no
     // provider/model, so prompt variables like {{model}} have no value and the
     // request carries no route.
     const defaultModel = this.ctx.get('agentDefaultModel');
     const selection = defaultModel?.currentSelection();
-    const agentOptions = selection === undefined ? undefined : { provider: selection.provider, model: selection.model };
+    const agentOptions = logged !== undefined
+      ? { provider: logged.provider, model: logged.model }
+      : selection === undefined ? undefined : { provider: selection.provider, model: selection.model };
     if (presets === undefined) {
-      await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup: (agentCtx) => this.restoreLoggedSelection(agentCtx) });
+      await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions });
       return;
     }
     const resolvedId = (await presets.resolve(presetId)).id;
+    if (this.disposed) return;
     await this.ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions,
       setup: async (agentCtx) => {
-        this.restoreLoggedSelection(agentCtx);
         await presets.mount(agentCtx, resolvedId);
       },
-    });
-  }
-
-  /**
-   * 回装会话日志记录的 request-header 模型选择(镜像核心 installModel
-   * Selection 的 agent/request 钩子): 不装则首次请求回落宿主默认模型,
-   * 换过模型的会话重启续跑时会悄悄换模型。适配器代填的 effort 不是会话
-   * 的显式选择, 不回装。
-   */
-  private restoreLoggedSelection(agentCtx: Context): void {
-    agentCtx.on('agent/request', async ({ agent }, next) => {
-      const resolved = await next();
-      const logged = agent.session.requestHeader();
-      if (logged === undefined) return resolved;
-      const { reasoningEffort: _inherited, ...rest } = resolved;
-      const effort = logged.config.reasoningEffort !== undefined && logged.adapterDefaults?.reasoningEffort !== true
-        ? logged.config.reasoningEffort
-        : undefined;
-      return {
-        ...rest,
-        provider: logged.config.provider,
-        model: logged.config.model,
-        ...(effort === undefined ? {} : { reasoningEffort: effort }),
-      };
     });
   }
 

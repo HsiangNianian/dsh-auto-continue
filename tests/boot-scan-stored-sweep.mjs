@@ -46,16 +46,8 @@ test('stored interrupted session is materialized, then recovered by the boot sca
   const resume = host.resumes()[0];
   assert.equal(resume.resumeSessionId, 'stored');
   assert.deepEqual(resume.agentOptions, { provider: 'acme', model: 'big' });
-  // 无 preset 服务: setup 只装模型回装钩子; 无已记录 header 时原样放行。
-  assert.equal(typeof resume.setup, 'function');
-  const hooks = [];
-  await resume.setup({ on: (event, handler) => { hooks.push([event, handler]); } });
-  assert.deepEqual(hooks.map(([event]) => event), ['agent/request']);
-  const passthrough = await hooks[0][1](
-    { agent: { session: { requestHeader: () => undefined } } },
-    async () => ({ provider: 'acme', model: 'big', temperature: 0.7 }),
-  );
-  assert.deepEqual(passthrough, { provider: 'acme', model: 'big', temperature: 0.7 });
+  // 无 preset 服务且无已记录 request-header: 物化只带 agentOptions, 不注册 setup。
+  assert.equal(resume.setup, undefined);
   assert(host.logs.some((entry) => entry.level === 'info' && entry.message.includes('存储扫描就绪')));
   await tick(3000);
   await tick(10);
@@ -185,6 +177,36 @@ test('permanent error tails are not materialized, transient ones are', async (t)
   assert.deepEqual(host.resumes().map((resume) => resume.resumeSessionId), ['flaky']);
 });
 
+test('stale or superseded stored permanent failures are skipped silently like the live scan', async (t) => {
+  const { host, tick } = scenario(t);
+  const stale = {
+    ...turnEnd(1, 'error', { error: { message: 'unauthorized: api key rejected' } }),
+    time: Date.now() - 16 * 60 * 1000,
+  };
+  host.provide('sessionQuery', {
+    listSessions: async () => [
+      { header: { id: 'stale' }, live: false, persisted: true },
+      { header: { id: 'taken-over' }, live: false, persisted: true },
+    ],
+    observeSession: async (id) => ({
+      events: id === 'stale'
+        ? [stale]
+        : [
+          turnEnd(1, 'error', { error: { message: 'unauthorized: api key rejected' } }),
+          { type: 'user/message', seq: 11, time: Date.now(), data: { source: { kind: 'user' } } },
+        ],
+      header: { id },
+      [Symbol.dispose]: () => {},
+    }),
+  });
+  host.start();
+  await tick();
+  // 与 live 扫描一致: 过期或已被用户消息接管的永久失败不再走 onTurnFailure,
+  // 既不计数也不通知。
+  assert.equal(host.resumes().length, 0);
+  assert(!host.logs.some((entry) => entry.message.includes('永久性失败')));
+});
+
 test('a transient observation failure is retried on the next sweep pass', async (t) => {
   const { host, tick } = scenario(t);
   let calls = 0;
@@ -223,12 +245,15 @@ test('repeated observation failures give up after three strikes', async (t) => {
   assert.equal(failures.length, 3);
 });
 
-test('materialization mounts the recorded preset and restores the logged model selection', async (t) => {
+test('materialization mounts the recorded preset and seeds the logged model selection', async (t) => {
   const { host, tick } = scenario(t);
   host.provide('sessionQuery', {
     listSessions: async () => [{ header: { id: 'stored' }, live: false, persisted: true }],
     observeSession: async () => ({
-      events: [turnEnd(1, 'interrupted')],
+      events: [
+        { type: 'request/header', seq: 1, time: 1, data: { header: { config: { provider: 'anthropic', model: 'sonnet', reasoningEffort: 'high' } } } },
+        turnEnd(2, 'interrupted'),
+      ],
       header: { id: 'stored' },
       projections: { values: { agentPreset: 'custom-preset' } },
       [Symbol.dispose]: () => {},
@@ -245,25 +270,14 @@ test('materialization mounts the recorded preset and restores the logged model s
   host.start();
   await tick();
   const resume = host.resumes()[0];
-  assert.deepEqual(resume.agentOptions, { provider: 'acme', model: 'big' });
+  // {{model}}/{{provider}} 提示变量与首次请求路由都读 agentOptions(agent-loop
+  // 注册的变量提供器即 context.agent.options): 种子取自会话日志记录的
+  // request-header, 而非宿主默认模型; 种子只带路由, 日志记录的 effort 由
+  // 驱动器在路由吻合时自行回装。
+  assert.deepEqual(resume.agentOptions, { provider: 'anthropic', model: 'sonnet' });
   assert.equal(typeof resume.setup, 'function');
-  const hooks = [];
-  await resume.setup({ on: (event, handler) => { hooks.push([event, handler]); } });
+  await resume.setup({ on: () => {} });
   assert.deepEqual(mounted, ['custom-preset#resolved']);
-  assert.deepEqual(hooks.map(([event]) => event), ['agent/request']);
-  const logged = { config: { provider: 'anthropic', model: 'sonnet', reasoningEffort: 'high' } };
-  const merged = await hooks[0][1](
-    { agent: { session: { requestHeader: () => logged } } },
-    async () => ({ provider: 'acme', model: 'big', reasoningEffort: 'low', temperature: 0.7 }),
-  );
-  assert.deepEqual(merged, { provider: 'anthropic', model: 'sonnet', reasoningEffort: 'high', temperature: 0.7 });
-  // 适配器代填的 effort 不算会话的显式选择, 不回装。
-  const defaulted = { config: { provider: 'anthropic', model: 'sonnet', reasoningEffort: 'high' }, adapterDefaults: { reasoningEffort: true } };
-  const mergedDefaulted = await hooks[0][1](
-    { agent: { session: { requestHeader: () => defaulted } } },
-    async () => ({ provider: 'acme', model: 'big', reasoningEffort: 'low', temperature: 0.7 }),
-  );
-  assert.deepEqual(mergedDefaulted, { provider: 'anthropic', model: 'sonnet', temperature: 0.7 });
 });
 
 test('a dispose during observation stops the sweep without materializing', async (t) => {
