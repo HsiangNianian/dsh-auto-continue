@@ -9,9 +9,11 @@ function scenario(t, config = {}) {
   t.after(() => host.dispose());
   const tick = async (ms = 0) => {
     t.mock.timers.tick(ms);
-    // 排空完整一轮扫描的微任务链: 每个被观察的记录约需 3 个 await, 多记录
-    // 轮次远超 16 个微任务位; 固定 200 覆盖 ~60 个记录仍绰绰有余。
-    for (let i = 0; i < 200; i += 1) await Promise.resolve();
+    // Drain the async read chain and the zero-delay yields between storage batches.
+    for (let i = 0; i < 400; i += 1) {
+      t.mock.timers.tick(0);
+      await Promise.resolve();
+    }
   };
   return { host, tick };
 }
@@ -318,3 +320,112 @@ test('a session opened between the listing and the sweep is left to the live sca
   const agent = host.agents.get('raced');
   assert.equal(agent.followups.length, 1); // live 扫描接管恢复
 });
+
+test('a pending storage read does not block newly loaded live sessions', async t => {
+  const { host, tick } = scenario(t);
+  host.provide('sessionQuery', {
+    listSessions: async () => [{ header: { id: 'blocked' }, live: false }],
+    observeSession: async () => new Promise(() => {}),
+  });
+  host.start();
+  await tick();
+  const agent = host.agent('late-live', [turnEnd(1, 'interrupted')]);
+  await tick(3000);
+  await tick(10);
+  assert.equal(agent.followups.length, 1);
+});
+
+test('a hung listing does not block live scans or keep running after disposal', async t => {
+  const { host, tick } = scenario(t);
+  let signal;
+  host.provide('sessionQuery', {
+    listSessions: async value => { signal = value; return new Promise(() => {}); },
+  });
+  host.start();
+  await tick();
+  const agent = host.agent('late-live', [turnEnd(1, 'interrupted')]);
+  await tick(3000);
+  await tick(10);
+  assert.equal(agent.followups.length, 1);
+  host.dispose();
+  assert.equal(signal.aborted, true);
+});
+
+test('a timed-out observation releases its late lease and allows healthy stored recovery', async t => {
+  const { host, tick } = scenario(t);
+  let finish;
+  let signal;
+  let disposed = 0;
+  const events = [turnEnd(1, 'interrupted')];
+  host.provide('sessionQuery', {
+    listSessions: async () => ['blocked', 'healthy'].map(id => ({ header: { id }, live: false })),
+    observeSession: async (id, options) => {
+      if (id === 'blocked') {
+        signal = options.signal;
+        return new Promise(resolve => { finish = resolve; });
+      }
+      return { events, header: { id }, [Symbol.dispose]() {} };
+    },
+  });
+  host.onResume('healthy', events);
+  host.start();
+  await tick();
+  await tick(5000);
+  await tick(10);
+  assert.equal(signal.aborted, true);
+  assert.equal(host.agents.get('healthy').followups.length, 1);
+  finish({ events, header: { id: 'blocked' }, [Symbol.dispose]() { disposed++; } });
+  await tick();
+  assert.equal(disposed, 1);
+  assert.equal(host.resumes().some(value => value.resumeSessionId === 'blocked'), false);
+});
+
+test('storage batches reach a recent interruption in an older-created session within a short window', async t => {
+  const { host, tick } = scenario(t, { freshMs: 6000 });
+  const now = Date.now();
+  const records = Array.from({ length: 33 }, (_, i) => ({ header: { id: `s${i}`, createdAt: now - i * 1000 }, live: false }));
+  const interrupted = [turnEnd(1, 'interrupted')];
+  host.provide('sessionQuery', {
+    listSessions: async () => records,
+    observeSession: async id => ({ events: id === 's32' ? interrupted : [turnEnd(1, 'completed')], header: { id }, [Symbol.dispose]() {} }),
+  });
+  host.onResume('s32', interrupted);
+  host.start();
+  await tick();
+  await tick(10);
+  assert.equal(host.agents.get('s32')?.followups.length, 1);
+  await tick(6000);
+  assert.equal(host.resumes().length, 1);
+});
+
+test('damaged stored histories do not hide healthy sessions or erase stop events', async t => {
+  const { host, tick } = scenario(t);
+  host.provide('sessionQuery', {
+    listSessions: async () => [{}, ...['damaged', 'healthy'].map(id => ({ header: { id }, live: false }))],
+    observeSession: async id => ({ events: [turnEnd(1, 'interrupted'), ...(id === 'damaged' ? [null] : [])], header: { id }, [Symbol.dispose]() {} }),
+  });
+  host.start();
+  await tick();
+  assert.deepEqual(host.resumes().map(value => value.resumeSessionId), ['healthy']);
+});
+
+for (const stop of ['dispose', 'pause']) {
+  test(`${stop} during preset resolution prevents materialization`, async t => {
+    const { host, tick } = scenario(t);
+    host.provide('sessionQuery', {
+      listSessions: async () => [{ header: { id: 'stored' }, live: false }],
+      observeSession: async () => ({ events: [turnEnd(1, 'interrupted')], header: { id: 'stored' }, [Symbol.dispose]() {} }),
+    });
+    host.provide('agentPresets', {
+      resolve: async () => {
+        if (stop === 'dispose') host.dispose();
+        else host.config.paused = true;
+        return { id: 'preset' };
+      },
+      mount: async () => {},
+    });
+    host.start();
+    await tick();
+    assert.equal(host.resumes().length, 0);
+  });
+}

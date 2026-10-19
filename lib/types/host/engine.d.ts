@@ -51,6 +51,8 @@ export declare class AutoContinueRunner {
     private storedSweepAnnounced;
     private bootScanTimer;
     private wakeBootScan;
+    private storedSweep;
+    private readonly stopStoredSweep;
     /**
      * @param ctx - host plugin context (agents registry, session events).
      * @param getConfig - read the current resolved configuration (entry config).
@@ -142,6 +144,8 @@ export declare class AutoContinueRunner {
     private bootScanLoop;
     /** Inspect newly available sessions; process each settled startup history once. */
     private scanInterrupted;
+    /** Bound cold reads even if a backend ignores cancellation; release late leases. */
+    private readStored;
     /**
      * 存储扫描: 枚举持久化会话, 把尾部命中恢复谓词的未加载会话物化为
      * live agent。宿主重启后 agent 仅在客户端打开会话时才懒加载, 不物化

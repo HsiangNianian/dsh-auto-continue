@@ -252,6 +252,8 @@ function makeHost() {
     const effects = [];
     engineEffects = effects;
     return {
+      get: () => undefined,
+      logger: console,
       on(event, handler) {
         if (event === 'agent/inbox/inserted') {
           return registerEffect(effects, () => {

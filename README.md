@@ -80,6 +80,8 @@ The host-side engine subscribes to the session event firehose inside the dsh hos
 
 On host boot it also scans the live sessions: a session whose last turn ended with a non-human reason **within the scan window** (default 15 minutes), with no later `turn/start` or user message, gets resumed automatically too (e.g. the host crashed while the browser was closed — the agent-loop resumes the session and the engine picks it up). Persisted sessions the host never reloaded are enumerated from session storage and materialized into the registry first; a journal that stopped mid-turn is completed with an interrupted marker on read, so restart-orphaned turns are recovered the same way.
 
+Storage scanning runs separately from live-session recovery. Each storage read has a five-second timeout, and the scan yields every 16 observations without waiting for the next polling interval. This lets recently interrupted sessions deep in the storage listing be reached within the startup window. Recovery restores the session's preset and recorded model; stopping the plugin cancels pending storage work.
+
 Startup recovery isolates failures per session. If history cannot be read or contains invalid events, that session is skipped for the current startup scan and an error is logged; other sessions can still recover, without losing a recovery slot. Invalid entries are not silently removed, since they could hide a manual stop or a newer turn. Valid empty histories and a registry that is still loading remain retryable within the scan window. Reloading a repaired session as a new session object also makes it eligible for scanning again. See [#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58).
 
 The browser provides the settings card and composer switch, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
@@ -104,7 +106,7 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |
 
-DSH 0.1.0-rc.6 and earlier are unsupported. Automated settings and compatibility checks cover **0.1.7-rc.2**, **0.2.0-rc.1** and **0.2.1-alpha.1**; startup failure isolation is also checked against **0.2.0-rc.2** and **0.2.1-alpha.1**. Desktop app versions and embedded DSH runtime versions are different; use the runtime version when checking compatibility. For the CLI, run `dsh --version`; see [official DSH releases](https://github.com/deepseek-ai/deepseek-harness/releases) for available versions.
+DSH 0.1.0-rc.6 and earlier are unsupported. Automated settings and compatibility checks cover **0.1.7-rc.2**, **0.2.0-rc.1**, **0.2.1-alpha.1** and **0.2.1-rc.2**; startup failure isolation is also checked against **0.2.0-rc.2** and **0.2.1-alpha.1**. Desktop app versions and embedded DSH runtime versions are different; use the runtime version when checking compatibility. For the CLI, run `dsh --version`; see [official DSH releases](https://github.com/deepseek-ai/deepseek-harness/releases) for available versions.
 
 **Plugins 0.11.9 and 0.12.0 are rejected by DSH 0.2.0-rc.1’s version check.** Upgrade the plugin to 0.12.1 or newer; its existing configuration-form integration works on this runtime. See [#50](https://github.com/HsiangNianian/dsh-auto-continue/issues/50).
 
@@ -366,6 +368,7 @@ npm ci --prefix tests/fixtures/dsh-0.1.7
 npm ci --prefix tests/fixtures/dsh-0.2.0
 npm ci --prefix tests/fixtures/dsh-0.2.0-rc.2
 npm ci --prefix tests/fixtures/dsh-0.2.1
+npm ci --prefix tests/fixtures/dsh-0.2.1-rc.2
 npm run typecheck
 npm run build
 npm test
@@ -373,6 +376,10 @@ npm run test:runtime
 ```
 
 `npm test` covers recovery, autonomous-loop limits and toggles, child-session exclusion, manual resume during pauses, startup scanning and malformed-session isolation, queue ordering, statistics, localization, settings UI lifecycle and edits made during pending saves. `npm run test:runtime` uses published DSH **0.1.7-rc.2**, **0.2.0-rc.1** and **0.2.1-alpha.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation when one settings provider is absent. Startup recovery tests inject session read failures into real **0.2.0-rc.2** and **0.2.1-alpha.1** Session/Cordis/HTTP components and verify that healthy sessions still recover. These controlled faults do not imply that normal DSH loading produces malformed logs. The runtime harness controls agent events; it does not send requests to a model provider.
+
+The rc.2 check also loads the published client settings service and verifies card save/reset, the composer toggle, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.
+
+The rc.2 restart test uses real agent, query, and JSONL persistence services: it kills a host mid-turn, starts a fresh host without opening the conversation, and checks one recovery with the recorded model and matching prompt variables. The model adapter is deterministic; no external model requests are made.
 
 After editing a linked checkout, run `npm run build` to write the updated `lib/` files, then restart DSH and refresh the browser. Hosts with client HMR enabled can reload a rebuilt client bundle automatically.
 
@@ -400,5 +407,3 @@ CI typechecks, rebuilds, runs both test suites, verifies committed `lib/` artifa
 [![MIT](https://img.shields.io/badge/license-MIT-65a30d)](LICENSE)
 
 MIT © Hsiang Nianian
-
-The rc.2 check also loads the published client settings service and verifies card save/reset, the composer toggle, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.
