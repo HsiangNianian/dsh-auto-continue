@@ -98,6 +98,7 @@ DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。下面的命�
 
 | DSH 内核 | 插件版本 | 配置入口 |
 | --- | --- | --- |
+| **0.2.1-rc.2** | **已验证 0.14.3** | **插件 → dsh-client-auto-continue** |
 | **0.2.1-alpha.1** | **已验证 0.14.2** | **插件 → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 或更新版本** | **插件 → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 或更新版本** | 同上，从主侧栏的插件页进入 |
@@ -395,3 +396,5 @@ CI 执行类型检查、构建、两组测试、已提交 `lib/` 产物校验及
 [![MIT](https://img.shields.io/badge/license-MIT-65a30d)](LICENSE)
 
 MIT © Hsiang Nianian
+
+rc.2 测试还加载已发布的客户端设置服务，使用不再包含 `mode` 的真实快照，验证卡片保存/重置、会话开关、语言同步与重新读取宿主配置。

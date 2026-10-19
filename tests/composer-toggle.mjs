@@ -18,7 +18,7 @@ function fixture(service, native = true, hasComposerSlot = true) {
   const writes = [];
   let mode = 'ok';
   let finish;
-  let snapshot = { status: 'loading', value: { locale: 'en' }, base: { showComposerToggle: true }, user: {}, writable: true, mode: 'host', revision: 0 };
+  let snapshot = { status: 'loading', value: { locale: 'en' }, base: { showComposerToggle: true }, user: {}, writable: true, ...(service === 'settingsScope' ? { mode: 'host' } : {}), revision: 0 };
   const notify = () => { for (const listener of listeners) listener(); };
   const patch = (value) => { snapshot = { ...snapshot, ...value }; notify(); };
   const scope = {

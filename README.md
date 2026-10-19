@@ -98,6 +98,7 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
+| **0.2.1-rc.2** | **0.14.3 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.1-alpha.1** | **0.14.2 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
@@ -395,3 +396,5 @@ CI typechecks, rebuilds, runs both test suites, verifies committed `lib/` artifa
 [![MIT](https://img.shields.io/badge/license-MIT-65a30d)](LICENSE)
 
 MIT © Hsiang Nianian
+
+The rc.2 check also loads the published client settings service and verifies card save/reset, the composer toggle, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.

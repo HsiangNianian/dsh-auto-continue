@@ -23,6 +23,7 @@ import {
 import type { SettingsCardKey } from './locales.ts';
 import {
   booleanField,
+  canWriteSettings,
   CardForm,
   numberField,
   textField,
@@ -186,7 +187,7 @@ export class AutoContinueSettingsCardController {
   private async save(): Promise<void> {
     const state = this.form.shell();
     const snapshot = this.scope.getSnapshot();
-    if (this.disposed || !state.available || !state.writable || !state.dirty || state.invalid || state.saving || snapshot.mode !== 'host') return;
+    if (this.disposed || !state.available || !state.writable || !state.dirty || state.invalid || state.saving) return;
     const sequence = ++this.saveSequence;
     const before = snapshot.value?.notify ?? DEFAULT_CONFIG.notify;
     const target = this.form.field('notify').text;
@@ -212,7 +213,7 @@ export class AutoContinueSettingsCardController {
     return {
       visible: snapshot.status === 'ready' && (snapshot.value?.showComposerToggle ?? DEFAULT_CONFIG.showComposerToggle),
       enabled: !(snapshot.value?.paused ?? DEFAULT_CONFIG.paused),
-      writable: snapshot.status === 'ready' && snapshot.writable && snapshot.mode === 'host',
+      writable: canWriteSettings(snapshot),
       saving: this.composerSaving,
       failed: this.composerFailed,
     };

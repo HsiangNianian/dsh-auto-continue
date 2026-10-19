@@ -10,7 +10,9 @@
  * default — and whether the user layer carries it (presence, not value
  * equality, marks an override).
  */
-import type { SettingsScope, SnapshotStore } from './dsh-store-compat.ts';
+import type { SettingsScope, SettingsScopeSnapshot, SnapshotStore } from './dsh-store-compat.ts';
+/** Current forms omit mode; legacy memory scopes still cannot persist settings. */
+export declare function canWriteSettings(snapshot: SettingsScopeSnapshot<unknown>): boolean;
 /** The write one field's staged text performs when the card is saved. */
 export type FieldWrite = {
     kind: 'set';

@@ -93,7 +93,7 @@ function makeWorld(initial) {
       snapshot: () => ({
         status: page.status,
         writable: page.writable,
-        mode: 'host',
+        ...(page.mode === undefined ? {} : { mode: page.mode }),
         value: { locale: page.locale },
       }),
       /** Successful write acknowledgement: fold the accepted view into this page. */
@@ -261,6 +261,13 @@ function openClient(exports, world, active, options = {}) {
   world.drain();
   assert.equal(page.writes.length, spent + 1, 'a real language switch must be able to write again');
   assert.equal(page.writes.at(-1), 'en', 'the switched-to locale must be the value written');
+}
+
+for (const options of [{ writable: false }, { mode: 'memory' }]) {
+  const world = makeWorld('zh');
+  const page = openClient(loadBundle(), world, 'en', options);
+  world.tick();
+  assert.deepEqual(page.writes, [], 'read-only and legacy memory scopes must not mirror locale');
 }
 
 console.log('bounded locale mirror ✅');
