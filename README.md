@@ -325,6 +325,8 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
 | Browser notifications | `off` | Notify about auto-continue events and successful settings saves; confirm switching notifications on or off |
 
+Pausing auto-continue stops automatic follow-ups, but leaves the loop guard active. Disable **Loop guard** too if you want to stop automatic interruptions. Invisible-only text does not count as repeated visible output, and fresh tool calls reset the repeated-message streak; repeated tool calls with identical arguments and results are still checked independently.
+
 For a provider-specific error that is safe to resume (confirm first that manually sending "continue" recovers), add a narrow, stable fragment rather than disabling classification globally:
 
 ```yaml
