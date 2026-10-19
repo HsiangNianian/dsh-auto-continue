@@ -799,6 +799,14 @@ function clientTimeZone(): string | undefined {
   }
 }
 
+/** A sent recovery prompt, not proof that the following turn succeeded. */
+export interface RecoveryAttempt {
+  sessionId: string;
+  at: number;
+  reason: 'error' | 'max-tokens' | 'silent' | 'interrupted' | 'loop-guard' | 'manual';
+  consecutive: number;
+}
+
 /** 一天的自动继续统计(host 单实例内存态)。 */
 export interface DayStats {
   /** 本地日期 YYYY-MM-DD。 */

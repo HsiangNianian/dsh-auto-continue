@@ -114,6 +114,18 @@ export declare const zh: {
     'stats.byCode': string;
     'stats.empty': string;
     'stats.reset': string;
+    'recovery.title': string;
+    'recovery.hint': string;
+    'recovery.empty': string;
+    'recovery.count': string;
+    'recovery.consecutive': string;
+    'recovery.latest': string;
+    'recovery.reason.error': string;
+    'recovery.reason.max-tokens': string;
+    'recovery.reason.silent': string;
+    'recovery.reason.interrupted': string;
+    'recovery.reason.loop-guard': string;
+    'recovery.reason.manual': string;
     'pause.title': string;
     'pause.none': string;
     'pause.clearAll': string;

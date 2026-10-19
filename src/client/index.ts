@@ -67,6 +67,7 @@ export const inject = ['slots', 'locale'];
 export {
   pausedSessions,
   readTodayStats,
+  readRecoveryAttempts,
   resetTodayStats,
   unpauseSession,
 } from './bridge.ts';

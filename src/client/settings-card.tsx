@@ -16,6 +16,7 @@ import { createSnapshotStore, type SettingsScope, type SnapshotStore } from './d
 import {
   pausedSessions,
   readTodayStats,
+  readRecoveryAttempts,
   resetTodayStats,
   subscribeBridge,
   unpauseSession,
@@ -338,6 +339,8 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
   const paused = pausedSessions();
+  const attempts = readRecoveryAttempts();
+  const sessions = [...new Set(attempts.map(attempt => attempt.sessionId))];
   return (
     <>
       <section className="dshAcPanel">
@@ -379,6 +382,30 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
               </div>
             ) : null}
           </>
+        )}
+      </section>
+      <section className="dshAcPanel">
+        <div className="dshAcPanelHead">
+          <span className="dshAcPanelTitle">{t('recovery.title')}</span>
+        </div>
+        <p className="dshAcHint">{t('recovery.hint')}</p>
+        {sessions.length === 0 ? <p className="dshAcHint">{t('recovery.empty')}</p> : (
+          <ul className="dshAcPauseList">
+            {sessions.map(sessionId => {
+              const recent = attempts.filter(attempt => attempt.sessionId === sessionId);
+              const latest = recent[0]!;
+              return (
+                <li key={sessionId}>
+                  <div className="dshAcRecovery">
+                    <span className="dshAcPauseId">{sessionId}</span>
+                    <span>{t('recovery.count')}: {recent.length} · {t('recovery.consecutive')}: {latest.consecutive}</span>
+                    <span>{t('recovery.latest')}: {t(`recovery.reason.${latest.reason}`)}</span>
+                    <time className="dshAcHint" dateTime={new Date(latest.at).toISOString()}>{new Date(latest.at).toLocaleString()}</time>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
       <section className="dshAcPanel">

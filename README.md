@@ -213,7 +213,9 @@ On **DSH 0.1.7 / 0.2**, open **Plugins** from the main sidebar, choose **dsh-cli
 
 ![Auto-continue category settings on DSH 0.2](docs/screenshots/01-settings-section.png)
 
-Use **General**, **Retry strategy**, **Startup recovery**, **Continue text**, **Safety**, and **Status and logs** to find controls. Switching categories preserves unsaved changes. **Status and logs** contains today's activity and paused sessions.
+Use **General**, **Retry strategy**, **Startup recovery**, **Continue text**, **Safety**, and **Status and logs** to find controls. Switching categories preserves unsaved changes. **Status and logs** contains today's activity, recent recovery attempts and paused sessions.
+
+**Recent recovery attempts** groups the last 20 recovery prompts across the host by session, showing each session's count in that window, latest cause, time and consecutive count at the last send. It works with browser notifications off. Causes distinguish silent output, output limits, request errors, restart interruptions, loop-guard recovery and manual resume. Normal autonomous continuations are excluded. These are sent prompts, not proof of completion or a model-health score; repeated recovery is a reason to inspect the conversation and consider a handoff. The history contains no message text and resets when the plugin restarts.
 
 The header places the plugin status and GitHub invitation side by side on one shared charcoal background. The status shows the saved global setting; edits take effect when you click **Save**.
 

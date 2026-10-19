@@ -104,6 +104,7 @@ const css = `
 .dshAcPauseList { list-style: none; margin: 0; padding: 0; }
 .dshAcPauseList li { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
 .dshAcPauseId { flex: 1; font: 12px ui-monospace, SFMono-Regular, monospace; }
+.dshAcRecovery { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 @container auto-continue-settings (max-width: 760px) {
   .dshAcHeaderFrame { grid-template-columns: minmax(0, 1fr) auto; gap: 16px; }
   .dshAcRepositoryCopy { display: none; }

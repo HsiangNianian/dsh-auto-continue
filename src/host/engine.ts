@@ -37,6 +37,7 @@ import {
   type AutoContinueConfig,
   type AutoContinueLocale,
   type DayStats,
+  type RecoveryAttempt,
   type FailureFacts,
   type SessionState,
   type NotifyAction,
@@ -249,6 +250,7 @@ export class AutoContinueRunner {
   private readonly states = new Map<SessionId, SessionState>();
   private readonly pauseUntil = new Map<SessionId, number>();
   private dayStats: DayStats = emptyDayStats();
+  private readonly recoveryAttempts: RecoveryAttempt[] = [];
   private readonly notices: HostNotice[] = [];
   private readonly noticeListeners = new Set<() => void>();
   private readonly stateListeners = new Set<() => void>();
@@ -339,6 +341,10 @@ export class AutoContinueRunner {
     const today = todayKey();
     if (this.dayStats.date !== today) this.dayStats = emptyDayStats();
     return { ...this.dayStats, byCode: { ...this.dayStats.byCode } };
+  }
+
+  recentRecoveryAttempts(): RecoveryAttempt[] {
+    return this.recoveryAttempts.map(attempt => ({ ...attempt }));
   }
 
   /** 对外(状态桥): 当前生效的会话级暂停列表。 */
@@ -1153,6 +1159,17 @@ export class AutoContinueRunner {
       // 自主循环的成功续跑不计入连续上限: 上限只约束失败(网络中断等)。
       if (reason !== LOOP_COMPLETED_REASON) state.consecutive += 1;
       state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
+      if (reason !== LOOP_COMPLETED_REASON) {
+        this.recoveryAttempts.unshift({
+          sessionId, at: now, consecutive: state.consecutive,
+          reason: manualResume ? 'manual'
+            : reason === 'loop:aborted' ? 'loop-guard'
+            : reason.endsWith(':silent') || reason === LOOP_SILENT_REASON ? 'silent'
+            : reason.endsWith(':interrupted') ? 'interrupted'
+            : reason.endsWith(':max-tokens') ? 'max-tokens' : 'error',
+        });
+        this.recoveryAttempts.length = Math.min(this.recoveryAttempts.length, 20);
+      }
       this.bumpStat({ sent: 1, ...(state.lastFailure !== undefined ? { code: state.lastFailure.code } : {}) });
       this.log(`已自动发送「${text}」到 ${sessionId}(${reason}), 第 ${state.consecutive} 次连续`);
       if (config.notify) {

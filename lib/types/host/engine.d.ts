@@ -14,7 +14,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
-import { type AutoContinueConfig, type DayStats, type NotifyAction } from '../shared/core.ts';
+import { type AutoContinueConfig, type DayStats, type RecoveryAttempt, type NotifyAction } from '../shared/core.ts';
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
     /** 稳定标识(供 browser 去重)。 */
@@ -34,6 +34,7 @@ export declare class AutoContinueRunner {
     private readonly states;
     private readonly pauseUntil;
     private dayStats;
+    private readonly recoveryAttempts;
     private readonly notices;
     private readonly noticeListeners;
     private readonly stateListeners;
@@ -61,6 +62,7 @@ export declare class AutoContinueRunner {
     private log;
     /** 对外(状态桥): 今日统计快照。 */
     todayStats(): DayStats;
+    recentRecoveryAttempts(): RecoveryAttempt[];
     /** 对外(状态桥): 当前生效的会话级暂停列表。 */
     activePauses(): {
         sessionId: SessionId;

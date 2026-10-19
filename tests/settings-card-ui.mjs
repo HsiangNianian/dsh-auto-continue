@@ -32,12 +32,13 @@ function createSnapshotStore(initial) {
 }
 
 let registration;
+let pushBridge;
 vm.runInNewContext(bundle, {
   AbortController,
   console,
-  fetch: async () => {
-    throw new Error('offline UI test');
-  },
+  fetch: async () => ({ ok: true, body: { getReader: () => ({
+    read: () => new Promise(resolve => { pushBridge = event => resolve({ done: false, value: new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`) }); }),
+  }) } }),
   setTimeout: () => 0,
   clearTimeout: () => {},
   TextDecoder,
@@ -167,6 +168,24 @@ for (const category of ['general', 'recovery', 'startup', 'prompts', 'safety', '
   }
 }
 assert.deepEqual(visible.sort(), expected, 'each existing configuration field is reachable exactly once');
+
+for (let i = 0; i < 8; i++) await Promise.resolve();
+pushBridge({ type: 'state', recoveryAttempts: [
+  { sessionId: 'session-<example>', at: Date.now(), reason: 'silent', consecutive: 2 },
+  { sessionId: 'session-<example>', at: Date.now() - 1000, reason: 'max-tokens', consecutive: 1 },
+] });
+for (let i = 0; i < 8; i++) await Promise.resolve();
+activeCategory = 'status';
+assert.match(render('en'), /Recent recovery attempts/);
+assert.match(render('en'), /Attempts in window: 2/);
+assert.match(render('en'), /Consecutive at last send: 2/);
+assert.match(render('en'), /Latest reason: No visible output/);
+assert.match(render('en'), /session-&lt;example&gt;/, 'session identifiers are rendered as text');
+assert.match(render('en'), /<time[^>]*dateTime=/);
+assert.match(render('zh'), /最近原因: 无可见输出/);
+pushBridge({ type: 'state' });
+for (let i = 0; i < 8; i++) await Promise.resolve();
+assert.match(render('en'), /No recovery attempts yet/, 'older host payloads remain compatible');
 
 activeCategory = 'general';
 face.edit('cooldownMs', 'not a number');

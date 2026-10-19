@@ -165,6 +165,7 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
         type: 'state',
         stats: runner.todayStats(),
         paused: runner.activePauses(),
+        recoveryAttempts: runner.recentRecoveryAttempts(),
       });
 
     runner.subscribeNotices(() => {

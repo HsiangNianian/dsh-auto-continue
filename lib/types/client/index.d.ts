@@ -35,7 +35,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 /** Settings services are injected separately: neither exists in every DSH cohort. */
 export declare const inject: string[];
-export { pausedSessions, readTodayStats, resetTodayStats, unpauseSession, } from './bridge.ts';
+export { pausedSessions, readTodayStats, readRecoveryAttempts, resetTodayStats, unpauseSession, } from './bridge.ts';
 /**
  * Plugin body: settings card + host status bridge (notifications, stats,
  * paused sessions).

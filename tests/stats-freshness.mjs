@@ -53,7 +53,7 @@ function makeHost(configOverrides = {}) {
         { on(_name, cb) { closeCb = cb; } },
         { writeHead() {}, end() {}, write(frame) { frames.push(JSON.parse(frame.slice(6))); } },
       );
-      return { stats: () => frames.at(-1).stats, pushed: () => frames.length, close: () => closeCb?.() };
+      return { stats: () => frames.at(-1).stats, attempts: () => frames.at(-1).recoveryAttempts, pushed: () => frames.length, close: () => closeCb?.() };
     },
     dispose() { for (const stop of cleanups.splice(0).reverse()) stop(); },
   };
@@ -85,6 +85,7 @@ try {
   }
   assert.equal(agent.followups.length, 3, 'three auto-continues were sent');
   assert.equal(client.stats().sent, 3, 'every auto-continue is published to the bridge');
+  assert.deepEqual(client.attempts(), [], 'normal autonomous continuations are not presented as recovery');
   // 2, not 3: recovery is credited when the *next* turn ends, so the third
   // send's outcome is still unresolved at this point.
   assert.equal(client.stats().recovered, 2, 'recoveries are published too');
@@ -103,6 +104,7 @@ try {
   assert.equal(broken.followups.length, 0, 'permanent errors are never retried');
   assert.equal(permClient.stats().skipped, 2, 'permanent skips are published');
   assert.equal(permClient.stats().byCode.QUOTA, 2, 'error-code histogram is published');
+  assert.deepEqual(permClient.attempts(), [], 'a skipped error is not a sent recovery prompt');
   console.log('✓ permanent skips: skipped/byCode published (2 / QUOTA ×2)');
 
   // 28c: loop-guard restarts are published.
@@ -126,7 +128,32 @@ try {
   guard.emit(spinner, turnEnd(1, 'aborted', { reason: { kind: 'hook', reason: 'dsh-auto-continue:loop-guard' } }));
   await flush();
   assert.equal(guardClient.stats().looped, 1, 'loop-guard restarts are published');
+  assert.equal(guardClient.attempts()[0].reason, 'loop-guard');
   console.log('✓ loop guard: looped published (1)');
+
+  const recovery = makeHost({ maxConsecutive: 30 });
+  live.push(recovery);
+  const stalled = recovery.agent('stalled');
+  const recoveryClient = recovery.client();
+  recovery.emit(stalled, turnStart(1));
+  recovery.emit(stalled, turnEnd(1, 'error', { error: { message: 'connection reset', code: 'ECONNRESET' } }));
+  await flush();
+  assert.equal(recoveryClient.attempts()[0].reason, 'error');
+  for (let turn = 2; turn <= 22; turn++) {
+    recovery.emit(stalled, turnStart(turn));
+    recovery.emit(stalled, turnEnd(turn, turn === 22 ? 'no-visible-output' : 'max-tokens'));
+    await flush();
+  }
+  const attempts = recoveryClient.attempts();
+  assert.equal(attempts.length, 20, 'the shared history has a fixed memory bound');
+  assert.equal(attempts[0].reason, 'silent');
+  assert.equal(attempts[0].sessionId, 'stalled');
+  assert.equal(attempts[0].consecutive, 22);
+  assert.equal(attempts.at(-1).consecutive, 3, 'oldest attempts leave the window first');
+  assert.equal(attempts[1].reason, 'max-tokens');
+  assert.ok(attempts[0].at >= attempts[1].at);
+  assert.equal(stalled.followups.length, 22, 'diagnostics do not add extra continuations');
+  console.log('✓ recovery attempts: causes, counts and bounded history push with notifications off');
 
   console.log('Stats freshness ✅');
 } finally {

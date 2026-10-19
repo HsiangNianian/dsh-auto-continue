@@ -7,6 +7,8 @@
  * paused-sessions list) consumed by the settings card's live panels.
  */
 
+import type { RecoveryAttempt } from '../shared/core.ts';
+
 /** 今日统计视图(与 host 引擎的 DayStats 对应)。 */
 export interface DayStatsView {
   date: string;
@@ -28,6 +30,7 @@ export interface PausedSessionView {
 interface BridgeState {
   stats: DayStatsView;
   paused: PausedSessionView[];
+  recoveryAttempts: RecoveryAttempt[];
 }
 
 interface BridgeNotice {
@@ -50,7 +53,7 @@ const EMPTY_STATS: DayStatsView = {
   byCode: {},
 };
 
-let state: BridgeState = { stats: EMPTY_STATS, paused: [] };
+let state: BridgeState = { stats: EMPTY_STATS, paused: [], recoveryAttempts: [] };
 const listeners = new Set<() => void>();
 
 /** 当前桥状态里的已暂停会话(卡片面板用)。 */
@@ -61,6 +64,10 @@ export function pausedSessions(): PausedSessionView[] {
 /** 当前桥状态里的今日统计(卡片面板用)。 */
 export function readTodayStats(): DayStatsView {
   return state.stats;
+}
+
+export function readRecoveryAttempts(): RecoveryAttempt[] {
+  return state.recoveryAttempts;
 }
 
 /** 清零今日统计(经动作端点交给 host 引擎执行)。 */
@@ -94,11 +101,12 @@ async function postAction(payload: { action: string; sessionId?: string }): Prom
   }
 }
 
-function handleEvent(event: { type: string; notice?: BridgeNotice; stats?: DayStatsView; paused?: PausedSessionView[] }): void {
+function handleEvent(event: { type: string; notice?: BridgeNotice; stats?: DayStatsView; paused?: PausedSessionView[]; recoveryAttempts?: RecoveryAttempt[] }): void {
   if (event.type === 'state') {
     state = {
       stats: event.stats ?? EMPTY_STATS,
       paused: event.paused ?? [],
+      recoveryAttempts: event.recoveryAttempts ?? [],
     };
     for (const listener of listeners) listener();
   } else if (event.type === 'notice' && event.notice !== undefined) {

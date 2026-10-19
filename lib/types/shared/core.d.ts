@@ -259,6 +259,13 @@ export declare class ToolInvocationTracker {
 /** 自适应退避: 同一会话连续失败时的有效冷却间隔。 */
 export declare function effectiveCooldown(consecutive: number, base: number, factor: number, max: number): number;
 export declare function sleep(ms: number): Promise<void>;
+/** A sent recovery prompt, not proof that the following turn succeeded. */
+export interface RecoveryAttempt {
+    sessionId: string;
+    at: number;
+    reason: 'error' | 'max-tokens' | 'silent' | 'interrupted' | 'loop-guard' | 'manual';
+    consecutive: number;
+}
 /** 一天的自动继续统计(host 单实例内存态)。 */
 export interface DayStats {
     /** 本地日期 YYYY-MM-DD。 */
