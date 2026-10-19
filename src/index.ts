@@ -38,6 +38,8 @@ export const AutoContinueSchema = z.object({
   continueTextSilent: z.string().default(''),
   /** Text sent for each autonomous-loop continuation (same placeholders as `continueText`). */
   continueTextLoop: z.string().default(''),
+  /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
+  continueTextInterrupted: z.string().default(''),
   /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
   guardTools: z.boolean().default(true),
   /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

@@ -78,7 +78,9 @@
 
 宿主侧引擎在 dsh 宿主进程内订阅会话事件 firehose——**多个浏览器标签页共享一个引擎**。检测到中断后先等待一个**宽限期**(默认 3 秒)——若宿主自行开启了新回合(`turn/start`), 自动继续即取消——然后经 agent 注册表(`agent.followup`, 与「发送」按钮同一个排队通道)发送配置的文本。若队列已有消息, 引擎会在宿主唤醒 agent 之前只把本次续跑消息移到队首, 不删除或重排用户消息。
 
-宿主启动时还会扫描存活会话: 最后一个回合在**扫描时间窗**(默认 15 分钟)内以非人为原因结束、且其后没有新回合或用户消息的会话, 会被自动续跑(例如浏览器关闭期间宿主崩溃——agent-loop 恢复会话后引擎接着接手)。
+宿主启动时还会扫描存活会话: 最后一个回合在**扫描时间窗**(默认 15 分钟)内以非人为原因结束、且其后没有新回合或用户消息的会话, 会被自动续跑(例如浏览器关闭期间宿主崩溃——agent-loop 恢复会话后引擎接着接手)。宿主未重新加载的持久化会话会先从存储中枚举、物化为注册表里的 live agent; 止于轮次中间的日志在读取时会被补上一条 interrupted 标记, 重启遗留的进行中回合按同一规则恢复。
+
+存储扫描与存活会话恢复独立运行。每次存储读取最多等待 5 秒，每观察 16 个会话让出一次事件循环，无需等待下一次轮询；较早创建但最近中断的会话也能及时被扫描。恢复时保留会话的预设与已记录的模型，卸载插件会取消尚未完成的存储操作。
 
 启动恢复按会话隔离异常。历史无法读取或含有无效事件时，只在本次启动扫描中跳过该会话并记录错误，其他会话仍可恢复，也不会被它占用恢复名额。插件不会静默删除损坏记录，以免漏掉人工停止或更新的回合。合法的空历史、尚未就绪的会话注册表仍会在扫描窗口内重试；修复后的会话若重新加载为新的 Session 对象，也可再次参与扫描。详见 [#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58)。
 
@@ -104,7 +106,7 @@ DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。下面的命�
 | **0.1.7-rc.2** | **0.11.9 或更新版本** | 同上，从主侧栏的插件页进入 |
 | 使用旧设置 API 的宿主 | 保留旧版设置界面兼容 | **设置 → 插件 → 插件配置** |
 
-不支持 DSH 0.1.0-rc.6 及更早版本。自动化设置与兼容测试覆盖 **0.1.7-rc.2**、**0.2.0-rc.1** 和 **0.2.1-alpha.1**，另在 **0.2.0-rc.2** 和 **0.2.1-alpha.1** 上验证启动扫描的异常隔离。桌面应用版本不等于内置的 DSH 内核版本，请按内核版本判断兼容性；CLI 可运行 `dsh --version`，可用版本见 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。
+不支持 DSH 0.1.0-rc.6 及更早版本。自动化设置与兼容测试覆盖 **0.1.7-rc.2**、**0.2.0-rc.1**、**0.2.1-alpha.1** 和 **0.2.1-rc.2**，另在 **0.2.0-rc.2** 和 **0.2.1-alpha.1** 上验证启动扫描的异常隔离。桌面应用版本不等于内置的 DSH 内核版本，请按内核版本判断兼容性；CLI 可运行 `dsh --version`，可用版本见 [DSH 官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。
 
 **插件 0.11.9 和 0.12.0 会被 DSH 0.2.0-rc.1 的版本检查拦截。** 请升级到 0.12.1 或更新版本；现有配置表单接口可在该内核正常工作。详见 [#50](https://github.com/HsiangNianian/dsh-auto-continue/issues/50)。
 
@@ -234,6 +236,7 @@ DSH 0.1.7 / 0.2 将这些值保存在当前 profile patch 的 `auto-continue` �
     resumeCompletedTurns: false
     continueTextSilent: ''
     continueTextLoop: ''
+    continueTextInterrupted: ''
     continueTextMaxTokens: ''
     guardTools: true
     guardPendingText: ''
@@ -302,6 +305,7 @@ auto-continue:
 | 无输出回合的继续文本 | `继续。你上一轮只输出了内部推理, ...` | 续跑无输出回合时发送的文本(支持相同占位符) |
 | 自主循环（每个回合后都续跑） | 关 | 正常完成后经过宽限期续跑，不受恢复冷却和上限限制；仅有推理和显式无输出结束仍消耗重试预算 |
 | 自主循环的继续文本 | `继续` | 自主循环续跑时发送的文本(支持相同占位符) |
+| 宿主重启后恢复的继续文本 | `继续。宿主在你上一轮运行期间重启了; …` | 启动扫描恢复被重启中断的会话时发送的文本(支持相同占位符) |
 | 幂等护栏 | 开 | 续跑前检查上一步工具调用并给出指引(见「它做什么」) |
 | 循环守卫 | 开 | 检测运行中的回合空转并重启(见「它做什么」) |
 | 短句长度上限 (字符) | `40` | 模型消息文本短于该值计为一条短句(空转信号) |
@@ -338,7 +342,7 @@ auto-continue:
 
 匹配项是普通子串, 不是正则表达式。空行会被忽略; 任一行命中后会优先于内置永久错误规则。冷却与最大连续次数仍然生效。
 
-`continueText`（以及 `continueTextMaxTokens`、`continueTextSilent`、`continueTextLoop`）支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。护栏文本支持 `{tool}` 与 `{result}`(上一步工具输出的截断摘要)。当前宿主引擎会将 `{sessionTitle}` 替换为空字符串。
+`continueText`（以及 `continueTextMaxTokens`、`continueTextSilent`、`continueTextLoop`、`continueTextInterrupted`）支持占位符 `{code}`、`{message}`、`{status}`、`{tool}`(失败前最后一次工具调用)、`{turn}`、`{errorCount}`(连续失败次数, 含本次)和 `{elapsed}`(距失败经过的时间, 如 `1m5s`)——例如 `继续 ({tool}: {code})` 会变成 `继续 (git push: UPSTREAM)`。`continueTextInterrupted` 在启动扫描恢复被宿主重启中断的会话时发送, 默认文本会说明重启并要求先核实外部状态再重试。护栏文本支持 `{tool}` 与 `{result}`(上一步工具输出的截断摘要)。当前宿主引擎会将 `{sessionTitle}` 替换为空字符串。
 
 ---
 
@@ -364,6 +368,7 @@ npm ci --prefix tests/fixtures/dsh-0.1.7
 npm ci --prefix tests/fixtures/dsh-0.2.0
 npm ci --prefix tests/fixtures/dsh-0.2.0-rc.2
 npm ci --prefix tests/fixtures/dsh-0.2.1
+npm ci --prefix tests/fixtures/dsh-0.2.1-rc.2
 npm run typecheck
 npm run build
 npm test
@@ -371,6 +376,10 @@ npm run test:runtime
 ```
 
 `npm test` 覆盖错误恢复、自主循环上限与开关、子会话排除、暂停期间手动续跑、启动扫描及畸形会话隔离、队列顺序、统计、本地化、设置界面生命周期及保存期间继续编辑的情况。`npm run test:runtime` 使用已发布的 DSH **0.1.7-rc.2**、**0.2.0-rc.1** 和 **0.2.1-alpha.1** Settings、Loader、HTTP 组件，并运行真实的 0.2 profile 兼容检查及缺少其中一种设置服务时的客户端激活测试。启动恢复测试在真实的 **0.2.0-rc.2** 和 **0.2.1-alpha.1** Session、Cordis、HTTP 组件中注入会话读取故障，验证健康会话仍能恢复；这不代表正常的 DSH 加载流程会产生损坏日志。运行时测试使用受控的 agent 事件，不会向模型服务发送请求。
+
+rc.2 测试还加载已发布的客户端设置服务，使用不再包含 `mode` 的真实快照，验证卡片保存/重置、会话开关、语言同步与重新读取宿主配置。
+
+rc.2 重启测试使用真实的 agent、query 与 JSONL 持久化服务：在回合中强制结束宿主，启动新宿主且不打开会话，验证仅恢复一次，并沿用已记录的模型与对应提示变量。模型适配器使用确定性响应，不发送外部模型请求。
 
 修改链接的本地仓库后，运行 `npm run build` 写入最新的 `lib/` 产物，再重启 DSH 并刷新浏览器。开启 client HMR 的宿主可自动重新加载已构建的客户端包。
 
@@ -398,5 +407,3 @@ CI 执行类型检查、构建、两组测试、已提交 `lib/` 产物校验及
 [![MIT](https://img.shields.io/badge/license-MIT-65a30d)](LICENSE)
 
 MIT © Hsiang Nianian
-
-rc.2 测试还加载已发布的客户端设置服务，使用不再包含 `mode` 的真实快照，验证卡片保存/重置、会话开关、语言同步与重新读取宿主配置。

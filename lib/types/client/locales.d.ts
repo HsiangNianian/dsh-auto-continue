@@ -53,6 +53,9 @@ export declare const zh: {
     'field.continueTextSilent': string;
     'field.continueTextSilentHint': string;
     'default.continueTextSilent': "继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。";
+    'field.continueTextInterrupted': string;
+    'field.continueTextInterruptedHint': string;
+    'default.continueTextInterrupted': "继续。宿主在你上一轮运行期间重启了; 重启时未完成的工具调用已按「结果未知」收尾。从中断处继续, 重试可能有副作用的操作前先核实外部状态。";
     'field.guardTools': string;
     'field.guardToolsHint': string;
     'field.guardPendingText': string;
