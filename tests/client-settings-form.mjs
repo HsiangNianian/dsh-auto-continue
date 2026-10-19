@@ -101,6 +101,32 @@ function createForm(scope) {
   return new CardForm(scope, [numberField('graceMs'), numberField('cooldownMs')]);
 }
 
+test('current settings snapshots without mode can save and clear overrides', async () => {
+  const scope = createScope();
+  delete scope.getSnapshot().mode;
+  const form = createForm(scope);
+  form.actions().edit('graceMs', '5000');
+  assert.equal(form.shell().writable, true);
+  assert.equal(await form.save(), true);
+  assert.equal(scope.getSnapshot().value.graceMs, 5000);
+  form.actions().resetField('graceMs');
+  assert.equal(await form.save(), true);
+  assert.equal(Object.hasOwn(scope.getSnapshot().user, 'graceMs'), false);
+});
+
+test('read-only, unavailable and legacy memory scopes cannot save', async () => {
+  for (const patch of [{ writable: false }, { status: 'loading' }, { status: 'unavailable' }, { mode: 'memory' }]) {
+    const scope = createScope();
+    Object.assign(scope.getSnapshot(), patch);
+    const form = createForm(scope);
+    form.actions().edit('graceMs', '5000');
+    assert.equal(form.shell().writable, false);
+    assert.equal(await form.save(), false);
+    assert.deepEqual(scope.writes, []);
+    assert.equal(form.shell().dirty, true);
+  }
+});
+
 test('a newer same-field edit survives a pending successful save', async () => {
   const scope = createScope();
   const form = createForm(scope);

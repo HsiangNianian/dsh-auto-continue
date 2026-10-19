@@ -98,6 +98,7 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
+| **0.2.1-rc.2** | **0.14.3 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.1-alpha.1** | **0.14.2 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
@@ -326,6 +327,8 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Max backoff (ms) | `300000` | Cap on the adaptive backoff interval |
 | Browser notifications | `off` | Notify about auto-continue events and successful settings saves; confirm switching notifications on or off |
 
+Pausing auto-continue stops automatic follow-ups, but leaves the loop guard active. Disable **Loop guard** too if you want to stop automatic interruptions. Invisible-only text does not count as repeated visible output, and fresh tool calls reset the repeated-message streak; repeated tool calls with identical arguments and results are still checked independently.
+
 For a provider-specific error that is safe to resume (confirm first that manually sending "continue" recovers), add a narrow, stable fragment rather than disabling classification globally:
 
 ```yaml
@@ -397,3 +400,5 @@ CI typechecks, rebuilds, runs both test suites, verifies committed `lib/` artifa
 [![MIT](https://img.shields.io/badge/license-MIT-65a30d)](LICENSE)
 
 MIT © Hsiang Nianian
+
+The rc.2 check also loads the published client settings service and verifies card save/reset, the composer toggle, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.

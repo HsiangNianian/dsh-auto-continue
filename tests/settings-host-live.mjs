@@ -4,6 +4,9 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import vm from 'node:vm';
+import * as React from 'react';
+import * as jsxRuntime from 'react/jsx-runtime';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const cohort = process.argv[2] ?? '0.1.7';
@@ -53,6 +56,72 @@ try {
   const form = () => ctx.settings.describe().find((row) => row.ns === 'auto-continue');
   assert.ok(form(), `the plugin exposes its settings in DSH ${runtimeVersion}`);
   assert.equal(form().value.paused, false);
+
+  if (cohort === '0.2.1-rc.2') {
+    const cordis = await load('cordis');
+    const store = await load('dsh-client-store');
+    const client = new Context();
+    const entries = new Map();
+    const wire = value => JSON.parse(JSON.stringify(value));
+    const transport = {
+      describe: async () => ({ ok: true, value: wire({ namespaces: ctx.settings.describe(), writable: ctx.settings.writable }) }),
+      mutate: async (ns, ops, revision) => {
+        await ctx.settings.mutate(ns, ops, revision);
+        return { ok: true, value: wire(ctx.settings.describe().find(row => row.ns === ns)) };
+      },
+    };
+    function browserModule(path) {
+      let registration;
+      vm.runInNewContext(readFileSync(path, 'utf8'), {
+        AbortController, console, TextDecoder, URL, structuredClone, setTimeout, clearTimeout,
+        fetch: async () => { throw new Error('HTTP bridge is tested separately'); },
+        window: { __ModuleLoader__: { load: value => { registration = value; } } },
+      });
+      return registration.factory(name => {
+        if (name === '@deepseek-ai/cordis') return cordis;
+        if (name === '@deepseek-ai/dsh-client-store') return store;
+        if (name === 'react') return React;
+        if (name === 'react/jsx-runtime') return jsxRuntime;
+        throw new Error(`Unexpected client module: ${name}`);
+      });
+    }
+    client.provide('remote', { settings: transport, $on: () => () => {} });
+    client.provide('remote.settings', transport);
+    client.provide('locale', { getLocale: () => ({ active: 'en' }), register: () => () => {} });
+    client.provide('slots', {
+      inject(name, mount) { return ['plugins.bundle.config', 'conversation.input.left'].includes(name) ? client.effect(mount) : () => {}; },
+      register(options) { entries.set(options.name, options.inject()); return () => entries.delete(options.name); },
+    });
+    try {
+      await client.plugin(browserModule(join(modules, '@deepseek-ai/dsh-client-ui-settings/lib/client.js')));
+      await client.plugin(browserModule(join(project, 'lib/client.js')));
+      const flush = () => new Promise(resolve => setImmediate(resolve));
+      for (let n = 0; n < 10; n++) await flush();
+      const scope = client.configForms.get('auto-continue');
+      assert.equal(scope.getSnapshot().status, 'ready');
+      assert.equal(Object.hasOwn(scope.getSnapshot(), 'mode'), false, 'use the actual rc.2 snapshot contract');
+      assert.equal(form().value.locale, 'en', 'locale mirror writes through the real form');
+      const card = entries.get('plugins.bundle.config');
+      card.edit('showComposerToggle', 'false');
+      card.save();
+      for (let n = 0; n < 10; n++) await flush();
+      assert.equal(form().value.showComposerToggle, false);
+      assert.equal(card.hooks.autoContinueSettingsCard.getSnapshot().dirty, false);
+      await client.configForms.describe().load();
+      assert.equal(scope.getSnapshot().value.showComposerToggle, false, 'a fresh Host read retains the saved setting');
+      entries.get('conversation.input.left').setEnabled(false);
+      for (let n = 0; n < 10; n++) await flush();
+      assert.equal(form().value.paused, true, 'composer switch writes through the real form');
+      card.resetField('showComposerToggle');
+      card.save();
+      for (let n = 0; n < 10; n++) await flush();
+      assert.equal(form().value.showComposerToggle, true);
+      await scope.set('paused', false);
+    } finally {
+      await client.fiber.dispose();
+    }
+    console.log('DSH rc.2 actual client forms: card save/reset, composer toggle, locale mirror and reload ✅');
+  }
 
   const bridge = await fetch(`http://127.0.0.1:${ctx.webServer.port}/api/auto-continue-bridge`);
   assert.equal(bridge.status, 200);

@@ -27,6 +27,7 @@ import {
 import { startBridge } from './bridge.ts';
 import { AutoContinueComposerToggle } from './composer-toggle.tsx';
 import type { SettingsScope } from './dsh-store-compat.ts';
+import { canWriteSettings } from './settings-form.ts';
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'auto-continue';
@@ -122,7 +123,7 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
   const syncLocale = (): void => {
     const active = ctx.locale.getLocale().active;
     const snapshot = scope.getSnapshot();
-    if (snapshot.status !== 'ready' || !snapshot.writable || snapshot.mode !== 'host') return;
+    if (!canWriteSettings(snapshot)) return;
     // A genuine language switch is the only thing that earns a fresh budget: the
     // attempt count must survive matching snapshots, because the writing page's
     // own acknowledgement arrives as a match (see above). Tracking `mirroredLocale`

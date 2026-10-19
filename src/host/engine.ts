@@ -120,6 +120,9 @@ const STREAM_NEAR_DUPLICATE_MAX_CHARS = 2_048;
 /** Bound unfinished text copied between token chunks when a provider emits no paragraph break. */
 const STREAM_TAIL_MAX_CHARS = 4_096;
 
+/** Ignore invisible formatting only for detection, never rewrite the stored message. */
+const visibleText = (text: string): string => text.replace(/\p{Cf}/gu, '').trim();
+
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
   /** 稳定标识(供 browser 去重)。 */
@@ -449,6 +452,8 @@ export class AutoContinueRunner {
       // 任何新鲜调用都代表进展（即使缺关联 id）；旧帧重放不能清短句 streak。
       if (state.tools.recordCall(event)) {
         state.shortRun = 0;
+        state.sameTextRun = 0;
+        state.lastAssistantText = '';
         if (this.tracksOutput(state, event)) state.turnOutput = 'visible';
       }
     } else if (event.type === 'tool/result') {
@@ -463,7 +468,7 @@ export class AutoContinueRunner {
       const state = this.state(sessionId);
       if (this.tracksOutput(state, event)) {
         const chunk = event.data.chunk;
-        const visible = (chunk.type === 'text-delta' && chunk.text.trim() !== '') ||
+        const visible = (chunk.type === 'text-delta' && visibleText(chunk.text) !== '') ||
           chunk.type === 'tool-call-delta' ||
           (chunk.type === 'block-end' && this.hasVisibleContent([chunk.block])) ||
           (chunk.type === 'block-start' && chunk.blockType !== 'reasoning' && chunk.blockType !== 'text');
@@ -494,7 +499,7 @@ export class AutoContinueRunner {
       if (part === null || typeof part !== 'object') return true;
       const block = part as { type?: unknown; text?: unknown };
       if (block.type === 'reasoning') return false;
-      if (block.type === 'text') return typeof block.text !== 'string' || block.text.trim() !== '';
+      if (block.type === 'text') return typeof block.text !== 'string' || visibleText(block.text) !== '';
       return true;
     });
   }
@@ -514,7 +519,7 @@ export class AutoContinueRunner {
   }
 
   private normalizedSegment(text: string): string {
-    return text.replace(/\s+/g, ' ').trim();
+    return visibleText(text).replace(/\s+/g, ' ');
   }
 
   private isNearDuplicateSegment(left: string, right: string): boolean {
@@ -623,14 +628,14 @@ export class AutoContinueRunner {
   ): void {
     if (!this.getConfig().loopGuard) return;
     const text = this.assistantText(event);
-    const trimmed = text.trim();
+    const trimmed = visibleText(text);
     // 相同文本重复(不限长度): 模型反复输出完全相同的消息是最强的循环信号,
     // 例如 "Let me test variants of the regex..." 连续 7 遍
     if (trimmed !== '' && trimmed === state.lastAssistantText) {
       state.sameTextRun += 1;
     } else {
       state.lastAssistantText = trimmed;
-      state.sameTextRun = 1;
+      state.sameTextRun = trimmed === '' ? 0 : 1;
     }
     // 短句计数(长度 < loopShortChars 且落在时间窗内): 空转信号
     if (trimmed.length < this.getConfig().loopShortChars) {

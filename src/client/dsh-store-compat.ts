@@ -24,7 +24,7 @@ export interface SettingsScopeSnapshot<T> {
   user: unknown;
   revision: number | undefined;
   writable: boolean;
-  mode: 'host' | 'memory';
+  mode?: 'host' | 'memory';
 }
 
 /** Stable subset shared by settings scopes and DSH 0.1.7 configuration forms. */

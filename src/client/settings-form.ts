@@ -10,7 +10,12 @@
  * default — and whether the user layer carries it (presence, not value
  * equality, marks an override).
  */
-import type { SettingsScope, SnapshotStore } from './dsh-store-compat.ts';
+import type { SettingsScope, SettingsScopeSnapshot, SnapshotStore } from './dsh-store-compat.ts';
+
+/** Current forms omit mode; legacy memory scopes still cannot persist settings. */
+export function canWriteSettings(snapshot: SettingsScopeSnapshot<unknown>): boolean {
+  return snapshot.status === 'ready' && snapshot.writable && (snapshot.mode === undefined || snapshot.mode === 'host');
+}
 
 /** The write one field's staged text performs when the card is saved. */
 export type FieldWrite = { kind: 'set'; value: unknown } | { kind: 'clear' };
@@ -162,7 +167,7 @@ export class CardForm<T> {
     const snapshot = this.scope.getSnapshot();
     return {
       available: snapshot.status === 'ready',
-      writable: snapshot.writable,
+      writable: canWriteSettings(snapshot),
       dirty: this.plan().length > 0,
       invalid: this.plan().some((item) => item.run === undefined),
       saving: this.saving,
@@ -214,7 +219,7 @@ export class CardForm<T> {
     const plan = this.plan();
     const writes = plan.flatMap((item) => (item.run === undefined ? [] : [item.run]));
     const snapshot = this.scope.getSnapshot();
-    if (plan.length === 0 || this.saving || writes.length !== plan.length || snapshot.status !== 'ready' || !snapshot.writable || snapshot.mode !== 'host') return false;
+    if (plan.length === 0 || this.saving || writes.length !== plan.length || !canWriteSettings(snapshot)) return false;
     // Keep the staged edits this save writes. A field can be staged again
     // while a write is pending, so clear it only if that exact edit remains.
     const edits = plan.map(({ field, staged }) => ({ field, staged }));

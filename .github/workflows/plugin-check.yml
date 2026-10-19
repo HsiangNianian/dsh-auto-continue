@@ -36,6 +36,7 @@ jobs:
           npm ci --prefix tests/fixtures/dsh-0.2.0 --no-audit --no-fund
           npm ci --prefix tests/fixtures/dsh-0.2.0-rc.2 --no-audit --no-fund
           npm ci --prefix tests/fixtures/dsh-0.2.1 --no-audit --no-fund
+          npm ci --prefix tests/fixtures/dsh-0.2.1-rc.2 --no-audit --no-fund
           npm run test:runtime
 
       - name: Verify committed build artifacts
