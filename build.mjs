@@ -83,6 +83,7 @@ const hostOptions = {
   // Bundle YAML's ESM parser; its Node entry uses CJS require('process'),
   // which cannot run inside the emitted ESM host bundle.
   alias: { yaml: join(root, "node_modules/yaml/browser/index.js") },
+  banner: { js: `/*! Bundled YAML parser (ISC)\n${readFileSync(join(root, "node_modules/yaml/LICENSE"), "utf8")}*/` },
   target: "es2020",
   external: [
     "@deepseek-ai/cordis",
