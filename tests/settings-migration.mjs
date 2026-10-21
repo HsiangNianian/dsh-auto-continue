@@ -23,7 +23,7 @@ async function until(check) {
   assert.ok(check(), 'migration settled within one second');
 }
 const base = { scanOnBoot: false, verbose: false, graceMs: 1, cooldownMs: 0, locale: 'en' };
-const source = 'auto-continue:\n  paused: true\n  continueTextMaxTokens: My saved prompt\n  cooldownMs: 99\n  futureOption: keep in old file\nother-plugin:\n  password: leave alone\n';
+const source = 'auto-continue:\n  paused: true\n  continueTextMaxTokens: My saved prompt\n  cooldownMs: 99\n  futureOption: keep in old file\nother-plugin:\n  password: !private leave alone\n';
 
 async function host(options = {}) {
   const ctx = new Context();
@@ -75,6 +75,9 @@ async function host(options = {}) {
 }
 
 try {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
   const migrated = await host({ source });
   try {
     await until(() => migrated.value()?._legacySettingsImported === true);
@@ -83,6 +86,7 @@ try {
     assert.equal(migrated.value().cooldownMs, 0, 'existing profile config wins');
     assert.equal(migrated.ctx.loader.resolve('auto-continue').options.config.futureOption, undefined);
     assert.equal(readFileSync(migrated.legacy, 'utf8'), source, 'all legacy bytes remain intact');
+    assert.equal(warnings.length, 0, 'parser warnings must not log other plugins settings');
     migrated.end();
     await sleep(30);
     assert.equal(migrated.followups.length, 0, 'imported pause controls the engine');
@@ -91,7 +95,7 @@ try {
     await until(() => migrated.followups.length === 1);
     assert.equal(migrated.followups[0].content[0].text, 'My saved prompt');
     await migrated.ctx.settings.mutate('auto-continue', [{ op: 'unset', path: ['continueTextMaxTokens'] }]);
-  } finally { await migrated.close(); }
+  } finally { console.warn = originalWarn; await migrated.close(); }
   const restarted = await host({ home: migrated.home, config: JSON.parse(readFileSync(migrated.profile, 'utf8')) });
   try {
     assert.equal(restarted.value().paused, false);

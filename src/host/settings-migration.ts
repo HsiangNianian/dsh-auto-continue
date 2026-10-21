@@ -56,7 +56,8 @@ export function migrateLegacySettings(
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
         throw error;
       }
-      const document: unknown = parse(source);
+      // Parser warnings can include source lines from unrelated namespaces.
+      const document: unknown = parse(source, { logLevel: 'silent' });
       if (document === null || document === undefined) return;
       if (!record(document)) throw new Error('Legacy settings must be a mapping');
       const section = document['auto-continue'];
