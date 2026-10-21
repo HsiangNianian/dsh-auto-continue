@@ -1,6 +1,6 @@
 /** Legacy-file migration through real rc.2 Config, Loader and Settings services. */
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -28,8 +28,11 @@ const source = 'auto-continue:\n  paused: true\n  continueTextMaxTokens: My save
 async function host(options = {}) {
   const ctx = new Context();
   const home = options.home ?? mkdtempSync(join(fixture, 'home-'));
+  const dir = options.dir ?? home;
+  mkdirSync(dir, { recursive: true });
   const legacy = join(home, 'settings-legacy.yaml');
-  const profile = join(home, 'profile.json');
+  const profile = join(dir, 'profile.json');
+  const completed = join(dir, '.auto-continue-settings-imported');
   if (options.source !== undefined) writeFileSync(legacy, options.source);
   if (options.unreadable) mkdirSync(legacy);
   const followups = [];
@@ -38,7 +41,7 @@ async function host(options = {}) {
   const session = { id: 'migration', header: {}, snapshotEvents: () => [] };
   const agent = { session, inbox: { nextTurn: [] }, followup: message => followups.push(message) };
   await ctx.plugin(Loader);
-  ctx.provide('profileContext', { name: 'test', home });
+  ctx.provide('profileContext', { name: 'test', home, dir });
   const editor = {
     documentPath: profile,
     entries: () => [...ctx.loader.entries()],
@@ -54,6 +57,7 @@ async function host(options = {}) {
       await ctx.loader.update(entry.id, { config: next });
       await ctx.loader.await();
       ctx.emit('app-boot/config-reload');
+      if (options.failCompletion) mkdirSync(completed);
     },
   };
   if (!options.lateEditor) ctx.provide('configEditor', editor);
@@ -63,7 +67,7 @@ async function host(options = {}) {
   await ctx.loader.create({ id: 'auto-continue', name: plugin, config: { ...base, ...options.config } });
   await ctx.loader.await();
   return {
-    ctx, home, legacy, profile, followups,
+    ctx, home, legacy, profile, completed, followups,
     provideEditor: () => ctx.provide('configEditor', editor),
     edits: () => edits,
     value: () => ctx.settings?.describe().find(row => row.ns === 'auto-continue')?.value,
@@ -95,6 +99,7 @@ try {
     await until(() => migrated.followups.length === 1);
     assert.equal(migrated.followups[0].content[0].text, 'My saved prompt');
     await migrated.ctx.settings.mutate('auto-continue', [{ op: 'unset', path: ['continueTextMaxTokens'] }]);
+    await until(() => existsSync(migrated.completed));
   } finally { console.warn = originalWarn; await migrated.close(); }
   const restarted = await host({ home: migrated.home, config: JSON.parse(readFileSync(migrated.profile, 'utf8')) });
   try {
@@ -103,6 +108,56 @@ try {
     assert.equal(restarted.edits(), 0, 'a fresh host does not reimport reset values');
   } finally { await restarted.close(); }
   console.log('Legacy pause/prompt import, profile precedence, engine behavior and restart after reset ✅');
+
+  const reset = await host({ home: migrated.home, config: JSON.parse(readFileSync(migrated.profile, 'utf8')) });
+  try {
+    await reset.ctx.settings.replace('auto-continue', {});
+    assert.equal(reset.value()._legacySettingsImported, false, 'whole-config reset also clears hidden fields');
+  } finally { await reset.close(); }
+  const resetRestart = await host({ home: reset.home, config: JSON.parse(readFileSync(reset.profile, 'utf8')) });
+  try {
+    await sleep(30);
+    assert.equal(resetRestart.value().paused, false);
+    assert.equal(resetRestart.value().continueTextMaxTokens, '');
+    assert.equal(resetRestart.edits(), 0, 'whole-config reset must not reimport on restart');
+    resetRestart.end();
+    await until(() => resetRestart.followups.length === 1);
+  } finally { await resetRestart.close(); }
+  const anotherProfile = await host({ home: reset.home, dir: join(reset.home, 'another-profile') });
+  try {
+    await until(() => anotherProfile.value()?._legacySettingsImported === true);
+    assert.equal(anotherProfile.value().paused, true, 'completion belongs to one profile, not the global home');
+    await until(() => existsSync(anotherProfile.completed));
+  } finally { await anotherProfile.close(); }
+  console.log('Whole-config reset survives restart and completion stays scoped to its profile ✅');
+
+  const interrupted = await host({ source: 'broken: [', config: { _legacySettingsImported: true, paused: true } });
+  try {
+    await until(() => existsSync(interrupted.completed));
+    assert.equal(interrupted.edits(), 0, 'finish an interrupted import without reading old YAML again');
+    assert.equal(interrupted.value().paused, true);
+  } finally { await interrupted.close(); }
+  console.log('Interrupted completion write is repaired from the committed profile marker ✅');
+
+  const failedCompletion = await host({ source, config: { paused: false }, failCompletion: true });
+  try {
+    await until(() => existsSync(failedCompletion.completed));
+    assert.equal(failedCompletion.value()._legacySettingsImported, true);
+    await sleep(30);
+    failedCompletion.end();
+    await sleep(30);
+    assert.equal(failedCompletion.followups.length, 0, 'completion write failure holds recovery');
+  } finally { await failedCompletion.close(); }
+  rmSync(failedCompletion.completed, { recursive: true });
+  const repair = await host({ home: failedCompletion.home, source: 'broken: [', config: JSON.parse(readFileSync(failedCompletion.profile, 'utf8')) });
+  try {
+    await until(() => existsSync(repair.completed) && readFileSync(repair.completed, 'utf8') === '1\n');
+    await sleep(20);
+    repair.end();
+    await until(() => repair.followups.length === 1);
+    assert.equal(repair.edits(), 0);
+  } finally { await repair.close(); }
+  console.log('Failed completion write holds recovery and can finish after restart ✅');
 
   let release;
   const gate = new Promise(resolve => { release = resolve; });

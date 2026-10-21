@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { AutoContinueSettings } from '../shared/core.ts';
-/** Kept in the profile so resetting a field cannot reimport its old value. */
+/** Recover an import interrupted between the profile save and completion file. */
 export declare const LEGACY_SETTINGS_IMPORTED = "_legacySettingsImported";
 export type EntrySettings = AutoContinueSettings & {
     _legacySettingsImported?: boolean;

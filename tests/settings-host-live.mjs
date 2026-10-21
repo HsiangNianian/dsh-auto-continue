@@ -38,7 +38,7 @@ const end = (turn) => ctx.emit('session/event', session, {
 
 try {
   await ctx.plugin(Loader);
-  ctx.provide('profileContext', { name: 'test', home: fixture });
+  ctx.provide('profileContext', { name: 'test', home: fixture, dir: fixture });
   // The persistence boundary is in memory; real Loader updates still parse and
   // publish live config references exactly as a profile edit does.
   ctx.provide('configEditor', {
