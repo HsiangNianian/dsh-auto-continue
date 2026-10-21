@@ -148,7 +148,7 @@ try {
   }
   console.log('Malformed/unreadable legacy data and failed saves preserve files and hold recovery ✅');
 
-  for (const options of [{}, { source: '' }, { source: '# no settings yet\n' }, { source: 'other-plugin: {}' }, { source: 'broken: [', config: { _legacySettingsImported: true } }]) {
+  for (const options of [{}, { lateEditor: true }, { source: '' }, { source: '# no settings yet\n' }, { source: 'other-plugin: {}' }, { source: 'broken: [', config: { _legacySettingsImported: true } }]) {
     const clean = await host(options);
     try {
       await sleep(30);
