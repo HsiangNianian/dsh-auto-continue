@@ -173,6 +173,10 @@ A manual loader entry can start the engine without registering a bundle in the *
 
 The `include:auto-continue` label in **Built-in plugins** is a normal loader prefix. It does not, by itself, indicate a legacy install or a duplicate engine.
 
+For hosts that expose both modern profile config and the legacy settings API ([#64](https://github.com/HsiangNianian/dsh-auto-continue/issues/64)), the plugin uses profile config without registering a second settings namespace. It imports the `auto-continue` section of `$DSH_HOME/settings-legacy.yaml` once per profile, including the saved pause and custom prompts. Existing profile values take precedence. The original file and other plugins' sections stay untouched; completion is recorded separately from editable settings so even a whole-config reset stays reset after restarting.
+
+Recovery and the loop guard wait while this import is pending. If the legacy file cannot be read or validated, or the profile cannot be saved, the host logs an import error and keeps both held. Repair the file or profile permissions and restart the host. Hosts that only support the legacy API continue using their existing settings store.
+
 ### Verify & uninstall
 
 ```bash

@@ -1,0 +1,117 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { Context } from '@deepseek-ai/cordis';
+import { parse } from 'yaml';
+import type { AutoContinueSettings } from '../shared/core.ts';
+
+/** Recover an import interrupted between the profile save and completion file. */
+export const LEGACY_SETTINGS_IMPORTED = '_legacySettingsImported';
+export type EntrySettings = AutoContinueSettings & { _legacySettingsImported?: boolean };
+export type LiveEntrySettings = { get(): EntrySettings | undefined };
+
+interface ProfileEntry {
+  fiber?: unknown;
+}
+
+interface MigrationContext extends Context {
+  profileContext: { home: string; dir: string };
+  configEditor: {
+    entries(): ProfileEntry[];
+    edit(entry: ProfileEntry, change: (current: Record<string, unknown>) => Record<string, unknown>): Promise<void>;
+  };
+  loader: { await(): Promise<void> };
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Import the mixed desktop host's legacy document through the profile editor.
+ * The original file stays untouched, including other plugins' settings.
+ */
+export function migrateLegacySettings(
+  ctx: Context,
+  config: LiveEntrySettings,
+  fields: readonly string[],
+  validate: (value: AutoContinueSettings) => unknown,
+): () => EntrySettings | undefined {
+  // A profile may compose its editor after this entry. Hold recovery from the
+  // outset in that case; standalone hosts without a profile still work.
+  let pending = ctx.get('profileContext') !== undefined;
+
+  ctx.inject(['profileContext'], (injected) => {
+    const migration = injected as MigrationContext;
+    const completedPath = join(migration.profileContext.dir, '.auto-continue-settings-imported');
+    let disposed = false;
+    pending = true;
+    migration.effect(() => () => { disposed = true; });
+    const failed = () => {
+      if (disposed) return;
+      // YAML errors may quote other plugins' secrets, so do not log the source
+      // or parser exception. Leave the original document available for repair.
+      migration.logger.error('[auto-continue] Could not import settings-legacy.yaml; automatic recovery and loop guard are held until the file/profile can be read and saved, then restart the host');
+    };
+    // Do not return this task to Cordis: profile edits require the owning entry
+    // to be active, and Loader.await() must not wait for this migration itself.
+    void (async () => {
+      try {
+        const completed = await readFile(completedPath, 'utf8');
+        if (completed.trim() === '1') return;
+        if (config.get()?._legacySettingsImported !== true) throw new Error('Invalid settings migration record');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (disposed) return;
+      if (config.get()?._legacySettingsImported === true) {
+        await writeFile(completedPath, '1\n', { mode: 0o600 });
+        return;
+      }
+      let source: string;
+      try {
+        source = await readFile(join(migration.profileContext.home, 'settings-legacy.yaml'), 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      // Parser warnings can include source lines from unrelated namespaces.
+      const document: unknown = parse(source, { logLevel: 'silent' });
+      if (document === null || document === undefined) return;
+      if (!record(document)) throw new Error('Legacy settings must be a mapping');
+      const section = document['auto-continue'];
+      if (section === undefined) return;
+      if (!record(section)) throw new Error('Legacy auto-continue settings must be a mapping');
+      const values = Object.fromEntries(fields.filter(key => Object.prototype.hasOwnProperty.call(section, key)).map(key => [key, section[key]]));
+      validate(values);
+      return values;
+    })().then(values => {
+      if (disposed) return;
+      // Hosts without an editor can still run when there is nothing to import.
+      if (values === undefined) { pending = false; return; }
+      migration.inject(['configEditor', 'loader'], (ready) => {
+        const editor = ready as MigrationContext;
+        let cancelled = false;
+        editor.effect(() => () => { cancelled = true; });
+        void (async () => {
+          await editor.loader.await();
+          if (disposed || cancelled) return;
+          const entry = editor.configEditor.entries().find(candidate => candidate.fiber === ctx.fiber);
+          if (entry === undefined) throw new Error('Auto-continue profile entry is unavailable');
+          await editor.configEditor.edit(entry, current => {
+            if (disposed || cancelled) throw new Error('Auto-continue was unloaded during settings migration');
+            if (current[LEGACY_SETTINGS_IMPORTED] === true) return current;
+            // Explicit profile values, including concurrent edits, take precedence.
+            return { ...values, ...current, [LEGACY_SETTINGS_IMPORTED]: true };
+          });
+          // Keep completion outside resettable Config. The Config marker above
+          // repairs this file on restart if the process stops between writes.
+          if (!disposed && !cancelled) await writeFile(completedPath, '1\n', { mode: 0o600 });
+        })().then(() => {
+          if (!disposed && !cancelled) pending = false;
+        }, () => { if (!cancelled) failed(); });
+      });
+    }, failed);
+  });
+
+  // Startup recovery must not run with defaults while a stored pause is loading.
+  return () => pending ? { ...config.get(), paused: true, loopGuard: false } : config.get();
+}
