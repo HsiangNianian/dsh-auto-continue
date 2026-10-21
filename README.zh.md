@@ -173,6 +173,10 @@ dsh web
 
 **内置插件**里显示的 `include:auto-continue` 是正常的 Loader 前缀, 单凭这个名字不能判断为旧安装或重复引擎。
 
+对于同时提供新版 profile 配置和旧版设置 API 的宿主（[#64](https://github.com/HsiangNianian/dsh-auto-continue/issues/64)），插件使用 profile 配置，不再重复注册同名设置。每个 profile 会从 `$DSH_HOME/settings-legacy.yaml` 的 `auto-continue` 段落迁移一次旧值，包括暂停状态和自定义提示词；已有的 profile 配置优先。原文件及其他插件的配置保持不变，`_legacySettingsImported` 标记迁移完成，保证之后重置的字段不会在重启时再次被旧值覆盖。
+
+迁移期间，自动恢复和循环守卫暂不执行。如果旧文件无法读取、参数校验失败或 profile 无法保存，宿主会记录迁移错误，并继续保持两者暂停。修复文件或 profile 权限后重启宿主即可重试。只支持旧版 API 的宿主继续使用原来的设置存储。
+
 ### 验证与卸载
 
 ```bash

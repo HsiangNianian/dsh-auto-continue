@@ -1,6 +1,6 @@
 /** Exercise a published DSH cohort's Settings, Loader and HTTP services together. */
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -10,6 +10,7 @@ import * as jsxRuntime from 'react/jsx-runtime';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const cohort = process.argv[2] ?? '0.1.7';
+const mixed = process.argv[3] === 'mixed';
 const modules = join(project, `tests/fixtures/dsh-${cohort}/node_modules`);
 const runtimeVersion = JSON.parse(readFileSync(join(modules, '@deepseek-ai/dsh-settings/package.json'), 'utf8')).version;
 const load = (name) => import(pathToFileURL(join(modules, '@deepseek-ai', name, 'lib/index.js')).href);
@@ -25,6 +26,9 @@ symlinkSync(modules, join(fixture, 'node_modules'), 'dir');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ctx = new Context();
 const base = { scanOnBoot: false, verbose: false, graceMs: 40, cooldownMs: 0 };
+const legacyFile = join(fixture, 'settings-legacy.yaml');
+const legacySource = 'auto-continue:\n  paused: true\n  continueTextMaxTokens: Keep my prompt\nother-plugin:\n  keep: untouched\n';
+if (mixed) writeFileSync(legacyFile, legacySource);
 const followups = [];
 const session = { id: 'settings-test', header: {}, snapshotEvents: () => [] };
 const agent = { session, inbox: { nextTurn: [] }, followup: (message) => followups.push(message) };
@@ -44,18 +48,34 @@ try {
     async edit(entry, change) {
       await ctx.loader.update(entry.id, { config: change(entry.options.config ?? {}, base) });
       await ctx.loader.await();
+      ctx.emit('app-boot/config-reload');
     },
   });
   ctx.provide('agents', { list: () => [], get: (id) => id === session.id ? agent : undefined });
   await ctx.plugin(Settings);
+  let legacyRegistrations = 0;
+  if (mixed) {
+    // Model the reported extra API on the actual modern service. Registering
+    // here would create the duplicate namespace that shadows legacy revisions.
+    ctx.settings.register = () => { legacyRegistrations++; throw new Error('duplicate legacy registration'); };
+    ctx.settings.get = () => undefined;
+  }
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 });
   await ctx.loader.create({ id: 'auto-continue', name: pathToFileURL(join(fixture, 'lib/index.js')).href, config: base });
   await ctx.loader.await();
   const entry = ctx.loader.resolve('auto-continue');
   const uid = entry.fiber.uid;
   const form = () => ctx.settings.describe().find((row) => row.ns === 'auto-continue');
+  if (mixed) {
+    for (let n = 0; n < 100 && !form()?.value._legacySettingsImported; n++) await sleep(10);
+    assert.equal(legacyRegistrations, 0);
+    assert.equal(ctx.settings.describe().filter(row => row.ns === 'auto-continue').length, 1);
+    assert.equal(form().value._legacySettingsImported, true);
+    assert.equal(form().value.continueTextMaxTokens, 'Keep my prompt');
+    assert.equal(readFileSync(legacyFile, 'utf8'), legacySource);
+  }
   assert.ok(form(), `the plugin exposes its settings in DSH ${runtimeVersion}`);
-  assert.equal(form().value.paused, false);
+  assert.equal(form().value.paused, mixed);
 
   if (cohort === '0.2.1-rc.2') {
     const cordis = await load('cordis');
@@ -109,9 +129,16 @@ try {
       assert.equal(card.hooks.autoContinueSettingsCard.getSnapshot().dirty, false);
       await client.configForms.describe().load();
       assert.equal(scope.getSnapshot().value.showComposerToggle, false, 'a fresh Host read retains the saved setting');
+      const composer = entries.get('conversation.input.left');
+      composer.setEnabled(true);
+      for (let n = 0; n < 10; n++) await flush();
+      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().enabled, true);
+      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().failed, false);
       entries.get('conversation.input.left').setEnabled(false);
       for (let n = 0; n < 10; n++) await flush();
       assert.equal(form().value.paused, true, 'composer switch writes through the real form');
+      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().enabled, false);
+      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().failed, false);
       card.resetField('showComposerToggle');
       card.save();
       for (let n = 0; n < 10; n++) await flush();
@@ -144,6 +171,18 @@ try {
   end(3);
   await sleep(80);
   assert.equal(followups[1].content[0].text, 'Continue', 'reset restores the localized default');
+  if (mixed) {
+    assert.equal(form().value._legacySettingsImported, true, 'normal settings edits retain the import marker');
+    assert.equal(readFileSync(legacyFile, 'utf8'), legacySource, 'legacy and unrelated settings stay untouched');
+    const saved = structuredClone(entry.options.config);
+    await ctx.loader.remove('auto-continue');
+    await ctx.loader.create({ id: 'auto-continue', name: pathToFileURL(join(fixture, 'lib/index.js')).href, config: saved });
+    await ctx.loader.await();
+    assert.equal(form().value.paused, false, 'remount does not import the old pause again');
+    assert.equal(form().value.continueTextMaxTokens, '', 'a reset stays reset after remount');
+    assert.equal(legacyRegistrations, 0);
+    console.log('Mixed settings APIs: one namespace, migrated pause/text, first-attempt writes and reset after remount ✅');
+  }
   await ctx.loader.remove('auto-continue');
   assert.equal(form(), undefined, 'removing the plugin withdraws its settings');
   const removed = await fetch(`http://127.0.0.1:${ctx.webServer.port}/api/auto-continue-bridge`);

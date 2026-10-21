@@ -13,6 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import { AutoContinueRunner } from './host/engine.ts';
+import { LEGACY_SETTINGS_IMPORTED, migrateLegacySettings, type EntrySettings, type LiveEntrySettings } from './host/settings-migration.ts';
 import { resolveConfig, type AutoContinueSettings } from './shared/core.ts';
 // Type-only: pulls the `ctx.webServer` Context augmentation.
 import type {} from '@deepseek-ai/dsh-host-webserver';
@@ -23,7 +24,7 @@ import type {} from '@deepseek-ai/dsh-session';
 export const AUTO_CONTINUE_NS = 'auto-continue';
 
 /** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
-export const AutoContinueSchema = z.object({
+const settingsFields = {
   /** Active browser/UI locale mirrored by the client. */
   locale: z.string().default('zh'),
   /** Text automatically sent after an interruption. */
@@ -94,14 +95,18 @@ export const AutoContinueSchema = z.object({
   loopText: z
     .string()
     .default(''),
-});
+};
+export const AutoContinueSchema = z.object(settingsFields);
 
 /** Loader config is a live reference on DSH 0.1.7, and a plain object on older hosts. */
-export type AutoContinueEntryConfig = AutoContinueSettings | { get(): AutoContinueSettings | undefined };
+export type AutoContinueEntryConfig = EntrySettings | LiveEntrySettings;
 
 // Keep the wire schema usable by legacy Settings while exposing the live root
 // to current Loaders. Older Schemastery releases do not have volatile().
-const entrySchema = AutoContinueSchema as typeof AutoContinueSchema & {
+const entrySchema = z.object({
+  ...settingsFields,
+  [LEGACY_SETTINGS_IMPORTED]: z.boolean().default(false).hidden(),
+}) as typeof AutoContinueSchema & {
   volatile?: () => z<AutoContinueSettings, AutoContinueEntryConfig>;
 };
 export const Config = entrySchema.volatile?.() ?? AutoContinueSchema;
@@ -122,6 +127,10 @@ function entryConfig(config: AutoContinueEntryConfig | undefined): AutoContinueS
  */
 export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
   let legacyConfig: (() => AutoContinueSettings | undefined) | undefined;
+  const modern = config !== undefined && 'get' in config && typeof config.get === 'function';
+  const readEntry = modern
+    ? migrateLegacySettings(ctx, config, Object.keys(settingsFields), AutoContinueSchema)
+    : () => entryConfig(config);
   // Settings is optional: it must never prevent the engine or bridge starting.
   // Hosts predating Config-derived forms still own a separate settings document.
   ctx.inject(['settings'], (settingsCtx) => {
@@ -129,7 +138,9 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
       register?: (ns: string, schema: typeof AutoContinueSchema, options: { applies: string }) => unknown;
       get?: (ns: string) => AutoContinueSettings | undefined;
     } }).settings;
-    if (typeof settings.register !== 'function' || typeof settings.get !== 'function') return;
+    // Some desktop hosts expose both APIs. A live Config already owns this
+    // namespace, so registering it again splits reads and writes across stores.
+    if (modern || typeof settings.register !== 'function' || typeof settings.get !== 'function') return;
     settings.register(AUTO_CONTINUE_NS, AutoContinueSchema, { applies: 'live' });
     const read = () => settings.get!(AUTO_CONTINUE_NS);
     legacyConfig = read;
@@ -146,7 +157,7 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
   ctx.inject(['agents', 'webServer'], (engineCtx) => {
     // 回调重入时先清理旧引擎, 避免定时器与监听器叠加。
     disposeEngine?.();
-    const runner = new AutoContinueRunner(engineCtx, () => resolveConfig(legacyConfig?.() ?? entryConfig(config)));
+    const runner = new AutoContinueRunner(engineCtx, () => resolveConfig(legacyConfig?.() ?? readEntry()));
 
     // 状态桥: browser 侧订阅通知与运行时状态(SSE)。
     const sseClients = new Set<(data: string) => void>();

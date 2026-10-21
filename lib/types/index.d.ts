@@ -12,10 +12,10 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type EntrySettings, type LiveEntrySettings } from './host/settings-migration.ts';
 import { type AutoContinueSettings } from './shared/core.ts';
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export declare const AUTO_CONTINUE_NS = "auto-continue";
-/** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
 export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
@@ -148,9 +148,7 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopText: z<string, string>;
 }>>;
 /** Loader config is a live reference on DSH 0.1.7, and a plain object on older hosts. */
-export type AutoContinueEntryConfig = AutoContinueSettings | {
-    get(): AutoContinueSettings | undefined;
-};
+export type AutoContinueEntryConfig = EntrySettings | LiveEntrySettings;
 export declare const Config: z<Schemastery.ObjectS<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
