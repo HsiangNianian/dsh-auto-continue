@@ -11,6 +11,8 @@
  * - feeds the card's stats / paused-sessions panels from the bridge state.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis';
+// Type-only: the slot service is declared by the renderer in newer DSH SDKs.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client';
 // Type-only: pulls the settings-surface SlotMap merge and ctx.settingsScope.
