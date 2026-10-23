@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.17.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.0) — 2026-10-23
+
+### Added
+
+- Restore the compact auto-continue switch beside the message input, now with a refresh icon and a native mode menu that shows the current mode
+- Show one delayed toast when the host stays unavailable for three seconds, without flashing on a normal page load
+- Localize the plugin title and description through `locale` metadata
+
+### Changed
+
+- Collapse the label to its icon and the mode menu to its arrow with the same composer container query as the native permission picker, keeping the switch and menu on one line on phones
+- Report session-mode save failures with the host's toast instead of inline red composer text; saving and disconnected states now rely on the disabled controls and their tooltip
+- Keep the switch and mode menu disabled while saving, disconnected or read-only, with keyboard access to the mode menu
+- Keep the switch scoped to the current conversation, with Follow default selected when switching back on
+- Move the settings fields, switches and default-mode selector onto DSH's native `SettingsForm`, `SettingsValueField`, `Switch` and `SegmentedControl` primitives, keeping the legacy card for older hosts
+- Remove the charcoal header banner; keep the GitHub invitation as a lightweight link row
+
+### Fixed
+
+- Avoid the composer's invisible select styles leaking onto the settings card's **Default session mode** select, which made clicks anywhere open a full-screen selector until a reload
+
 ## [0.16.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.16.0) — 2026-10-23
 
 ### Added

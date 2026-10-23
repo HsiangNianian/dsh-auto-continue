@@ -8,6 +8,12 @@ import { AutoContinueSchema } from '../lib/index.js';
 
 const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 const flush = () => new Promise(resolve => setImmediate(resolve));
+// The composer's invisible select overlay must keep its own class: the
+// settings card renders a visible <select class="dshAcMode">, and an unscoped
+// absolute/inset rule would stretch it over the whole app.
+assert.match(bundle, /\.dshAcComposerSelect\s*\{[^}]*position:\s*absolute/, 'the composer overlay keeps a scoped class');
+assert.match(bundle, /\.dshAcCard \.dshAcMode\s*\{/, 'settings-card select styles stay scoped to the card');
+assert.doesNotMatch(bundle, /(?:^|\n)\.dshAcMode\s*\{[^}]*position:\s*absolute/, 'the settings select is not made a full-screen overlay');
 function host() {
   const streams = new Set();
   const writes = [];
@@ -48,7 +54,19 @@ function host() {
   };
 }
 
-function fixture(service, server, hasComposerSlot = true) {
+function MockToast({ text }) {
+  return React.createElement('div', { 'data-toast': '' }, text);
+}
+
+function MockMenu({ open, anchor, items, selectedId }) {
+  return React.createElement('div', { 'data-menu': open ? 'open' : 'closed' },
+    anchor,
+    React.createElement('div', { role: 'menu' }, items.map(item => React.createElement('div', {
+      key: item.id, role: 'menuitem', 'data-selected': String(item.id === selectedId),
+    }, item.label))));
+}
+
+function fixture(service, server, hasComposerSlot = true, primitives = {}) {
   let registration, dictionaries;
   const cleanups = [], writes = [];
   const entries = new Map(), listeners = new Set();
@@ -76,7 +94,7 @@ function fixture(service, server, hasComposerSlot = true) {
   const plugin = registration.factory(specifier => {
     if (specifier === 'react') return React;
     if (specifier === 'react/jsx-runtime') return jsxRuntime;
-    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return {};
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
     if (specifier === '@deepseek-ai/dsh-client-store') return {
       createSnapshotStore(initial) {
         let value = initial;
@@ -136,7 +154,9 @@ for (const service of ['configForms', 'settingsScope']) {
     test.ready(); tab.ready();
     await flush();
     assert.equal(test.state().visible, true);
+    assert.match(test.render(), /role="switch"[^>]*aria-checked="true"/);
     assert.match(test.render(), /<select/);
+    assert.match(test.render(), /aria-label="Auto-continue mode"/);
     assert.match(test.render(), /Follow default \(Recovery only\)/);
     assert.equal(test.render(''), '', 'no session identity means no control');
     test.card.edit('continueText', 'Keep the staged text');
@@ -150,6 +170,7 @@ for (const service of ['configForms', 'settingsScope']) {
     server.finish();
     await flush();
     assert.equal(test.state().policy.modes.A, 'off');
+    assert.match(test.render(), /role="switch"[^>]*aria-checked="false"/);
     assert.equal(tab.state().policy.modes.A, 'off', 'another tab sees the same authoritative policy');
     assert.equal(tab.state().policy.modes.B, undefined, 'other sessions retain their own choice');
     assert.equal(test.state().failed.size, 0);
@@ -170,11 +191,13 @@ for (const service of ['configForms', 'settingsScope']) {
     tab.composer.inject('B').setMode('recover');
     await flush();
     assert.equal(test.state().policy.modes.A, 'loop');
+    assert.match(test.render(), /role="switch"[^>]*aria-checked="true"/);
     assert.equal(test.state().policy.modes.B, 'recover', 'parallel session writes do not replace each other');
     assert.equal(test.state().failed.size, 0);
     server.update({ paused: true, defaultMode: 'loop' });
     await flush();
     assert.match(test.render(), /Globally paused/);
+    assert.match(test.render(), /role="switch"[^>]*aria-checked="true"/, 'global pause does not replace the saved session choice');
     test.composer.face.setMode('default');
     await flush();
     assert.equal(test.state().policy.modes.A, 'default');
@@ -210,7 +233,8 @@ for (const service of ['configForms', 'settingsScope']) {
     server.disconnect();
     await flush();
     assert.equal(test.state().writable, false);
-    assert.match(test.render(), /Waiting for host/);
+    assert.match(test.render(), /title="Waiting for host"/);
+    assert.match(test.render(), /role="switch"[^>]*aria-checked="false"[^>]*disabled=""/);
     test.composer.face.setMode('off');
     assert.equal(server.writes.length, count, 'disconnected controls do not save stale state');
   } finally {
@@ -242,4 +266,40 @@ assert.equal(pendingHost.streams.size, 0, 'pending saves do not revive a dispose
 const noSlot = fixture('settingsScope', host(), false);
 assert.equal(noSlot.entries.size, 1, 'hosts without the composer slot retain their settings page');
 noSlot.dispose();
+{
+  const toastHost = host();
+  const toastTest = fixture('settingsScope', toastHost, true, { Toast: MockToast });
+  toastTest.ready();
+  await flush();
+  toastHost.behavior('fail');
+  toastTest.composer.face.setMode('loop');
+  await flush();
+  assert.ok(toastTest.state().failed.has('A'));
+  const html = toastTest.render();
+  assert.match(html, /data-toast[^>]*>Could not save/, 'save failures surface through the host toast');
+  assert.doesNotMatch(html, /dshAcComposerError/, 'hosts with Toast do not render inline error text');
+  toastTest.dispose();
+  toastHost.disconnect();
+  assert.equal(toastHost.streams.size, 0);
+}
+{
+  const nativeHost = host();
+  const native = fixture('settingsScope', nativeHost, true, {
+    Menu: MockMenu,
+    IconChevronDownOutlineRegular: () => null,
+  });
+  native.ready();
+  await flush();
+  const html = native.render();
+  assert.doesNotMatch(html, /<select/, 'hosts with Menu use it instead of the select fallback');
+  assert.match(html, /aria-haspopup="menu"/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, /aria-label="Auto-continue mode: Follow default \(Recovery only\)"/);
+  assert.match(html, /role="menuitem"[^>]*data-selected="true"[^>]*>Follow default \(Recovery only\)/);
+  assert.match(html, /Autonomous loop/);
+  native.dispose();
+  nativeHost.disconnect();
+  assert.equal(native.entries.size, 0);
+  assert.equal(nativeHost.streams.size, 0);
+}
 console.log('Composer session modes: isolated choices, two tabs, persisted acknowledgements, failures, visibility, disconnect and teardown ✅');

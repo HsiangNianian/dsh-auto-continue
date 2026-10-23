@@ -1,13 +1,5 @@
 /** 简体中文词典(键集的事实来源)。 */
 export declare const zh: {
-    'card.title': string;
-    'card.description': string;
-    'repo.star': string;
-    'repo.note': string;
-    'repo.link': string;
-    'repo.aria': string;
-    'chrome.enabled': string;
-    'chrome.paused': string;
     'chrome.saved': string;
     'notification.title': string;
     'notification.enabled': string;
@@ -17,6 +9,9 @@ export declare const zh: {
     'notification.unsupported': string;
     'notification.failed': string;
     'chrome.categories': string;
+    'repo.star': string;
+    'repo.link': string;
+    'repo.aria': string;
     'category.general.title': string;
     'category.general.description': string;
     'category.recovery.title': string;
@@ -33,6 +28,7 @@ export declare const zh: {
     'field.showComposerToggle': string;
     'field.showComposerToggleHint': string;
     'composer.label': string;
+    'composer.mode': string;
     'composer.scope': string;
     'composer.default': string;
     'composer.off': string;
@@ -141,6 +137,7 @@ export declare const zh: {
     'chrome.expand': string;
     'chrome.unsaved': string;
     'chrome.readOnly': string;
+    'chrome.unavailable': string;
     'chrome.saveFailed': string;
     'chrome.discard': string;
     'chrome.saving': string;

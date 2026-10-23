@@ -44,7 +44,7 @@ Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 **Smart recovery** (all configurable):
 
-- **Session modes** — choose Off, Recovery only or Autonomous loop beside the message input, for that conversation only. Follow default inherits the profile setting. Choices save on the host, survive restarts and sync across tabs; hiding the control does not change them
+- **Session modes** — switch auto-continue on or off beside the message input, for that conversation only. The mode menu next to the switch shows the current mode and opens Follow default, Off, Recovery only or Autonomous loop. Choices save on the host, survive restarts and sync across tabs; hiding the control does not change them
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Provider-specific exceptions can be opted into with literal custom retryable patterns; turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **English / Chinese localization** — the settings card, built-in resume / guard / loop text, and browser notifications follow DSH's active UI language (initially selected from the browser language). Only `en` and `zh` are supported; other languages fall back to Chinese. Switching languages updates built-in defaults without overwriting custom text
@@ -84,7 +84,7 @@ Storage scanning runs separately from live-session recovery. Each storage read h
 
 Startup recovery isolates failures per session. If history cannot be read or contains invalid events, that session is skipped for the current startup scan and an error is logged; other sessions can still recover, without losing a recovery slot. Invalid entries are not silently removed, since they could hide a manual stop or a newer turn. Valid empty histories and a registry that is still loading remain retryable within the scan window. Reloading a repaired session as a new session object also makes it eligible for scanning again. See [#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58).
 
-The browser provides the settings card and session mode selector, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
+The browser provides the settings card and the composer switch and mode menu, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
 
 ### Recovery workflow
 
@@ -100,8 +100,8 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
-| **0.2.1-rc.2** | **0.16.0 verified** | **Plugins → dsh-client-auto-continue** |
-| **0.2.1-alpha.1** | **0.16.0 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.1-rc.2** | **0.17.0 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.1-alpha.1** | **0.17.0 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |
@@ -203,7 +203,10 @@ dsh web
 
 ## Session modes
 
-The **Auto-continue** selector beside the input applies only to the current conversation and saves immediately:
+The **Auto-continue** switch beside the input applies only to the current conversation and saves immediately
+
+Turning it off selects Off, and turning it back on selects Follow default
+Use the mode menu next to the switch to choose a mode:
 
 | Mode | Behavior |
 | --- | --- |
@@ -218,7 +221,7 @@ For example, keep A looping, B recovering failures and C off. Each conversation'
 
 The notification's **Pause this session 1h** still temporarily suspends one conversation. **Resume now** requests a single send even while paused or Off, without changing the stored mode. The global loop-guard setting remains independent of global pause, but a conversation set to Off is excluded from the guard too.
 
-To hide the selector, open **Plugins → dsh-client-auto-continue → General**, turn off **Show session mode in the composer**, then **Save**. This only changes visibility (`showComposerToggle`, default `true`). Hosts without the composer slot retain the settings card. The selector stays disabled while the host bridge or writable settings service is unavailable.
+To hide the controls, open **Plugins → dsh-client-auto-continue → General**, turn off **Show auto-continue switch in the composer**, then **Save**. This only changes visibility (`showComposerToggle`, default `true`). Hosts without the composer slot retain the settings card. A failed save surfaces as a DSH toast instead of inline red text, and a host that stays unavailable for three seconds announces itself once without flashing on a normal load. The switch and mode menu stay disabled while the host bridge or writable settings service is unavailable. When the composer row narrows, the same container query used by the native permission picker collapses the label to its icon and the mode menu to its arrow, keeping the switch and menu on one line.
 
 ## Configuration
 
@@ -230,7 +233,7 @@ Use **General**, **Retry strategy**, **Startup recovery**, **Continue text**, **
 
 **Recent recovery attempts** groups the last 20 recovery prompts across the host by session, showing each session's count in that window, latest cause, time and consecutive count at the last send. It works with browser notifications off. Causes distinguish silent output, output limits, request errors, restart interruptions, loop-guard recovery and manual resume. Normal autonomous continuations are excluded. These are sent prompts, not proof of completion or a model-health score; repeated recovery is a reason to inspect the conversation and consider a handoff. The history contains no message text and resets when the plugin restarts.
 
-The header places the plugin status and GitHub invitation side by side on one shared charcoal background. The status shows the saved global setting; edits take effect when you click **Save**.
+The settings card starts with a compact GitHub invitation row, then the category navigation; its fields, switches and default-mode selector use DSH's native settings primitives. The plugin manager above already shows the localized plugin name, version and enabled state. Edits take effect when you click **Save**.
 
 With **Browser notifications** enabled, each successful save sends one confirmation from the tab where you saved. Turning notifications off sends a final confirmation if browser permission is already granted; later saves stay quiet. Discarded changes, invalid values, and failed saves do not send success notifications. If the browser blocks notifications, the settings page still confirms the save and explains the permission issue.
 
@@ -295,7 +298,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 
 ![Retry strategy settings on DSH 0.2](docs/screenshots/02-settings-card.png)
 
-- Edits are **staged** — nothing reaches the disk until you hit **Save**; the footer indicates pending changes, and **Discard** drops them
+- Edits are **staged** — nothing reaches the disk until you hit **Save**; leaving the page drops unsaved drafts
 - If you edit or reset a field while a save is in progress, the newer draft stays in the card. Click **Save** again after the current save finishes to apply it
 - An overridden field shows a **Reset to default** button that removes the override and restores the inherited value (normally the built-in default)
 - Boolean fields use native switches and are staged until Save. **Reset to default** removes the override and restores the inherited value. **Enable auto-continue globally** is on when recovery is enabled (`paused: false`)
@@ -304,16 +307,16 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 - Changes apply immediately after Save and persist in the active profile config (or `~/.dsh/settings.yaml` on older hosts)
 
 <details>
-<summary>Live status and the Save / Discard buttons</summary>
+<summary>Live status and the native Save button</summary>
 
-![Live status and save controls at the bottom of the DSH 0.2 configuration card](docs/screenshots/07-card-panels.png)
+![Live status and the native save button in the DSH 0.2 configuration card](docs/screenshots/07-card-panels.png)
 
 </details>
 
 | Field | Default | Description |
 | --- | --- | --- |
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
-| Show session mode in the composer | `on` | Show the session selector (`showComposerToggle`); hiding it does not change modes |
+| Show auto-continue switch in the composer | `on` | Show the session switch and mode menu (`showComposerToggle`); hiding them does not change modes |
 | Continue text | `Continue` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
 | Resume silent turns | `on` | Resume a turn that ended normally with reasoning only (no text, no tool call); does not reset the consecutive count |

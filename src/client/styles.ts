@@ -6,16 +6,39 @@
  */
 
 const css = `
-.dshAcComposer { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px; min-height: 32px; max-width: 100%; font: inherit; }
-.dshAcMode { min-height: 32px; max-width: 100%; padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; }
-.dshAcMode:disabled { opacity: .5; }
-.dshAcMode:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
-.dshAcComposerLabel { color: var(--dsw-alias-label-secondary); font-size: 12px; white-space: nowrap; }
-.dshAcSwitchTarget { display: inline-flex; align-items: center; min-height: 32px; }
+.dshAcComposer { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; min-height: 32px; max-width: 100%; font: inherit; }
+.dshAcComposerCore { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.dshAcComposerCore > span { min-width: 0; }
+.dshAcModeTrigger { display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 132px; height: 28px; margin-left: -1px; padding: 0 4px 0 7px; border: 0; border-radius: var(--dsw-radius-sm, 6px); background: none; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; font-weight: 500; line-height: 20px; cursor: pointer; }
+.dshAcModeTrigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dshAcModeTrigger:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); }
+.dshAcModeTrigger:disabled { color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary)); cursor: default; }
+.dshAcModeTriggerLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshAcModeChevron { display: inline-flex; flex: none; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); transition: transform .12s ease; }
+.dshAcModeChevron > svg { display: block; width: 14px; height: 14px; }
+.dshAcModeChevronFallback { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.dshAcModeChevron[data-open=true] { transform: rotate(180deg); }
+.dshAcModeMenu { position: relative; display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 132px; height: 28px; margin-left: -1px; padding: 0 4px 0 7px; border-radius: var(--dsw-radius-sm, 6px); color: var(--dsw-alias-label-secondary); font-size: 13px; font-weight: 500; line-height: 20px; }
+.dshAcModeMenu:hover:not([data-disabled=true]) { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.dshAcModeMenu[data-disabled=true] { color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary)); }
+.dshAcComposerSelect { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; }
+.dshAcComposerSelect:disabled { cursor: default; }
+/* Settings-card select (default session mode); kept scoped so the composer's
+   invisible overlay cannot stretch it over the whole app. */
+.dshAcCard .dshAcMode { min-height: 32px; max-width: 100%; padding: 4px 6px; border: 1px solid var(--dsh-ac-line); border-radius: 6px; background: var(--dsh-ac-bg); color: var(--dsh-ac-text); font: inherit; font-size: 12px; }
+.dshAcCard .dshAcMode:disabled { opacity: .5; }
+.dshAcCard .dshAcMode:focus-visible { outline: 2px solid var(--dsh-ac-text); outline-offset: 3px; }
+.dshAcComposerLabel { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--dsw-alias-label-secondary); font-size: 12px; white-space: nowrap; }
+.dshAcComposerText { display: inline; }
+.dshAcComposerIcon { display: inline-flex; flex: none; color: var(--dsw-alias-label-secondary); }
+.dshAcComposerIcon > svg { display: block; width: 14px; height: 14px; }
+.dshAcComposerIconFallback { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.dshAcSwitchTarget { display: inline-flex; align-items: center; flex: none; min-height: 32px; }
 .dshAcSwitchTarget > button { position: relative; }
 .dshAcSwitchTarget > button::before { content: ''; position: absolute; inset: -6px -3px; }
 .dshAcComposerError { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-secondary)); font-size: 12px; max-width: 160px; }
 .dshAcComposerError:empty { display: none; }
+.dshAcToastIcon { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
 .dshAcSwitch { position: relative; box-sizing: border-box; flex: none; width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 999px; background: var(--dsw-alias-border-l3); cursor: pointer; }
 .dshAcSwitch[aria-checked='true'] { background: var(--dsw-alias-brand-primary); }
 .dshAcSwitch > span { display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--dsw-alias-label-primary-foreground); }
@@ -42,27 +65,28 @@ const css = `
 .dshAcCard button { cursor: pointer; }
 .dshAcCard button:disabled { opacity: .4; cursor: default; }
 .dshAcCard :is(a,button,input,textarea):focus-visible { outline: 2px solid var(--dsh-ac-text); outline-offset: 3px; }
-.dshAcHeaderFrame { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); align-items: center; gap: 24px; margin: 20px 0; padding: 16px 18px; border-radius: 9px; color: #f9fafb; background: #23262c; }
-.dshAcIntroduction { min-width: 0; }
-.dshAcTitleLine { display: flex; align-items: center; gap: 10px; }
-.dshAcTitleLine h2 { font-size: 17px; font-weight: 620; line-height: 1.4; white-space: nowrap; }
-.dshAcStatus { white-space: nowrap; font-size: 11px; color: #dce0e6; background: #ffffff14; border-radius: 5px; padding: 2px 7px; }
-.dshAcIntroduction p { margin-top: 5px; color: #b9bec8; font-size: 12px; line-height: 1.6; }
-.dshAcRepository { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.dshAcStar { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border: 1px solid #625032; border-radius: 50%; background: #302c25; color: #e9be6d; }
-.dshAcStar svg { width: 18px; height: 18px; fill: #e9be6d12; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
-.dshAcRepositoryCopy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
-.dshAcRepositoryCopy strong { font-size: 13px; font-weight: 560; line-height: 1.5; }
-.dshAcRepositoryCopy > span { color: #b9bec8; font-size: 10px; line-height: 1.6; }
-.dshAcRepositoryCopy > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dshAcCard a.dshAcGithub { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none; min-height: 38px; padding: 9px 11px; border: 1px solid transparent; border-radius: 6px; color: #202329; background: #f4f5f7; text-decoration: none; font-size: 12px; font-weight: 550; white-space: nowrap; transition: background-color 140ms ease, box-shadow 140ms ease; }
-.dshAcCard a.dshAcGithub:hover { background: #fff; box-shadow: 0 0 0 3px #ffffff18; }
-.dshAcCard a.dshAcGithub:focus-visible { outline-color: #e9be6d; }
-.dshAcGithub > svg { flex: none; width: 17px; height: 17px; fill: currentColor; }
-.dshAcGithub > svg.dshAcExternal { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; margin-left: 2px; }
-.dshAcGithubShort { display: none; }
+.dshAcInvite { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 18px; color: var(--dsh-ac-muted); font-size: 12px; line-height: 1.6; }
+.dshAcInviteStar { color: #e9be6d; font-size: 13px; line-height: 1; }
+.dshAcRepoLink { display: inline-flex; align-items: center; gap: 5px; color: var(--dsh-ac-text); text-decoration: none; }
+.dshAcRepoLink:hover { text-decoration: underline; }
+.dshAcRepoLink > svg:first-child { width: 14px; height: 14px; fill: currentColor; }
+.dshAcRepoLink > svg.dshAcExternal { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.dshAcNativeFields { display: flex; flex-direction: column; min-width: 0; }
+.dshAcNativeField { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px 0; }
+.dshAcNativeHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.dshAcNativeLabel { color: var(--dsh-ac-text); font-size: 13px; font-weight: 500; line-height: 19.5px; }
+.dshAcNativeHint { color: var(--dsh-ac-muted); font-size: 12px; line-height: 18px; }
+.dshAcNativeToggleRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
+.dshAcNativeActions { display: inline-flex; align-items: center; flex: none; gap: 10px; }
+.dshAcNativeReset { padding: 0; border: 0; background: none; color: var(--dsh-ac-muted); font-size: 11px; white-space: nowrap; }
+.dshAcNativeReset:hover:not(:disabled) { color: var(--dsh-ac-text); text-decoration: underline; }
+.dshAcNativeSegment { display: block; min-width: 0; }
+.dshAcNativeSegment[data-disabled=true] { opacity: .5; pointer-events: none; }
+.dshAcNativeTextarea { box-sizing: border-box; width: 100%; min-height: 66px; resize: vertical; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-layer-2, #353638); color: var(--dsh-ac-text); font: inherit; font-size: 13px; line-height: 19.5px; }
+.dshAcNativeTextarea::placeholder { color: var(--dsh-ac-muted); opacity: .7; }
+.dshAcNativeTextarea[aria-invalid=true] { border-color: var(--dsw-alias-state-error-primary); }
 .dshAcReadOnly { padding: 10px 0; color: var(--dsh-ac-muted); }
-.dshAcLayout { display: grid; grid-template-columns: 164px minmax(0, 1fr); border-top: 1px solid var(--dsh-ac-line); min-height: 462px; }
+.dshAcLayout { display: grid; grid-template-columns: 164px minmax(0, 1fr); min-height: 462px; }
 .dshAcNav { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px 16px 0; position: sticky; top: 16px; align-self: start; }
 .dshAcNav > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 37px; padding: 8px 11px; border: 0; border-radius: 6px; text-align: left; background: none; color: var(--dsw-alias-label-secondary); }
 .dshAcNav > button:hover, .dshAcNav > button[aria-selected=true] { color: var(--dsh-ac-text); background: var(--dsw-alias-interactive-bg-hover); }
@@ -109,9 +133,6 @@ const css = `
 .dshAcPauseId { flex: 1; font: 12px ui-monospace, SFMono-Regular, monospace; }
 .dshAcRecovery { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 @container auto-continue-settings (max-width: 760px) {
-  .dshAcHeaderFrame { grid-template-columns: minmax(0, 1fr) auto; gap: 16px; }
-  .dshAcRepositoryCopy { display: none; }
-  .dshAcRepository { gap: 10px; }
   .dshAcLayout { grid-template-columns: 136px minmax(0, 1fr); }
   .dshAcCategory { padding-left: 20px; }
   .dshAcFieldControl { flex-direction: column-reverse; align-items: flex-end; gap: 6px; }
@@ -127,18 +148,18 @@ const css = `
   .dshAcFooter { align-items: flex-start; flex-direction: column; gap: 10px; }
   .dshAcFooter > div { width: 100%; justify-content: flex-end; }
 }
-@container auto-continue-settings (max-width: 440px) {
-  .dshAcHeaderFrame { gap: 12px; padding: 14px; }
-  .dshAcTitleLine { gap: 6px; }
-  .dshAcTitleLine h2 { font-size: 15px; white-space: normal; }
-  .dshAcStatus { padding: 2px 5px; font-size: 10px; }
-  .dshAcIntroduction p { font-size: 11px; }
-  .dshAcStar, .dshAcGithubLong { display: none; }
-  .dshAcGithubShort { display: inline; }
-  .dshAcCard a.dshAcGithub { gap: 6px; padding: 8px; font-size: 11px; }
-  .dshAcGithub > svg.dshAcExternal { display: none; }
+/* Match the composer's own pickers (permission/mode) instead of the viewport:
+   the nearest query container is the composer row, so the label collapses at
+   the same 460px threshold as the native permission picker. */
+@container (width <= 640px) {
+  .dshAcComposerCore { gap: 5px; }
+  .dshAcModeTrigger, .dshAcModeMenu { max-width: 104px; padding: 0 3px 0 6px; }
 }
-@media (prefers-reduced-motion: reduce) { .dshAcCard a.dshAcGithub { transition: none; } }
+@container (width <= 460px) {
+  .dshAcComposerText { display: none; }
+  .dshAcModeTrigger, .dshAcModeMenu { max-width: 28px; padding: 0 2px; }
+  .dshAcModeTriggerLabel { display: none; }
+}
 
 `;
 

@@ -7,7 +7,7 @@
  * configuration section; styles live in `styles.ts` and use the DSH design
  * tokens so the card follows the active theme.
  */
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
 import type { SessionMode } from '../shared/core.ts';
@@ -41,6 +41,40 @@ import { prepareSettingsNotification, showSettingsNotification } from './setting
 // Styles must land during factory materialization so the module system's
 // style bookkeeping (HMR) owns them.
 injectStyles();
+
+/**
+ * Native plugin-settings primitives. Older hosts (and the unit-test fixture)
+ * do not export them; the legacy hand-built card stays as the fallback.
+ */
+const nativeSettings = (() => {
+  try {
+    return require('@deepseek-ai/dsh-client-ui-primitives') as {
+      SettingsForm?: React.ComponentType<{
+        labels: { save: string; saving: string; saveFailed: string; readOnly: string; unavailable: string };
+        state: CardShell;
+        onSave: () => void;
+        onDiscard: () => void;
+        children: ReactNode;
+      }>;
+      SettingsValueField?: React.ComponentType<Record<string, unknown>>;
+      SegmentedControl?: React.ComponentType<{
+        id?: string;
+        options: ReadonlyArray<{ value: string; label: string }>;
+        value: string;
+        onChange: (value: string) => void;
+        label: string;
+        disabled?: boolean;
+      }>;
+    };
+  } catch {
+    return {};
+  }
+})();
+
+const NativeSettingsForm = nativeSettings.SettingsForm;
+const NativeValueField = nativeSettings.SettingsValueField;
+const NativeSegmentedControl = nativeSettings.SegmentedControl;
+const hasNativeSettings = typeof NativeSettingsForm === 'function' && typeof NativeValueField === 'function';
 
 /** What the auto-continue card renders. */
 export interface AutoContinueSettingsCardState extends CardShell {
@@ -265,8 +299,6 @@ export function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps) {
   );
 }
 
-const REPOSITORY_URL = 'https://github.com/HsiangNianian/dsh-auto-continue';
-
 type FieldName = Exclude<keyof AutoContinueSettingsCardState, keyof CardShell | 'enabled' | 'notificationFeedback'>;
 const groups = [
   { id: 'general', fields: ['paused', 'showComposerToggle', 'resumeSilentTurns', 'resumeCompletedTurns', 'notify'] },
@@ -284,18 +316,18 @@ const textDefaults: Partial<Record<FieldName, SettingsCardKey>> = {
   guardPendingText: 'default.guardPendingText', guardDoneText: 'default.guardDoneText', loopText: 'default.loopText',
 };
 
-function GitHubMark() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.4a9.8 9.8 0 0 0-3.1 19.1c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.3 4.6-4.6 4.9.4.3.7.9.7 1.8V21c0 .3.2.6.7.5A9.8 9.8 0 0 0 12 2.4Z" /></svg>;
-}
+const REPOSITORY_URL = 'https://github.com/HsiangNianian/dsh-auto-continue';
+
 function RepositoryInvite({ t }: { t: (key: SettingsCardKey) => string }) {
-  return <aside className="dshAcRepository">
-    <span className="dshAcStar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.78 5.63L21 9.53l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9L12 3Z" /></svg></span>
-    <span className="dshAcRepositoryCopy"><strong>{t('repo.star')}</strong><span>{t('repo.note')}</span></span>
-    <a className="dshAcGithub" href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={t('repo.aria')}>
-      <GitHubMark /><span className="dshAcGithubLong">{t('repo.link')}</span><span className="dshAcGithubShort">GitHub</span>
+  return <p className="dshAcInvite">
+    <span className="dshAcInviteStar" aria-hidden="true">★</span>
+    <span>{t('repo.star')}</span>
+    <a className="dshAcRepoLink" href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={t('repo.aria')}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.4a9.8 9.8 0 0 0-3.1 19.1c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.3 4.6-4.6 4.9.4.3.7.9.7 1.8V21c0 .3.2.6.7.5A9.8 9.8 0 0 0 12 2.4Z" /></svg>
+      {t('repo.link')}
       <svg className="dshAcExternal" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3h7v7M13 3 7 9M11 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3" /></svg>
     </a>
-  </aside>;
+  </p>;
 }
 
 /** Controls edit the existing staged form; navigation never owns or discards drafts. */
@@ -326,6 +358,68 @@ function SettingField({ name, id, state, actions, disabled, t }: {
         : numeric ? <input {...common} className="dshAcInput dshAcNumber" type="text" inputMode="numeric" placeholder={placeholder} />
         : <textarea {...common} className="dshAcInput dshAcTextArea" rows={name === 'retryableErrorPatterns' ? 3 : 2} placeholder={placeholder} />}
     </div>
+  </div>;
+}
+
+
+/** One field rendered with the host's own settings primitives. */
+function NativeSettingField({ name, id, state, actions, disabled, t }: {
+  name: FieldName; id: string; state: CardFieldState; actions: CardActions; disabled: boolean;
+  t: (key: SettingsCardKey) => string;
+}) {
+  const boolean = typeof DEFAULT_CONFIG[name] === 'boolean';
+  const numeric = typeof DEFAULT_CONFIG[name] === 'number';
+  const label = t(`field.${name}` as SettingsCardKey);
+  const hint = t(`field.${name}Hint` as SettingsCardKey);
+  const value = state.text === '' ? DEFAULT_CONFIG[name] : state.text === 'true';
+  const placeholderKey = textDefaults[name];
+  const placeholder = placeholderKey ? t(placeholderKey) : name === 'retryableErrorPatterns' ? t('field.retryableErrorPatternsPlaceholder') : String(DEFAULT_CONFIG[name]);
+  const reset = state.overridden
+    ? <button type="button" className="dshAcNativeReset" disabled={disabled} aria-label={`${t('chrome.reset')}: ${label}`} onClick={() => actions.resetField(name)}>{t('chrome.reset')}</button>
+    : null;
+
+  if (name === 'resumeCompletedTurns') {
+    const items = [{ value: 'false', label: t('composer.recover') }, { value: 'true', label: t('composer.loop') }];
+    return <div className="dshAcNativeField" data-field={name}>
+      <div className="dshAcNativeHead"><label className="dshAcNativeLabel" htmlFor={id}>{label}</label>{reset}</div>
+      {NativeSegmentedControl
+        ? <NativeSegmentedControl id={id} options={items} value={value ? 'true' : 'false'} onChange={next => actions.edit(name, next)} label={label} disabled={disabled} />
+        : <select id={id} className="dshAcMode" aria-label={label} disabled={disabled} value={String(value)} onChange={event => actions.edit(name, event.target.value)}>
+            <option value="false">{t('composer.recover')}</option><option value="true">{t('composer.loop')}</option>
+          </select>}
+      <p className="dshAcNativeHint" id={`${id}-hint`}>{hint}</p>
+    </div>;
+  }
+
+  if (boolean) {
+    return <div className="dshAcNativeField" data-field={name}>
+      <div className="dshAcNativeToggleRow">
+        <label className="dshAcNativeLabel" htmlFor={id}>{label}</label>
+        <span className="dshAcNativeActions">
+          {reset}
+          <NativeSwitch label={label} title={hint} disabled={disabled}
+            checked={name === 'paused' ? !value : Boolean(value)}
+            onChange={checked => actions.edit(name, String(name === 'paused' ? !checked : checked))} />
+        </span>
+      </div>
+      <p className="dshAcNativeHint" id={`${id}-hint`}>{hint}</p>
+    </div>;
+  }
+
+  if (numeric) {
+    const ValueField = NativeValueField!;
+    return <ValueField id={id} label={label} hint={hint} overriddenLabel={t('chrome.overridden')}
+      resetLabel={t('chrome.reset')} invalidLabel={t('chrome.invalidNumber')} disabled={disabled}
+      numeric {...state} placeholder={placeholder}
+      onEdit={(text: string) => actions.edit(name, text)} onReset={() => actions.resetField(name)} />;
+  }
+
+  return <div className="dshAcNativeField" data-field={name}>
+    <div className="dshAcNativeHead"><label className="dshAcNativeLabel" htmlFor={id}>{label}</label>{reset}</div>
+    <textarea id={id} className="dshAcNativeTextarea" rows={name === 'retryableErrorPatterns' ? 3 : 2}
+      disabled={disabled} value={state.text} placeholder={placeholder} aria-invalid={state.invalid || undefined}
+      aria-describedby={`${id}-hint`} onChange={event => actions.edit(name, event.target.value)} />
+    <p className="dshAcNativeHint" id={`${id}-hint`}>{state.invalid ? t('chrome.invalidNumber') : hint}</p>
   </div>;
 }
 
@@ -462,20 +556,18 @@ function LivePanels(props: { t: (key: SettingsCardKey) => string }) {
   );
 }
 
-/** Native category layout, with the selected B3 repository invitation beside the introduction. */
+/** Native category layout; the plugin manager above already owns the title, version and status. */
 export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
   const { t } = props;
   const state = props.useAutoContinueSettingsCard(snapshot => snapshot);
   const [active, setActive] = useState<Category>('general');
   const prefix = useId();
   const group = groups.find(item => item.id === active)!;
+  const native = hasNativeSettings;
   if (!state.available) return null;
   return <li className="dshAcCard">
-    <header className="dshAcHeaderFrame">
-      <div className="dshAcIntroduction"><div className="dshAcTitleLine"><h2>{t('card.title')}</h2><span className="dshAcStatus">{t(state.enabled ? 'chrome.enabled' : 'chrome.paused')}</span></div><p>{t('card.description')}</p></div>
-      <RepositoryInvite t={t} />
-    </header>
-    {!state.writable && <p className="dshAcReadOnly" role="status">{t('chrome.readOnly')}</p>}
+    <RepositoryInvite t={t} />
+    {!native && !state.writable && <p className="dshAcReadOnly" role="status">{t('chrome.readOnly')}</p>}
     <div className="dshAcLayout">
       <div className="dshAcNav" role="tablist" aria-label={t('chrome.categories')}>
         {groups.map((item, index) => {
@@ -498,13 +590,27 @@ export function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps) {
       </div>
       <section className="dshAcCategory" role="tabpanel" id={`${prefix}-panel-${active}`} aria-labelledby={`${prefix}-tab-${active}`}>
         <div className="dshAcCategoryHeading"><h3>{t(`category.${active}.title`)}</h3><p>{t(`category.${active}.description`)}</p></div>
-        {group.fields.map(name => <SettingField key={name} name={name} id={`${prefix}-${name}`} state={state[name]} actions={props} disabled={!state.writable} t={t} />)}
-        {active === 'status' && <LivePanels t={t} />}
+        {native ? (
+          <NativeSettingsForm labels={{
+            save: t('chrome.save'), saving: t('chrome.saving'), saveFailed: t('chrome.saveFailed'),
+            readOnly: t('chrome.readOnly'), unavailable: t('chrome.unavailable'),
+          }} state={state} onSave={props.save} onDiscard={props.discard}>
+            <div className="dshAcNativeFields">
+              {group.fields.map(name => <NativeSettingField key={name} name={name} id={`${prefix}-${name}`} state={state[name]} actions={props} disabled={!state.writable} t={t} />)}
+              {active === 'status' && <LivePanels t={t} />}
+            </div>
+          </NativeSettingsForm>
+        ) : (
+          <>
+            {group.fields.map(name => <SettingField key={name} name={name} id={`${prefix}-${name}`} state={state[name]} actions={props} disabled={!state.writable} t={t} />)}
+            {active === 'status' && <LivePanels t={t} />}
+            <footer className="dshAcFooter" data-dirty={state.dirty}>
+              <p className={state.failed || state.invalid ? 'dshAcInvalid' : 'dshAcHint'} role="status">{t(state.failed ? 'chrome.saveFailed' : state.invalid ? 'chrome.invalidNumber' : state.saving ? 'chrome.saving' : state.dirty ? 'chrome.unsaved' : state.notificationFeedback ?? 'chrome.saved')}</p>
+              <div><button type="button" className="dshAcDiscard" disabled={!state.dirty || state.saving} onClick={props.discard}>{t('chrome.discard')}</button><button type="button" className="dshAcSave" disabled={!state.dirty || state.invalid || state.saving || !state.writable} onClick={props.save}>{t(state.saving ? 'chrome.saving' : 'chrome.save')}</button></div>
+            </footer>
+          </>
+        )}
       </section>
     </div>
-    <footer className="dshAcFooter" data-dirty={state.dirty}>
-      <p className={state.failed || state.invalid ? 'dshAcInvalid' : 'dshAcHint'} role="status">{t(state.failed ? 'chrome.saveFailed' : state.invalid ? 'chrome.invalidNumber' : state.saving ? 'chrome.saving' : state.dirty ? 'chrome.unsaved' : state.notificationFeedback ?? 'chrome.saved')}</p>
-      <div><button type="button" className="dshAcDiscard" disabled={!state.dirty || state.saving} onClick={props.discard}>{t('chrome.discard')}</button><button type="button" className="dshAcSave" disabled={!state.dirty || state.invalid || state.saving || !state.writable} onClick={props.save}>{t(state.saving ? 'chrome.saving' : 'chrome.save')}</button></div>
-    </footer>
   </li>;
 }

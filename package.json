@@ -1,7 +1,7 @@
 {
   "name": "dsh-client-auto-continue",
   "description": "DSH Web UI plugin: automatically sends a localized continue prompt when a request is interrupted by network errors or other non-human causes",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -14,11 +14,13 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "lib",
     "src",
+    "locale",
     "cordis.patch.yml",
     "scripts",
     "docs",

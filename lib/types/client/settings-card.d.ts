@@ -83,5 +83,5 @@ export declare class AutoContinueSettingsCardController {
 export type AutoContinueSettingsCardProps = PropsLocale<'auto-continue'> & InjectFace<AutoContinueSettingsCardFace>;
 /** The bundle page supplies no list container, unlike the legacy settings slot. */
 export declare function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps): import("react").JSX.Element;
-/** Native category layout, with the selected B3 repository invitation beside the introduction. */
+/** Native category layout; the plugin manager above already owns the title, version and status. */
 export declare function AutoContinueSettingsCard(props: AutoContinueSettingsCardProps): import("react").JSX.Element | null;

@@ -133,10 +133,7 @@ function render(locale) {
 
 for (const locale of ['en', 'zh']) {
   const html = render(locale);
-  assert.match(html, /href="https:\/\/github\.com\/HsiangNianian\/dsh-auto-continue"/);
-  assert.match(html, /target="_blank"/);
-  assert.match(html, /rel="noopener noreferrer"/);
-  assert.match(html, /HsiangNianian/);
+  assert.doesNotMatch(html, /dshAcHeaderFrame/, 'the colored header banner stays removed');
   assert.match(html, /role="tablist"/);
   assert.equal([...html.matchAll(/role="tab"/g)].length, 6);
   assert.match(html, /role="tabpanel"/);
@@ -145,13 +142,10 @@ for (const locale of ['en', 'zh']) {
     assert.doesNotMatch(button[0], /<a\b/, 'external link must not be nested in a button');
   }
 }
-assert.match(render('zh'), /觉得好用的话，点个 Star 吧/);
-assert.match(render('en'), /Finding it useful\? Leave a Star/);
 assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="true")/);
 assert.match(render('en'), /<select[^>]*aria-label="Default session mode"/);
 face.edit('paused', 'true');
 assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
-assert.match(render('en'), /dshAcStatus">Enabled</, 'header reports committed state until Save');
 face.discard();
 
 const expected = Object.entries(face.hooks.autoContinueSettingsCard.getSnapshot())
@@ -197,4 +191,4 @@ activeCategory = 'prompts';
 assert.match(render('en'), />Keep this draft<\/textarea>/, 'category changes preserve drafts');
 face.discard();
 assert.doesNotMatch(render('en'), />Keep this draft<\/textarea>/);
-console.log('category settings UI, staged switches, and GitHub invitation ✅');
+console.log('category settings UI, staged switches, and banner-free header ✅');

@@ -1,15 +1,15 @@
 # Configuration and composer screenshots
 
-Captured on 2026-10-06 with **DSH 0.2.1-alpha.1** and **plugin 0.14.0**,
+Captured on 2026-10-23 with **DSH 0.2.1-rc.2** and **plugin 0.17.0**,
 using Chromium and DSH's dark theme.
 The capture uses an isolated `DSH_HOME` with no API keys or user conversations.
 
 | View | English | Chinese | Viewport |
 | --- | --- | --- | --- |
-| General category and the inline GitHub invitation | [01-settings-section.png](01-settings-section.png) | [01-settings-section.zh.png](01-settings-section.zh.png) | 1440 × 1100 |
-| Retry strategy category | [02-settings-card.png](02-settings-card.png) | [02-settings-card.zh.png](02-settings-card.zh.png) | 1440 × 1400 |
-| Status and logs, Save / Discard controls | [07-card-panels.png](07-card-panels.png) | [07-card-panels.zh.png](07-card-panels.zh.png) | 1440 × 1100 |
-| Native composer switch | [08-composer-toggle.png](08-composer-toggle.png) | [08-composer-toggle.zh.png](08-composer-toggle.zh.png) | 1440 × 900, cropped to the composer |
+| General category | [01-settings-section.png](01-settings-section.png) | [01-settings-section.zh.png](01-settings-section.zh.png) | 1440 × 977 |
+| Retry strategy category | [02-settings-card.png](02-settings-card.png) | [02-settings-card.zh.png](02-settings-card.zh.png) | 1440 × 1372 |
+| Status and logs, native Save button | [07-card-panels.png](07-card-panels.png) | [07-card-panels.zh.png](07-card-panels.zh.png) | 1440 × 971 |
+| Composer switch and mode menu | [08-composer-toggle.png](08-composer-toggle.png) | [08-composer-toggle.zh.png](08-composer-toggle.zh.png) | 840 × 300, cropped to the composer |
 
 To refresh, build the checked-out code and install it in an empty DSH profile:
 
@@ -23,9 +23,9 @@ DSH_HOME="$capture_home" dsh web --no-open
 Open the authenticated URL printed by DSH without including its token in any
 screenshot. Dismiss onboarding, select the dark theme, and open **Plugins →
 dsh-client-auto-continue** from the sidebar. Capture **General**, **Retry strategy**,
-and **Status and logs**. The repository invitation should stay beside the plugin
-introduction on one continuous charcoal background, with their vertical centers aligned. There is no collapsed card or
-prototype selector in the finished UI.
+and **Status and logs**. The settings card starts with a compact star/repository link row and then the category
+navigation; its fields use DSH's native settings primitives. There is no charcoal title banner.
+There is no collapsed card or prototype selector in the finished UI.
 
 For the composer view, open a new session without sending a message and crop to
 the message input and controls. Use a fresh browser context with an English or
