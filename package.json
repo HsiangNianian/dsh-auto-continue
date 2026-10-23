@@ -26,6 +26,7 @@
     "tsconfig.build.json",
     "README.md",
     "README.zh.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "dsh": {
