@@ -63,6 +63,7 @@ export function makeHost(overrides = {}) {
     resumes: () => resumes,
     logs,
     start() { apply(ctx, config); },
+    settingsChanged() { for (const callback of handlers.get('settings/updated') ?? []) callback('auto-continue'); },
     emit(agent, event) { for (const callback of handlers.get('session/event') ?? []) callback(agent.session, event); },
     agent(id, events = []) { return buildAgent(id, events); },
     /** 声明某次 resume 注册后, 该 agent 快照给扫描看的事件(真实宿主由修复管线补齐)。 */

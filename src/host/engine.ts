@@ -31,6 +31,7 @@ import {
   isTransientAgentError,
   isTransientFailure,
   resolveConfig,
+  sessionMode,
   sleep,
   todayKey,
   trackPendingEcho,
@@ -377,6 +378,28 @@ export class AutoContinueRunner {
     for (const listener of this.stateListeners) listener();
   }
 
+  private sessionConfig(sessionId: SessionId): AutoContinueConfig {
+    const config = this.getConfig();
+    const mode = sessionMode(config.sessionModes, sessionId);
+    return {
+      ...config,
+      paused: config.paused || mode === 'off',
+      resumeCompletedTurns: mode === 'default' ? config.resumeCompletedTurns : mode === 'loop',
+      loopGuard: config.loopGuard && mode !== 'off',
+    };
+  }
+
+  configurationChanged(): void {
+    if (this.disposed) return;
+    for (const [sessionId, state] of this.states) {
+      const config = this.sessionConfig(sessionId);
+      if (config.paused || (isLoopReason(state.pendingReason ?? '') && !config.resumeCompletedTurns)) {
+        this.cancelPending(sessionId, '会话模式或全局设置已更改');
+      }
+    }
+    this.emitState();
+  }
+
   /** 对外(状态桥): 消费待展示的通知。 */
   drainNotices(): HostNotice[] {
     return this.notices.splice(0, this.notices.length);
@@ -616,7 +639,7 @@ export class AutoContinueRunner {
     state: SessionState,
     event: SessionEvent<'assistant/chunk'>,
   ): void {
-    if (!this.getConfig().loopGuard || !state.running || state.loopFired) return;
+    if (!this.sessionConfig(sessionId).loopGuard || !state.running || state.loopFired) return;
     const chunk = this.assistantChunkText(event);
     if (chunk === '') return;
     const merged = `${state.streamTail}${chunk}`.replace(/\r/g, '');
@@ -639,7 +662,7 @@ export class AutoContinueRunner {
     state: SessionState,
     event: SessionEvent<'assistant/message'>,
   ): void {
-    if (!this.getConfig().loopGuard) return;
+    if (!this.sessionConfig(sessionId).loopGuard) return;
     const text = this.assistantText(event);
     const trimmed = visibleText(text);
     // 相同文本重复(不限长度): 模型反复输出完全相同的消息是最强的循环信号,
@@ -676,7 +699,7 @@ export class AutoContinueRunner {
     state: SessionState,
     toolRepeat?: ToolRepeatSignal,
   ): void {
-    if (!this.getConfig().loopGuard) return;
+    if (!this.sessionConfig(sessionId).loopGuard) return;
     if (state.loopFired) return;
     if (!state.running) return; // 只干预运行中的回合
     const config = this.getConfig();
@@ -769,11 +792,11 @@ export class AutoContinueRunner {
           state.lastTurn = event.data.turn;
           state.lastFailureAt = Date.now();
           this.noteRecovery(sessionId, 'error');
-          if (this.getConfig().resumeCompletedTurns) {
+          if (this.sessionConfig(sessionId).resumeCompletedTurns) {
             // 自主循环覆盖无可见输出的回合, 但这类回合是「失败」而非成功:
             // 不 force, 否则会绕过连续上限与冷却, 让卡住的模型无限重试。
             this.schedule(sessionId, LOOP_SILENT_REASON);
-          } else if (this.getConfig().resumeSilentTurns) {
+          } else if (this.sessionConfig(sessionId).resumeSilentTurns) {
             this.schedule(sessionId, `turn/end:${reasonKind}:silent`);
           }
           break;
@@ -784,7 +807,7 @@ export class AutoContinueRunner {
           // 自主循环的例外只在于「是否续跑」, 不在于「是否清零预算」: 循环对每个
           // completed 回合都强制续跑, 但失败预算依旧只在可见输出时清零, 否则
           // 空回合/未观察到的回合会不断抹掉连续计数, 令连续上限永远无法生效。
-          if (this.getConfig().resumeCompletedTurns) {
+          if (this.sessionConfig(sessionId).resumeCompletedTurns) {
             if (turnOutput === 'visible') {
               state.consecutive = 0;
               state.lastFailure = undefined;
@@ -798,6 +821,7 @@ export class AutoContinueRunner {
           }
         } else if (reasonKind === 'aborted') {
           if (isLoopGuardCancelReason((reason as { reason?: unknown }).reason)) {
+            if (this.sessionConfig(sessionId).paused) break;
             // 我们自己的 loop guard 打断: 视为可恢复中断, 用循环提示文本重启回合。
             // 不清 consecutive / lastAttemptAt: 冷却与连续上限在 loop 路径同样生效,
             // 防止无限打断重发(issue #13); 打断本身受冷却约束, 重启也要等冷却。
@@ -877,6 +901,7 @@ export class AutoContinueRunner {
 
   private onTurnFailure(sessionId: SessionId, reason: string, failure: FailureFacts): void {
     const config = this.getConfig();
+    if (sessionMode(config.sessionModes, sessionId) === 'off') return;
     if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
       const copy = NOTICE_COPY[config.locale];
       const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
@@ -1011,10 +1036,11 @@ export class AutoContinueRunner {
 
   private schedule(sessionId: SessionId, reason: string, force = false): void {
     const state = this.state(sessionId);
-    const config = this.getConfig();
+    const config = this.sessionConfig(sessionId);
+    if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
     if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused) {
-      this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
+      this.log(`跳过 ${sessionId}(${reason}): 自动继续已暂停`);
       return;
     }
     if (Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
@@ -1042,6 +1068,7 @@ export class AutoContinueRunner {
     const timer = setTimeout(() => {
       if (state.pendingTimer !== timer) return;
       state.pendingTimer = undefined;
+      state.pendingReason = undefined;
       // 保险丝: 定时器回调内任何异常(含 inactive context)都不得成为未捕获异常炸掉进程。
       try {
         void this.fire(sessionId, reason, force);
@@ -1050,6 +1077,7 @@ export class AutoContinueRunner {
       }
     }, config.graceMs);
     state.pendingTimer = timer;
+    state.pendingReason = reason;
     const template = this.templateFor(config, reason);
     this.log(
       `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${template}」`,
@@ -1063,8 +1091,10 @@ export class AutoContinueRunner {
   private deferCooldownRetry(sessionId: SessionId, reason: string, remaining: number): void {
     const state = this.state(sessionId);
     if (state.cooldownRetryTimer !== undefined) clearTimeout(state.cooldownRetryTimer);
+    state.pendingReason = reason;
     state.cooldownRetryTimer = setTimeout(() => {
       state.cooldownRetryTimer = undefined;
+      state.pendingReason = undefined;
       try {
         this.schedule(sessionId, reason);
       } catch (error) {
@@ -1087,6 +1117,7 @@ export class AutoContinueRunner {
 
   private cancelPending(sessionId: SessionId, why: string): void {
     const state = this.state(sessionId);
+    state.pendingReason = undefined;
     let cancelled = false;
     if (state.pendingTimer !== undefined) {
       clearTimeout(state.pendingTimer);
@@ -1099,13 +1130,18 @@ export class AutoContinueRunner {
       state.cooldownRetryTimer = undefined;
       cancelled = true;
     }
+    if (state.loopRetryTimer !== undefined) {
+      clearTimeout(state.loopRetryTimer);
+      state.loopRetryTimer = undefined;
+      cancelled = true;
+    }
     if (cancelled) this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
   private fire(sessionId: SessionId, reason: string, force = false): void {
     if (this.disposed) return;
     const state = this.state(sessionId);
-    const config = this.getConfig();
+    const config = this.sessionConfig(sessionId);
     const manualResume = force && reason === MANUAL_NOTIFICATION_REASON;
     if (reason.endsWith(':silent') && !config.resumeSilentTurns) return;
     // 宽限期内循环被关闭: 发送前必须重新检查开关, 与 :silent 恢复同样处理。
@@ -1113,7 +1149,7 @@ export class AutoContinueRunner {
     if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
     if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused && !manualResume) {
-      this.log(`跳过 ${sessionId}(${reason}): 全局暂停中`);
+      this.log(`跳过 ${sessionId}(${reason}): 自动继续已暂停`);
       return;
     }
     if (!manualResume && Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
@@ -1302,6 +1338,7 @@ export class AutoContinueRunner {
         if (this.bootScannedSessions.has(session) || session.header?.origin === 'subagent') continue;
         sessionId = session.id;
         if (typeof sessionId !== 'string' || sessionId === '') throw new TypeError('session id is unavailable');
+        if (this.sessionConfig(sessionId).paused) continue;
         const state = this.state(sessionId);
         if (state.pendingTimer !== undefined || state.consecutive >= config.maxConsecutive) continue;
         if (now - state.lastAttemptAt < this.cooldownFor(state)) continue;
@@ -1434,6 +1471,7 @@ export class AutoContinueRunner {
         continue;
       }
       const sessionId = record.header.id;
+      if (this.sessionConfig(sessionId).paused || Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) continue;
       if (record.live || this.storedSwept.has(sessionId)) continue;
       this.storedSwept.add(sessionId);
       if (record.header.origin === 'subagent') continue;
@@ -1443,6 +1481,10 @@ export class AutoContinueRunner {
         const stored: StoredObservation = await this.readStored(signal => query.observeSession(sessionId, { projectionMode: 'all', signal }), deadline);
         observation = stored;
         if (this.disposed) return;
+        if (this.sessionConfig(sessionId).paused) {
+          this.storedSwept.delete(sessionId);
+          continue;
+        }
         const events = validateSessionEvents(stored.events);
         if (events.length === 0) continue;
         // 快照之后客户端可能已打开该会话: 归还 live 扫描, 避免与 live 路径
@@ -1544,7 +1586,7 @@ export class AutoContinueRunner {
     presetId: string | undefined,
     logged: { provider: string; model: string } | undefined,
   ): Promise<boolean> {
-    if (this.disposed || this.getConfig().paused || !this.getConfig().scanOnBoot) return false;
+    if (this.disposed || this.sessionConfig(sessionId).paused || !this.getConfig().scanOnBoot) return false;
     const presets = this.ctx.get('agentPresets');
     // Mirrors session-controller's adopt: without agent options the agent has no
     // provider/model, so prompt variables like {{model}} have no value and the
@@ -1559,7 +1601,7 @@ export class AutoContinueRunner {
       return true;
     }
     const resolvedId = (await presets.resolve(presetId)).id;
-    if (this.disposed || this.getConfig().paused || !this.getConfig().scanOnBoot) return false;
+    if (this.disposed || this.sessionConfig(sessionId).paused || !this.getConfig().scanOnBoot) return false;
     if (this.ctx.agents.get(sessionId) !== undefined) return true;
     await this.ctx.agents.resume({
       resumeSessionId: sessionId,

@@ -7,7 +7,7 @@
  * paused-sessions list) consumed by the settings card's live panels.
  */
 
-import type { RecoveryAttempt } from '../shared/core.ts';
+import type { RecoveryAttempt, SessionMode, SessionPolicy } from '../shared/core.ts';
 
 /** 今日统计视图(与 host 引擎的 DayStats 对应)。 */
 export interface DayStatsView {
@@ -31,6 +31,7 @@ interface BridgeState {
   stats: DayStatsView;
   paused: PausedSessionView[];
   recoveryAttempts: RecoveryAttempt[];
+  sessionPolicy?: SessionPolicy;
 }
 
 interface BridgeNotice {
@@ -70,6 +71,23 @@ export function readRecoveryAttempts(): RecoveryAttempt[] {
   return state.recoveryAttempts;
 }
 
+export function readSessionPolicy(): SessionPolicy | undefined {
+  return state.sessionPolicy;
+}
+
+export async function setSessionMode(sessionId: string, mode: SessionMode): Promise<void> {
+  if (!state.sessionPolicy?.writable) throw new Error('Session settings are unavailable');
+  const response = await fetch('/api/auto-continue-action', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'set-session-mode', sessionId, mode }),
+  });
+  const result = await response.json();
+  if (!response.ok || result?.ok !== true || result.sessionId !== sessionId || result.mode !== mode) {
+    throw new Error('Session mode was not saved');
+  }
+}
+
 /** 清零今日统计(经动作端点交给 host 引擎执行)。 */
 export function resetTodayStats(): void {
   void postAction({ action: 'reset-stats' });
@@ -101,12 +119,16 @@ async function postAction(payload: { action: string; sessionId?: string }): Prom
   }
 }
 
-function handleEvent(event: { type: string; notice?: BridgeNotice; stats?: DayStatsView; paused?: PausedSessionView[]; recoveryAttempts?: RecoveryAttempt[] }): void {
+function handleEvent(event: { type: string; notice?: BridgeNotice; stats?: DayStatsView; paused?: PausedSessionView[]; recoveryAttempts?: RecoveryAttempt[]; sessionPolicy?: SessionPolicy }): void {
   if (event.type === 'state') {
+    const policy = event.sessionPolicy;
     state = {
       stats: event.stats ?? EMPTY_STATS,
       paused: event.paused ?? [],
       recoveryAttempts: event.recoveryAttempts ?? [],
+      sessionPolicy: policy && typeof policy.modes === 'object' && policy.modes !== null && !Array.isArray(policy.modes) &&
+        (policy.defaultMode === 'recover' || policy.defaultMode === 'loop') && typeof policy.paused === 'boolean' && typeof policy.writable === 'boolean'
+        ? policy : undefined,
     };
     for (const listener of listeners) listener();
   } else if (event.type === 'notice' && event.notice !== undefined) {
@@ -165,6 +187,11 @@ function showNotification(notice: BridgeNotice): void {
 export function startBridge(): () => void {
   let stopped = false;
   let controller: AbortController | undefined;
+  const disconnected = () => {
+    state = { ...state, sessionPolicy: undefined };
+    for (const listener of listeners) listener();
+  };
+  disconnected();
 
   const loop = async (): Promise<void> => {
     while (!stopped) {
@@ -177,7 +204,7 @@ export function startBridge(): () => void {
         let buffer = '';
         for (;;) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done || stopped) break;
           buffer += decoder.decode(value, { stream: true });
           let idx = buffer.indexOf('\n\n');
           while (idx !== -1) {
@@ -198,7 +225,10 @@ export function startBridge(): () => void {
       } catch {
         /* 断线: 退避重连 */
       }
-      if (!stopped) await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (!stopped) {
+        disconnected();
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
     }
   };
   void loop();
@@ -206,5 +236,6 @@ export function startBridge(): () => void {
   return () => {
     stopped = true;
     controller?.abort();
+    disconnected();
   };
 }

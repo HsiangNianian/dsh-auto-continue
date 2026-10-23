@@ -10,6 +10,7 @@
 import { useEffect, useId, useState } from 'react';
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import { DEFAULT_CONFIG, type AutoContinueSettings } from './engine.ts';
+import type { SessionMode } from '../shared/core.ts';
 import type { ComposerToggleFace, ComposerToggleState } from './composer-toggle.tsx';
 import { NativeSwitch } from './native-switch.tsx';
 import { createSnapshotStore, type SettingsScope, type SnapshotStore } from './dsh-store-compat.ts';
@@ -17,7 +18,9 @@ import {
   pausedSessions,
   readTodayStats,
   readRecoveryAttempts,
+  readSessionPolicy,
   resetTodayStats,
+  setSessionMode,
   subscribeBridge,
   unpauseSession,
 } from './bridge.ts';
@@ -91,8 +94,9 @@ export class AutoContinueSettingsCardController {
   private readonly form: CardForm<AutoContinueSettings>;
   private readonly store: SnapshotStore<AutoContinueSettingsCardState>;
   private readonly composer: SnapshotStore<ComposerToggleState>;
-  private composerSaving = false;
-  private composerFailed = false;
+  private readonly composerSaving = new Set<string>();
+  private readonly composerFailed = new Set<string>();
+  private readonly stopComposer: () => void;
   private disposed = false;
   private saveSequence = 0;
   private notificationFeedback: SettingsCardKey | undefined;
@@ -139,6 +143,7 @@ export class AutoContinueSettingsCardController {
     ]);
     this.store = this.form.bind(() => this.projection(), createSnapshotStore);
     this.composer = this.form.bind(() => this.composerProjection(), createSnapshotStore);
+    this.stopComposer = subscribeBridge(() => this.composer.set(this.composerProjection()));
   }
 
   private projection(): AutoContinueSettingsCardState {
@@ -208,33 +213,33 @@ export class AutoContinueSettingsCardController {
     this.store.set(this.projection());
   }
 
-  injectComposer(): ComposerToggleFace {
-    return { hooks: { autoContinueComposer: this.composer }, setEnabled: (enabled) => void this.setEnabled(enabled) };
+  injectComposer(sessionId: string): ComposerToggleFace {
+    return { hooks: { autoContinueComposer: this.composer }, sessionId, setMode: (mode) => void this.setMode(sessionId, mode) };
   }
 
   private composerProjection(): ComposerToggleState {
     const snapshot = this.scope.getSnapshot();
+    const policy = readSessionPolicy();
     return {
       visible: snapshot.status === 'ready' && (snapshot.value?.showComposerToggle ?? DEFAULT_CONFIG.showComposerToggle),
-      enabled: !(snapshot.value?.paused ?? DEFAULT_CONFIG.paused),
-      writable: canWriteSettings(snapshot),
-      saving: this.composerSaving,
-      failed: this.composerFailed,
+      policy,
+      writable: canWriteSettings(snapshot) && policy?.writable === true,
+      saving: new Set(this.composerSaving),
+      failed: new Set(this.composerFailed),
     };
   }
 
-  private async setEnabled(enabled: boolean): Promise<void> {
-    if (this.disposed || this.composerSaving || !this.composerProjection().writable) return;
-    this.composerSaving = true;
-    this.composerFailed = false;
+  private async setMode(sessionId: string, mode: SessionMode): Promise<void> {
+    if (this.disposed || !sessionId || this.composerSaving.has(sessionId) || !this.composerProjection().writable) return;
+    this.composerSaving.add(sessionId);
+    this.composerFailed.delete(sessionId);
     this.composer.set(this.composerProjection());
     try {
-      const result = await this.scope.set('paused', !enabled);
-      this.composerFailed = result === false || this.composerProjection().enabled !== enabled;
+      await setSessionMode(sessionId, mode);
     } catch {
-      this.composerFailed = true;
+      this.composerFailed.add(sessionId);
     } finally {
-      this.composerSaving = false;
+      this.composerSaving.delete(sessionId);
       if (!this.disposed) this.composer.set(this.composerProjection());
     }
   }
@@ -242,6 +247,7 @@ export class AutoContinueSettingsCardController {
   /** Release this card's subscription to the provider-owned settings form. */
   dispose(): void {
     this.disposed = true;
+    this.stopComposer();
     this.form.dispose();
   }
 }
@@ -312,7 +318,10 @@ function SettingField({ name, id, state, actions, disabled, t }: {
     </div>
     <div className="dshAcFieldControl">
       {state.overridden && <button type="button" className="dshAcReset" disabled={disabled} aria-label={`${t('chrome.reset')}: ${label}`} onClick={() => actions.resetField(name)}>{t('chrome.reset')}</button>}
-      {boolean ? <span className="dshAcSwitchTarget"><NativeSwitch label={label} title={hint} disabled={disabled}
+      {name === 'resumeCompletedTurns' ? <select id={id} className="dshAcMode" aria-label={label} aria-describedby={`${id}-hint`}
+        disabled={disabled} value={String(value)} onChange={event => actions.edit(name, event.target.value)}>
+        <option value="false">{t('composer.recover')}</option><option value="true">{t('composer.loop')}</option>
+      </select> : boolean ? <span className="dshAcSwitchTarget"><NativeSwitch label={label} title={hint} disabled={disabled}
         checked={name === 'paused' ? !value : Boolean(value)} onChange={checked => actions.edit(name, String(name === 'paused' ? !checked : checked))} /></span>
         : numeric ? <input {...common} className="dshAcInput dshAcNumber" type="text" inputMode="numeric" placeholder={placeholder} />
         : <textarea {...common} className="dshAcInput dshAcTextArea" rows={name === 'retryableErrorPatterns' ? 3 : 2} placeholder={placeholder} />}

@@ -14,11 +14,12 @@ import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import { AutoContinueRunner } from './host/engine.ts';
 import { LEGACY_SETTINGS_IMPORTED, migrateLegacySettings, type EntrySettings, type LiveEntrySettings } from './host/settings-migration.ts';
-import { resolveConfig, type AutoContinueSettings } from './shared/core.ts';
+import { isSessionMode, resolveConfig, type AutoContinueSettings } from './shared/core.ts';
 // Type-only: pulls the `ctx.webServer` Context augmentation.
 import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-session';
+import type {} from '@deepseek-ai/dsh-settings';
 
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export const AUTO_CONTINUE_NS = 'auto-continue';
@@ -77,7 +78,9 @@ const settingsFields = {
   notify: z.boolean().default(false),
   /** Globally pause auto-continue: no live or scan send. */
   paused: z.boolean().default(false),
-  /** Show the global auto-continue switch in the conversation composer. */
+  /** Persist choices by session, including an explicit return to the profile default. */
+  sessionModes: z.dict(z.union(['default', 'off', 'recover', 'loop'])).default({}).hidden(),
+  /** Show the session mode selector in the conversation composer. */
   showComposerToggle: z.boolean().default(true),
   /** Loop guard: detect a running turn spinning in place and restart it. */
   loopGuard: z.boolean().default(true),
@@ -157,7 +160,12 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
   ctx.inject(['agents', 'webServer'], (engineCtx) => {
     // 回调重入时先清理旧引擎, 避免定时器与监听器叠加。
     disposeEngine?.();
-    const runner = new AutoContinueRunner(engineCtx, () => resolveConfig(legacyConfig?.() ?? readEntry()));
+    const readConfig = () => resolveConfig(legacyConfig?.() ?? readEntry());
+    const runner = new AutoContinueRunner(engineCtx, readConfig);
+    const writableSettings = () => {
+      const settings = engineCtx.get('settings');
+      return settings?.writable && typeof settings.mutate === 'function' ? settings : undefined;
+    };
 
     // 状态桥: browser 侧订阅通知与运行时状态(SSE)。
     const sseClients = new Set<(data: string) => void>();
@@ -171,13 +179,21 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
         }
       }
     };
-    const statePayload = (): string =>
-      JSON.stringify({
+    const statePayload = (): string => {
+      const config = readConfig();
+      return JSON.stringify({
         type: 'state',
         stats: runner.todayStats(),
         paused: runner.activePauses(),
         recoveryAttempts: runner.recentRecoveryAttempts(),
+        sessionPolicy: {
+          modes: config.sessionModes,
+          defaultMode: config.resumeCompletedTurns ? 'loop' : 'recover',
+          paused: config.paused,
+          writable: writableSettings() !== undefined,
+        },
       });
+    };
 
     runner.subscribeNotices(() => {
       for (const notice of runner.drainNotices()) {
@@ -187,6 +203,10 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
     runner.subscribeState(() => {
       pushToAll(`data: ${statePayload()}\n\n`);
     });
+    // Event names differ across the legacy Settings and live Config hosts.
+    const stopSettings = ['settings/updated', 'settings/document-updated', 'app-boot/config-reload'].map(event =>
+      (engineCtx.on as (event: string, listener: () => void) => () => void)(event, () => runner.configurationChanged()),
+    );
 
     const stopBridge = engineCtx.webServer.register({
       kind: 'exact',
@@ -221,9 +241,28 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
           body += chunk.toString('utf8');
           if (body.length > 4096) req.destroy();
         });
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
-            const parsed = JSON.parse(body) as { sessionId?: string; action?: string };
+            const parsed = JSON.parse(body) as { sessionId?: string; action?: string; mode?: unknown };
+            if (parsed.action === 'set-session-mode') {
+              const { sessionId, mode } = parsed;
+              if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256 ||
+                  ['__proto__', 'prototype', 'constructor'].includes(sessionId) || !isSessionMode(mode)) {
+                throw new TypeError('Invalid session mode');
+              }
+              const settings = writableSettings();
+              if (settings === undefined) {
+                res.writeHead(503, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ ok: false }));
+                return;
+              }
+              // Path mutations preserve choices written concurrently by other tabs.
+              await settings.mutate(AUTO_CONTINUE_NS, [{ op: 'set', path: ['sessionModes', sessionId], value: mode }]);
+              runner.configurationChanged();
+              res.writeHead(200, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ ok: true, sessionId, mode }));
+              return;
+            }
             if (typeof parsed.action === 'string') {
               runner.handleNoticeAction((parsed.sessionId as never) ?? undefined, parsed.action);
               res.writeHead(200, { 'content-type': 'application/json' });
@@ -244,6 +283,7 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
       if (disposed) return;
       disposed = true;
       runner.dispose();
+      for (const stop of stopSettings) stop();
       stopBridge();
       stopActions();
       for (const close of closeClients) close();

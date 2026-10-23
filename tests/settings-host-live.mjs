@@ -25,7 +25,8 @@ copyFileSync(join(project, 'package.json'), join(fixture, 'package.json'));
 symlinkSync(modules, join(fixture, 'node_modules'), 'dir');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ctx = new Context();
-const base = { scanOnBoot: false, verbose: false, graceMs: 40, cooldownMs: 0 };
+const base = { scanOnBoot: false, verbose: false, graceMs: 40, cooldownMs: 0, sessionModes: { inherited: 'off' } };
+const profileFile = join(fixture, 'profile.json');
 const legacyFile = join(fixture, 'settings-legacy.yaml');
 const legacySource = 'auto-continue:\n  paused: true\n  continueTextMaxTokens: Keep my prompt\nother-plugin:\n  keep: untouched\n';
 if (mixed) writeFileSync(legacyFile, legacySource);
@@ -39,14 +40,15 @@ const end = (turn) => ctx.emit('session/event', session, {
 try {
   await ctx.plugin(Loader);
   ctx.provide('profileContext', { name: 'test', home: fixture, dir: fixture });
-  // The persistence boundary is in memory; real Loader updates still parse and
-  // publish live config references exactly as a profile edit does.
+  // A small file-backed editor exercises the published Settings and live Loader.
   ctx.provide('configEditor', {
     documentPath: join(fixture, 'profile.yml'),
     entries: () => [...ctx.loader.entries()],
     configuration: () => [...ctx.loader.entries()].map((entry) => ({ entry, inherited: base, override: entry.options.config })),
     async edit(entry, change) {
-      await ctx.loader.update(entry.id, { config: change(entry.options.config ?? {}, base) });
+      const config = change(entry.options.config ?? {}, base);
+      writeFileSync(profileFile, JSON.stringify(config));
+      await ctx.loader.update(entry.id, { config });
       await ctx.loader.await();
       ctx.emit('app-boot/config-reload');
     },
@@ -65,6 +67,19 @@ try {
   await ctx.loader.await();
   const entry = ctx.loader.resolve('auto-continue');
   const uid = entry.fiber.uid;
+  const origin = `http://127.0.0.1:${ctx.webServer.port}`;
+  const until = async predicate => {
+    for (let n = 0; n < 100 && !predicate(); n++) await sleep(10);
+    assert.ok(predicate(), 'state converges within one second');
+  };
+  const setMode = async (sessionId, mode) => {
+    const response = await fetch(`${origin}/api/auto-continue-action`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'set-session-mode', sessionId, mode }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, sessionId, mode });
+  };
   const form = () => ctx.settings.describe().find((row) => row.ns === 'auto-continue');
   if (mixed) {
     for (let n = 0; n < 100 && !form()?.value._legacySettingsImported; n++) await sleep(10);
@@ -94,7 +109,7 @@ try {
       let registration;
       vm.runInNewContext(readFileSync(path, 'utf8'), {
         AbortController, console, TextDecoder, URL, structuredClone, setTimeout, clearTimeout,
-        fetch: async () => { throw new Error('HTTP bridge is tested separately'); },
+        fetch: (path, options) => fetch(`${origin}${path}`, options),
         window: { __ModuleLoader__: { load: value => { registration = value; } } },
       });
       return registration.factory(name => {
@@ -105,12 +120,12 @@ try {
         throw new Error(`Unexpected client module: ${name}`);
       });
     }
-    client.provide('remote', { settings: transport, $on: () => () => {} });
+    client.provide('remote', { settings: transport, $on: (name, listener) => ctx.on(name, listener) });
     client.provide('remote.settings', transport);
     client.provide('locale', { getLocale: () => ({ active: 'en' }), register: () => () => {} });
     client.provide('slots', {
       inject(name, mount) { return ['plugins.bundle.config', 'conversation.input.left'].includes(name) ? client.effect(mount) : () => {}; },
-      register(options) { entries.set(options.name, options.inject()); return () => entries.delete(options.name); },
+      register(options) { entries.set(options.name, options.inject(session.id)); return () => entries.delete(options.name); },
     });
     try {
       await client.plugin(browserModule(join(modules, '@deepseek-ai/dsh-client-ui-settings/lib/client.js')));
@@ -130,24 +145,26 @@ try {
       await client.configForms.describe().load();
       assert.equal(scope.getSnapshot().value.showComposerToggle, false, 'a fresh Host read retains the saved setting');
       const composer = entries.get('conversation.input.left');
-      composer.setEnabled(true);
-      for (let n = 0; n < 10; n++) await flush();
-      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().enabled, true);
-      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().failed, false);
-      entries.get('conversation.input.left').setEnabled(false);
-      for (let n = 0; n < 10; n++) await flush();
-      assert.equal(form().value.paused, true, 'composer switch writes through the real form');
-      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().enabled, false);
-      assert.equal(composer.hooks.autoContinueComposer.getSnapshot().failed, false);
+      const composerState = () => composer.hooks.autoContinueComposer.getSnapshot();
+      await until(() => composerState().writable);
+      composer.setMode('loop');
+      await until(() => composerState().policy?.modes[session.id] === 'loop' && !composerState().saving.size);
+      assert.equal(composerState().failed.size, 0);
+      composer.setMode('off');
+      await until(() => composerState().policy?.modes[session.id] === 'off' && !composerState().saving.size);
+      assert.equal(form().value.sessionModes[session.id], 'off', 'composer choices reach the real Settings service');
+      assert.equal(form().value.paused, mixed, 'composer choices leave the global setting alone');
+      assert.equal(composerState().failed.size, 0);
       card.resetField('showComposerToggle');
       card.save();
       for (let n = 0; n < 10; n++) await flush();
       assert.equal(form().value.showComposerToggle, true);
       await scope.set('paused', false);
+      await setMode(session.id, 'default');
     } finally {
       await client.fiber.dispose();
     }
-    console.log('DSH rc.2 actual client forms: card save/reset, composer toggle, locale mirror and reload ✅');
+    console.log('DSH rc.2 actual client forms: card save/reset, composer session modes, locale mirror and reload ✅');
   }
 
   const bridge = await fetch(`http://127.0.0.1:${ctx.webServer.port}/api/auto-continue-bridge`);
@@ -158,8 +175,9 @@ try {
 
   end(1);
   await ctx.settings.update('auto-continue', { paused: true });
+  await ctx.settings.update('auto-continue', { paused: false });
   await sleep(80);
-  assert.equal(followups.length, 0, 'pausing cancels an already queued continuation');
+  assert.equal(followups.length, 0, 'pausing cancels queued work even when unpaused before grace expires');
   assert.equal(entry.fiber.uid, uid, 'settings edits keep the same engine instance');
   await ctx.settings.update('auto-continue', { paused: false, locale: 'en', continueTextMaxTokens: 'Keep going' });
   end(2);
@@ -171,10 +189,24 @@ try {
   end(3);
   await sleep(80);
   assert.equal(followups[1].content[0].text, 'Continue', 'reset restores the localized default');
+  await Promise.all([setMode('A', 'loop'), setMode('B', 'recover'), setMode(session.id, 'off')]);
+  await setMode('inherited', 'default');
+  assert.equal(form().value.sessionModes.A, 'loop');
+  assert.equal(form().value.sessionModes.B, 'recover');
+  assert.equal(form().value.sessionModes.inherited, 'default', 'explicit default masks an inherited off override');
+  const persisted = JSON.parse(readFileSync(profileFile, 'utf8'));
+  assert.equal(persisted.sessionModes[session.id], 'off');
+  await ctx.loader.remove('auto-continue');
+  await ctx.loader.create({ id: 'auto-continue', name: pathToFileURL(join(fixture, 'lib/index.js')).href, config: persisted });
+  await ctx.loader.await();
+  assert.equal(form().value.sessionModes[session.id], 'off', 'a fresh engine restores the persisted session choice');
+  end(4);
+  await sleep(80);
+  assert.equal(followups.length, 2, 'reloading does not re-enable an off session');
   if (mixed) {
     assert.equal(form().value._legacySettingsImported, true, 'normal settings edits retain the import marker');
     assert.equal(readFileSync(legacyFile, 'utf8'), legacySource, 'legacy and unrelated settings stay untouched');
-    const saved = structuredClone(entry.options.config);
+    const saved = structuredClone(ctx.loader.resolve('auto-continue').options.config);
     await ctx.loader.remove('auto-continue');
     await ctx.loader.create({ id: 'auto-continue', name: pathToFileURL(join(fixture, 'lib/index.js')).href, config: saved });
     await ctx.loader.await();

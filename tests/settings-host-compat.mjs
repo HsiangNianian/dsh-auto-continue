@@ -3,6 +3,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -62,12 +63,17 @@ try {
 
   const { Context } = await import('@deepseek-ai/cordis');
   const { SettingsProvider } = await import('@deepseek-ai/dsh-settings');
-  class MemorySettings extends SettingsProvider {
+  const settingsFile = join(fixtureRoot, 'settings.json');
+  writeFileSync(settingsFile, JSON.stringify({ 'auto-continue': { paused: true, verbose: false, scanOnBoot: false, graceMs: 5, cooldownMs: 0 } }));
+  class FileSettings extends SettingsProvider {
     writable = true;
     async load() {
-      return { 'auto-continue': { paused: true, verbose: false, scanOnBoot: false, graceMs: 5, cooldownMs: 0 } };
+      return JSON.parse(readFileSync(settingsFile, 'utf8'));
     }
-    async persist() {}
+    async persist(ns, section) {
+      const document = JSON.parse(readFileSync(settingsFile, 'utf8'));
+      writeFileSync(settingsFile, JSON.stringify({ ...document, [ns]: section }));
+    }
   }
   const ctx = new Context();
   const routes = new Map();
@@ -78,7 +84,7 @@ try {
     register(route) { routes.set(route.path, route); return () => routes.delete(route.path); },
   });
   try {
-    await ctx.plugin(MemorySettings);
+    await ctx.plugin(FileSettings);
     const fiber = ctx.plugin(loaded);
     await fiber;
     assert.equal(ctx.settings.get('auto-continue').paused, true, 'legacy stored settings are registered');
@@ -92,6 +98,16 @@ try {
     end(2);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(sent[0].content[0].text, 'Legacy text', 'legacy live updates reach the engine');
+    const result = await new Promise(resolve => {
+      const handlers = new Map();
+      routes.get('/api/auto-continue-action').handler({ on(name, handler) { handlers.set(name, handler); } }, {
+        writeHead() {}, end(body) { resolve(JSON.parse(body)); },
+      });
+      handlers.get('data')(Buffer.from(JSON.stringify({ action: 'set-session-mode', sessionId: 'legacy', mode: 'off' })));
+      handlers.get('end')();
+    });
+    assert.equal(result.ok, true);
+    assert.equal(JSON.parse(readFileSync(settingsFile, 'utf8'))['auto-continue'].sessionModes.legacy, 'off');
     await fiber.dispose();
     assert.equal(ctx.settings.get('auto-continue'), undefined);
     assert.equal(routes.size, 0);
@@ -99,6 +115,17 @@ try {
   } finally {
     await ctx.fiber.dispose();
   }
+  const restarted = new Context();
+  restarted.provide('agents', { list: () => [], get: () => ({ inbox: { nextTurn: [] }, followup: () => assert.fail('off must survive restart') }) });
+  restarted.provide('webServer', { register() { return () => {}; } });
+  try {
+    await restarted.plugin(FileSettings);
+    await restarted.plugin(loaded);
+    assert.equal(restarted.settings.get('auto-continue').sessionModes.legacy, 'off');
+    restarted.emit('session/event', session, { type: 'turn/end', seq: 30, time: Date.now(), data: { turn: 3, reason: { kind: 'max-tokens' } } });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    console.log('Legacy session mode persists to disk and survives a fresh host context ✅');
+  } finally { await restarted.fiber.dispose(); }
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });
 }

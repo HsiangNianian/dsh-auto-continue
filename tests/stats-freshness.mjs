@@ -27,6 +27,7 @@ function makeHost(configOverrides = {}) {
   const routes = new Map();
   const cleanups = [];
   const ctx = {
+    get: () => undefined,
     agents: { list: () => [...agents.values()], get: (id) => agents.get(id) },
     webServer: { register(route) { routes.set(route.path, route); return () => routes.delete(route.path); } },
     on(name, cb) { const s = handlers.get(name) ?? new Set(); handlers.set(name, s); s.add(cb); return () => s.delete(cb); },

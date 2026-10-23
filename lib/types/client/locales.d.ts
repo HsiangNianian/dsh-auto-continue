@@ -34,6 +34,12 @@ export declare const zh: {
     'field.showComposerToggleHint': string;
     'composer.label': string;
     'composer.scope': string;
+    'composer.default': string;
+    'composer.off': string;
+    'composer.recover': string;
+    'composer.loop': string;
+    'composer.paused': string;
+    'composer.unavailable': string;
     'composer.saving': string;
     'composer.saveFailed': string;
     'field.pausedHint': string;

@@ -44,15 +44,15 @@ Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 **Smart recovery** (all configurable):
 
-- **Composer switch** — enable or pause auto-continue directly beside the message input, using DSH's native switch. It controls all sessions in the current profile and saves immediately. Prefer a quieter toolbar? Hide it in the plugin settings without pausing recovery
+- **Session modes** — choose Off, Recovery only or Autonomous loop beside the message input, for that conversation only. Follow default inherits the profile setting. Choices save on the host, survive restarts and sync across tabs; hiding the control does not change them
 - **Error classification** — transient failures (network / timeout / 5xx / 429…) are auto-resumed; permanent ones are **skipped** and notified, because retrying them never helps. A failure counts as permanent when its HTTP status is 401/403 or its code/message matches auth, credential/API-key, balance/quota, unknown-model, or context-length/overflow keywords. Provider-specific exceptions can be opted into with literal custom retryable patterns; turn classification off to resume everything
 - **Adaptive backoff** — consecutive failures wait longer each time (cooldown × factor: 20s → 40s → 80s…), capped at the max backoff, instead of hammering a broken upstream
 - **English / Chinese localization** — the settings card, built-in resume / guard / loop text, and browser notifications follow DSH's active UI language (initially selected from the browser language). Only `en` and `zh` are supported; other languages fall back to Chinese. Switching languages updates built-in defaults without overwriting custom text
 - **Templated continue text** — `continueText` supports `{code}` `{message}` `{status}` `{tool}` `{turn}` `{errorCount}` `{elapsed}` placeholders, so the resume message can carry the failure context ("Continue ({tool} failed: {code})"); a **separate template** fires on `max-tokens` (e.g. "Continue the output without repeating anything already generated")
 - **Idempotency guard** — before resuming, the plugin inspects the last tool call: if its result is unconfirmed (the turn died mid-tool, e.g. a `git push` that may have gone through), the resume message tells the model to check state first and not to rerun; if the tool is confirmed done, it says so and asks not to repeat it; a failed tool gets no guard (retrying it is the point). Both guard texts are configurable (`{tool}` / `{result}` placeholders)
 - **Silent turn resume** — recover an observed model step or reasoning-only response that completes without visible output. A no-op turn with no model activity is left alone. Text, tool calls, images and extension blocks count as visible, including streamed output. Unobserved turns are not guessed to be silent. Explicit `no-visible-output` markers also recover after restart. Disabling **Resume silent turns** cancels queued silent sends; silent turns never reset the retry cap, even while the option is off.
-- **Autonomous loop** — off by default (`resumeCompletedTurns`). When enabled, normally completed turns continue after the grace period, without the recovery cooldown or attempt cap. Reasoning-only turns and explicit `no-visible-output` endings still consume the recovery budget and obey backoff. Global pause, session pause, manual Stop and disabling the option stop the loop. Its prompt is separate from the loop guard’s prompt (`continueTextLoop`, default `Continue`).
-- **Pause** — turning off **Auto-continue** in **General** and saving stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. **Resume now** requests one send even when both pauses are active. It leaves the pauses in place, so later automatic recovery and autonomous-loop sends remain paused
+- **Autonomous loop** — off by default (`resumeCompletedTurns`). When enabled, normally completed turns continue after the grace period, without the recovery cooldown or attempt cap. Reasoning-only turns and explicit `no-visible-output` endings still consume the recovery budget and obey backoff. Global pause, a session pause, manual Stop or changing that session to Recovery only / Off stops the loop. The profile default only affects sessions using Follow default. Its prompt is separate from the loop guard’s prompt (`continueTextLoop`, default `Continue`).
+- **Pause** — turning off **Enable auto-continue globally** in **General** and saving stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. **Resume now** requests one send even when both pauses are active. It leaves the pauses in place, so later automatic recovery and autonomous-loop sends remain paused
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
 - **Loop guard** — watches **running** turns too. Four signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), repeated near-duplicate paragraphs **inside one streamed assistant message**, many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips, give-ups and loop breaks, broken down by error code, with a one-click reset
@@ -84,7 +84,7 @@ Storage scanning runs separately from live-session recovery. Each storage read h
 
 Startup recovery isolates failures per session. If history cannot be read or contains invalid events, that session is skipped for the current startup scan and an error is logged; other sessions can still recover, without losing a recovery slot. Invalid entries are not silently removed, since they could hide a manual stop or a newer turn. Valid empty histories and a registry that is still loading remain retryable within the scan window. Reloading a repaired session as a new session object also makes it eligible for scanning again. See [#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58).
 
-The browser provides the settings card and composer switch, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
+The browser provides the settings card and session mode selector, plus a status bridge that shows notifications (with Resume now / Pause this session 1h buttons, routed back to the host engine) and feeds the card's stats / paused-sessions panels.
 
 ### Recovery workflow
 
@@ -201,15 +201,24 @@ dsh web
 
 ---
 
-## Composer switch
+## Session modes
 
-Starting with **0.13.0**, an **Auto-continue** switch appears beside the message input by default. It uses DSH's native `Switch` and follows the active theme.
+The **Auto-continue** selector beside the input applies only to the current conversation and saves immediately:
 
-![Native Auto-continue switch beside the message input](docs/screenshots/08-composer-toggle.png)
+| Mode | Behavior |
+| --- | --- |
+| Follow default | Use **Default session mode** from the plugin settings, initially Recovery only |
+| Off | No automatic followups or loop-guard interruptions in this conversation |
+| Recovery only | Recover eligible failures and silent turns; leave normal completions alone |
+| Autonomous loop | Also continue normally completed turns, using the loop prompt |
 
-**On** allows automatic recovery; **Off** sets the existing global `paused` option. The change saves immediately and applies to **all sessions in the current profile**, with other open tabs updating too. This is separate from the notification action that pauses one session for an hour. Enabling it does not clear a session's individual pause.
+For example, keep A looping, B recovering failures and C off. Each conversation's choice is saved in the host's profile settings (`sessionModes`), shared across tabs and retained after a host restart. Choosing Follow default explicitly removes that conversation's independent policy, including an inherited override.
 
-To hide the switch, open **Plugins → dsh-client-auto-continue → General**, turn off **Show auto-continue switch in the composer**, then click **Save**. This only changes visibility; recovery keeps its current state. The corresponding config key is `showComposerToggle`, default `true`. Older hosts without the composer slot retain the settings card.
+**Enable auto-continue globally** in **General** remains the master control. Turning it off pauses all automatic followups without replacing individual choices; turning it back on restores those choices. Switching a conversation off cancels pending grace, cooldown and loop-guard retries. It leaves any current turn running. Switching Loop to Recovery only cancels pending autonomous followups. Re-enabling does not resurrect cancelled sends.
+
+The notification's **Pause this session 1h** still temporarily suspends one conversation. **Resume now** requests a single send even while paused or Off, without changing the stored mode. The global loop-guard setting remains independent of global pause, but a conversation set to Off is excluded from the guard too.
+
+To hide the selector, open **Plugins → dsh-client-auto-continue → General**, turn off **Show session mode in the composer**, then **Save**. This only changes visibility (`showComposerToggle`, default `true`). Hosts without the composer slot retain the settings card. The selector stays disabled while the host bridge or writable settings service is unavailable.
 
 ## Configuration
 
@@ -289,7 +298,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 - Edits are **staged** — nothing reaches the disk until you hit **Save**; the footer indicates pending changes, and **Discard** drops them
 - If you edit or reset a field while a save is in progress, the newer draft stays in the card. Click **Save** again after the current save finishes to apply it
 - An overridden field shows a **Reset to default** button that removes the override and restores the inherited value (normally the built-in default)
-- Boolean fields use native switches and are staged until Save. **Reset to default** removes the override and restores the inherited value. **Auto-continue** is on when recovery is enabled (`paused: false`)
+- Boolean fields use native switches and are staged until Save. **Reset to default** removes the override and restores the inherited value. **Enable auto-continue globally** is on when recovery is enabled (`paused: false`)
 - Invalid drafts (non-numbers, values below the minimum) block the save and mark their category, even when another category is selected
 - In a read-only deployment the card shows the stored values but disables editing while keeping category navigation available
 - Changes apply immediately after Save and persist in the active profile config (or `~/.dsh/settings.yaml` on older hosts)
@@ -304,12 +313,12 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Field | Default | Description |
 | --- | --- | --- |
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
-| Show auto-continue switch in the composer | `on` | Show the composer switch (`showComposerToggle`); hiding it does not pause recovery |
+| Show session mode in the composer | `on` | Show the session selector (`showComposerToggle`); hiding it does not change modes |
 | Continue text | `Continue` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
 | Resume silent turns | `on` | Resume a turn that ended normally with reasoning only (no text, no tool call); does not reset the consecutive count |
 | Continue text (silent turn) | `Continue. Your previous turn ended with internal reasoning only, ...` | Text sent to resume a silent turn (same placeholders) |
-| Autonomous loop (continue after every turn) | `off` | Continue normal completions after grace, bypassing recovery cooldown/cap; reasoning-only and explicit silent endings still consume the retry budget |
+| Default session mode | Recovery only | For sessions following the default; stored as `resumeCompletedTurns` (`false` = Recovery only, `true` = Autonomous loop) |
 | Continue text (autonomous loop) | `Continue` | Text sent on each autonomous-loop resume (same placeholders) |
 | Continue text (harness restart) | `Continue. The harness was restarted while your previous turn was still running; …` | Text sent when the boot scan resumes a session that a harness restart closed mid-turn (same placeholders) |
 | Idempotency guard | `on` | Inspect the last tool call before resuming and steer the model (see What It Does) |
@@ -359,7 +368,7 @@ The recovery engine runs inside the DSH host. The browser provides the configura
 - The engine reads session events and history through DSH's services. The browser talks to that host; the plugin adds no third-party service or credential store
 - Recovery sends your configured text through `agent.followup`. The loop guard can cancel a looping turn through `agent.cancel` before sending its recovery prompt. Resumed agents continue with the session's existing tools and permissions
 - Saving configuration uses DSH's settings API: the active profile patch on DSH 0.1.7 / 0.2, or `~/.dsh/settings.yaml` on older hosts
-- Retry counters, cooldown timestamps, per-session pauses and stats stay in host process memory and reset when the engine restarts. The global `paused` setting is saved with your other configuration
+- Retry counters, cooldown timestamps, timed notification pauses and stats stay in host process memory and reset when the engine restarts. Session mode choices (`sessionModes`) and global `paused` are saved with your other configuration
 - Browser notifications are opt-in (`notify` setting). Enabling and saving can request browser permission; denied permission is not requested again. Turning the option off never requests permission.
 
 ---
@@ -383,7 +392,7 @@ npm run test:runtime
 
 `npm test` covers recovery, autonomous-loop limits and toggles, child-session exclusion, manual resume during pauses, startup scanning and malformed-session isolation, queue ordering, statistics, localization, settings UI lifecycle and edits made during pending saves. `npm run test:runtime` uses published DSH **0.1.7-rc.2**, **0.2.0-rc.1** and **0.2.1-alpha.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation when one settings provider is absent. Startup recovery tests inject session read failures into real **0.2.0-rc.2** and **0.2.1-alpha.1** Session/Cordis/HTTP components and verify that healthy sessions still recover. These controlled faults do not imply that normal DSH loading produces malformed logs. The runtime harness controls agent events; it does not send requests to a model provider.
 
-The rc.2 check also loads the published client settings service and verifies card save/reset, the composer toggle, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.
+The rc.2 check also loads the published client settings service and verifies card save/reset, per-session composer choices, concurrent saves, disk reloads, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.
 
 The rc.2 restart test uses real agent, query, and JSONL persistence services: it kills a host mid-turn, starts a fresh host without opening the conversation, and checks one recovery with the recorded model and matching prompt variables. The model adapter is deterministic; no external model requests are made.
 
