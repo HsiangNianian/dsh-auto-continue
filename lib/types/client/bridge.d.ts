@@ -6,7 +6,7 @@
  * to `/api/auto-continue-action`) and runtime state (today's stats and the
  * paused-sessions list) consumed by the settings card's live panels.
  */
-import type { RecoveryAttempt } from '../shared/core.ts';
+import type { RecoveryAttempt, SessionMode, SessionPolicy } from '../shared/core.ts';
 /** 今日统计视图(与 host 引擎的 DayStats 对应)。 */
 export interface DayStatsView {
     date: string;
@@ -28,6 +28,8 @@ export declare function pausedSessions(): PausedSessionView[];
 /** 当前桥状态里的今日统计(卡片面板用)。 */
 export declare function readTodayStats(): DayStatsView;
 export declare function readRecoveryAttempts(): RecoveryAttempt[];
+export declare function readSessionPolicy(): SessionPolicy | undefined;
+export declare function setSessionMode(sessionId: string, mode: SessionMode): Promise<void>;
 /** 清零今日统计(经动作端点交给 host 引擎执行)。 */
 export declare function resetTodayStats(): void;
 /** 解除某个会话的暂停(经动作端点交给 host 引擎执行)。 */

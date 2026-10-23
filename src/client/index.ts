@@ -4,7 +4,7 @@
  * Since 0.8.0 the auto-continue ENGINE runs inside the host process (single
  * instance — see src/host/engine.ts), so this half only:
  * - registers the `auto-continue` settings card in the available plugin UI,
- * - adds a native composer switch backed by the same global pause setting,
+ * - adds a per-session composer mode selector backed by host settings,
  * - subscribes to the host status bridge (SSE) and shows browser
  *   notifications with action buttons (Resume now / Pause 1h) via the bridge
  *   action endpoint,
@@ -154,7 +154,7 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
         name: 'conversation.input.left',
         id: 'auto-continue',
         locale: NS,
-        inject: () => controller.injectComposer(),
+        inject: (sessionId) => controller.injectComposer(sessionId),
       },
       AutoContinueComposerToggle,
     ),

@@ -147,9 +147,10 @@ for (const locale of ['en', 'zh']) {
 }
 assert.match(render('zh'), /觉得好用的话，点个 Star 吧/);
 assert.match(render('en'), /Finding it useful\? Leave a Star/);
-assert.match(render('en'), /<button\b(?=[^>]*aria-label="Auto-continue")(?=[^>]*aria-checked="true")/);
+assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="true")/);
+assert.match(render('en'), /<select[^>]*aria-label="Default session mode"/);
 face.edit('paused', 'true');
-assert.match(render('en'), /<button\b(?=[^>]*aria-label="Auto-continue")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
+assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
 assert.match(render('en'), /dshAcStatus">Enabled</, 'header reports committed state until Save');
 face.discard();
 

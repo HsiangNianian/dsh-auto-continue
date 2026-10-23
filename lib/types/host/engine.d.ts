@@ -73,6 +73,8 @@ export declare class AutoContinueRunner {
     /** 对外(状态桥): 订阅运行时状态变化(统计/暂停列表)。 */
     subscribeState(listener: () => void): () => void;
     private emitState;
+    private sessionConfig;
+    configurationChanged(): void;
     /** 对外(状态桥): 消费待展示的通知。 */
     drainNotices(): HostNotice[];
     /** 通知动作(browser 通知按钮回传): 立即续跑 / 暂停该会话 / 解除暂停 / 清零统计。 */

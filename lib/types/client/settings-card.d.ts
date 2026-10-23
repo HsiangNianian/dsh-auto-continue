@@ -56,8 +56,9 @@ export declare class AutoContinueSettingsCardController {
     private readonly form;
     private readonly store;
     private readonly composer;
-    private composerSaving;
-    private composerFailed;
+    private readonly composerSaving;
+    private readonly composerFailed;
+    private readonly stopComposer;
     private disposed;
     private saveSequence;
     private notificationFeedback;
@@ -72,9 +73,9 @@ export declare class AutoContinueSettingsCardController {
      */
     inject(): AutoContinueSettingsCardFace;
     private save;
-    injectComposer(): ComposerToggleFace;
+    injectComposer(sessionId: string): ComposerToggleFace;
     private composerProjection;
-    private setEnabled;
+    private setMode;
     /** Release this card's subscription to the provider-owned settings form. */
     dispose(): void;
 }

@@ -7,6 +7,15 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
 /** Supported UI/config locales. Any unknown browser locale falls back to Chinese. */
 export type AutoContinueLocale = 'en' | 'zh';
+export type SessionMode = 'default' | 'off' | 'recover' | 'loop';
+export interface SessionPolicy {
+    modes: Record<string, SessionMode>;
+    defaultMode: 'recover' | 'loop';
+    paused: boolean;
+    writable: boolean;
+}
+export declare const isSessionMode: (value: unknown) => value is SessionMode;
+export declare function sessionMode(modes: Record<string, SessionMode>, sessionId: string): SessionMode;
 /** Locale-owned defaults for the user-editable text fields. */
 export declare const LOCALIZED_TEXT_DEFAULTS: {
     readonly zh: {
@@ -80,7 +89,9 @@ export interface AutoContinueSettings {
     notify?: boolean;
     /** Globally pause auto-continue: no live or scan send, queued pending sends cancelled. */
     paused?: boolean;
-    /** Show the global auto-continue switch in the conversation composer. */
+    /** Persistent per-session overrides; default explicitly inherits the profile default. */
+    sessionModes?: Record<string, SessionMode>;
+    /** Show the session mode selector in the conversation composer. */
     showComposerToggle?: boolean;
     /** Loop guard: detect a running turn spinning in place (short talk without tools, or the same tool repeating) and restart it. */
     loopGuard?: boolean;
@@ -298,6 +309,7 @@ export interface SessionState {
     pendingEchoMessageIds: Map<string, number>;
     /** 宽限期定时器(进行中的待发送)。 */
     pendingTimer: ReturnType<typeof setTimeout> | undefined;
+    pendingReason?: string;
     /** 宿主权威 running 位(来自 host/session-status 与回合事件)。 */
     running: boolean | undefined;
     /** 当前排队消息数(来自 session/queue 帧)。 */

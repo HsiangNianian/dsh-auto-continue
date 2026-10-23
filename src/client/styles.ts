@@ -6,7 +6,10 @@
  */
 
 const css = `
-.dshAcComposer { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; flex: 0 0 auto; font: inherit; }
+.dshAcComposer { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px; min-height: 32px; max-width: 100%; font: inherit; }
+.dshAcMode { min-height: 32px; max-width: 100%; padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; }
+.dshAcMode:disabled { opacity: .5; }
+.dshAcMode:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .dshAcComposerLabel { color: var(--dsw-alias-label-secondary); font-size: 12px; white-space: nowrap; }
 .dshAcSwitchTarget { display: inline-flex; align-items: center; min-height: 32px; }
 .dshAcSwitchTarget > button { position: relative; }
