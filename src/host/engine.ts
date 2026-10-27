@@ -173,6 +173,19 @@ function validateSessionEvents(events: unknown): readonly SessionEvent[] {
   return events;
 }
 
+function latestTurnStart(events: readonly SessionEvent[]): SessionEvent<'turn/start'> | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type === 'turn/start') return event;
+  }
+  return undefined;
+}
+
+function isMaintenanceTurnStart(event: SessionEvent<'turn/start'> | undefined): boolean {
+  // shortcut: only message-ops defines this marker; extend when another producer has a verified contract.
+  return (event?.data as { reason?: unknown } | undefined)?.reason === 'message-ops';
+}
+
 /** Interpret host failure payloads without trusting persisted or plugin-provided event shapes. */
 function parseFailureFacts(value: unknown): FailureFacts | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -474,6 +487,9 @@ export class AutoContinueRunner {
       return;
     }
     if (sessionState?.subagent) return;
+    if (sessionState?.maintenanceTurn !== undefined &&
+        sessionState.maintenanceTurn === (event.data as { turn?: number }).turn &&
+        event.type !== 'turn/start' && event.type !== 'turn/end') return;
     if (
       (event.type === 'user/message' || event.type === 'assistant/message') &&
       typeof event.surfaceOp === 'object' &&
@@ -750,6 +766,8 @@ export class AutoContinueRunner {
     switch (event.type) {
       case 'turn/start':
         state.running = true;
+        state.maintenanceTurn = isMaintenanceTurnStart(event) ? event.data.turn : undefined;
+        if (state.maintenanceTurn !== undefined) state.pendingRecoveryAt = 0;
         // 新回合开始: 清空上一步工具调用状态, 避免跨回合误用护栏
         state.tools.startTurn(event.seq);
         // loop guard 状态按回合重置
@@ -778,6 +796,12 @@ export class AutoContinueRunner {
         const turnOutput = state.outputTurn === event.data.turn ? state.turnOutput : 'unknown';
         state.turnOutput = 'unknown';
         state.outputTurn = undefined;
+        const maintenance = state.maintenanceTurn !== undefined && state.maintenanceTurn === event.data.turn;
+        state.maintenanceTurn = undefined;
+        if (maintenance) {
+          this.log(`跳过维护回合 ${sessionId}(message-ops): 不触发自动继续`);
+          break;
+        }
         const reason = event.data.reason;
         const reasonKind = readReasonKind(reason);
         if (reasonKind === undefined) {
@@ -1352,12 +1376,14 @@ export class AutoContinueRunner {
           if (event?.type === 'turn/end') { lastEnd = event; break; }
         }
         const reasonKind = readReasonKind(lastEnd?.data.reason);
+        const lastStart = latestTurnStart(events);
+        const maintenance = lastStart?.data.turn === lastEnd?.data.turn && isMaintenanceTurnStart(lastStart);
         const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
         const superseded = lastEnd !== undefined && events.some((event) =>
           event.seq > lastEnd!.seq && (event.type === 'turn/start' ||
             (event.type === 'user/message' && event.data.source.kind === 'user')),
         );
-        if (lastEnd === undefined || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
+        if (lastEnd === undefined || maintenance || reasonKind === undefined || (!isNonHumanReason(reasonKind) && !silent) ||
             lastEnd.time < now - config.freshMs || superseded) {
           this.bootScannedSessions.add(session);
           continue;
@@ -1495,16 +1521,13 @@ export class AutoContinueRunner {
           const event = events[i];
           if (event?.type === 'turn/end') { lastEnd = event; break; }
         }
-        let lastStart: SessionEvent<'turn/start'> | undefined;
-        for (let i = events.length - 1; i >= 0; i -= 1) {
-          const event = events[i];
-          if (event?.type === 'turn/start') { lastStart = event; break; }
-        }
+        const lastStart = latestTurnStart(events);
         // 兜底分支: 真实 sessionQuery 冷读会把内存中的 interruptedTurnClosers
         // 折叠进返回日志(尾部即合成 turn/end), 上方 closed-tail 才是生产主路
         // 径。这里覆盖两种例外——不折叠的宿主实现, 以及 listSessions 快照与
         // observeSession 之间客户端刚打开、切在轮次中间的 live 视图。
         const openTurn = lastStart !== undefined && (lastEnd === undefined || lastStart.seq > lastEnd.seq);
+        if (isMaintenanceTurnStart(lastStart) && (openTurn || lastStart?.data.turn === lastEnd?.data.turn)) continue;
         let reasonKind: string | undefined;
         let freshAt: number;
         if (openTurn) {

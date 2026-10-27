@@ -330,6 +330,8 @@ export interface SessionState {
     turnOutput: 'unknown' | 'empty' | 'silent' | 'visible';
     outputTurn: number | undefined;
     outputStartSeq: number;
+    /** message-ops maintenance window, which must not enter model recovery or loop accounting. */
+    maintenanceTurn?: number;
     /** 当前连续短句数(loop guard 信号 1: 空转)。 */
     shortRun: number;
     /** 最后一条短句的时间(时间窗判定用)。 */

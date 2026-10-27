@@ -288,7 +288,8 @@ export function isTransientFailure(failure: FailureFacts, retryableErrorPatterns
     /insufficient.*(balance|quota)|billing|payment|quota.*exceeded.*(?!retry)/i.test(haystack) ||
     /model.*not[_-]?found|unknown[_-]?model|model[_-]?not[_-]?found|not.*support.*model/i.test(haystack) ||
     /context.*(length|limit|overflow|exceed)|token.*limit|max.*context/i.test(haystack) ||
-    /invalid[_-]?request|bad[_-]?request/i.test(haystack);
+    /invalid[_-]?request|bad[_-]?request/i.test(haystack) ||
+    /prompt variable "\{\{[^"\r\n]+\}\}" has no value for this assembly/i.test(haystack);
   return !permanent;
 }
 
@@ -891,6 +892,8 @@ export interface SessionState {
   turnOutput: 'unknown' | 'empty' | 'silent' | 'visible';
   outputTurn: number | undefined;
   outputStartSeq: number;
+  /** message-ops maintenance window, which must not enter model recovery or loop accounting. */
+  maintenanceTurn?: number;
   /** 当前连续短句数(loop guard 信号 1: 空转)。 */
   shortRun: number;
   /** 最后一条短句的时间(时间窗判定用)。 */

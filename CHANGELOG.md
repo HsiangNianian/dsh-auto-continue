@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.1-rc.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.1-rc.1) — 2026-10-27
+
+Pre-release patch, available on the `next` dist-tag
+
+### Fixed
+
+- Stop `@240xu/dsh-message-ops` rollback notices from triggering silent recovery or autonomous followups, and cancel sends queued before the rollback ([#69](https://github.com/HsiangNianian/dsh-auto-continue/issues/69))
+- Exclude those maintenance turns from recovery statistics and retry-budget resets, as well as startup recovery of loaded and stored sessions, including unfinished maintenance windows
+- Treat missing prompt template variables as permanent configuration failures when error classification is enabled, avoiding repeated attempts that cannot reach the model
+
+### Maintenance
+
+- Publish prereleases to `next` on npm and GitHub Packages, and mark GitHub Releases as prereleases without replacing the latest stable release
+- Add regression coverage for maintenance turns, startup scans, configuration errors and prerelease publishing, alongside the native settings form tests added since 0.17.0
+
+[Upgrade instructions, validation and known limits](docs/releases/v0.17.1-rc.1.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.17.0...v0.17.1-rc.1)
+
 ## [0.17.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.0) — 2026-10-23
 
 ### Added
