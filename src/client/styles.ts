@@ -148,9 +148,7 @@ const css = `
   .dshAcFooter { align-items: flex-start; flex-direction: column; gap: 10px; }
   .dshAcFooter > div { width: 100%; justify-content: flex-end; }
 }
-/* Match the composer's own pickers (permission/mode) instead of the viewport:
-   the nearest query container is the composer row, so the label collapses at
-   the same 460px threshold as the native permission picker. */
+/* Match the native picker breakpoints when the composer provides a query container. */
 @container (width <= 640px) {
   .dshAcComposerCore { gap: 5px; }
   .dshAcModeTrigger, .dshAcModeMenu { max-width: 104px; padding: 0 3px 0 6px; }
@@ -159,6 +157,14 @@ const css = `
   .dshAcComposerText { display: none; }
   .dshAcModeTrigger, .dshAcModeMenu { max-width: 28px; padding: 0 2px; }
   .dshAcModeTriggerLabel { display: none; }
+}
+/* DS-Bot can remove the query container with display: contents. */
+@media (max-width: 460px) {
+  .dshAcComposer { flex-direction: column; align-items: flex-start; width: min-content; }
+  .dshAcComposer > .dshAcComposerLabel { white-space: normal; }
+  .dshAcComposerCore { gap: 5px; }
+  .dshAcComposerText, .dshAcModeTriggerLabel { display: none; }
+  .dshAcModeTrigger, .dshAcModeMenu { max-width: 28px; padding: 0 2px; }
 }
 
 `;

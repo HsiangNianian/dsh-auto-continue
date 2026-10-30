@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.1) — 2026-10-30
+
+### Fixed
+
+- Keep the mobile composer compact with DS-Bot and dsh-pocket, even when the host's size query container is removed, so the controls leave room for typing ([#72](https://github.com/HsiangNianian/dsh-auto-continue/issues/72))
+- Wrap pause notices and legacy save errors below the controls on narrow screens, preserving the original switch, mode menu and accessible labels
+- Include the rollback fix first shipped in 0.17.1-rc.1: skip `message-ops` maintenance turns in silent recovery, autonomous followups and startup scans, and cancel automatic sends queued before a rollback ([#69](https://github.com/HsiangNianian/dsh-auto-continue/issues/69))
+- Keep maintenance turns out of recovery statistics and retry-budget resets, including unfinished maintenance windows found after a restart
+- Treat missing prompt template variables as permanent configuration failures when error classification is enabled, avoiding retries that cannot reach the model
+
+### Maintenance
+
+- Include the native settings form, maintenance-turn, configuration-error and stable/prerelease publishing regression coverage added since 0.17.0
+- Keep stable releases on `latest` and prereleases on `next`, with reviewed release notes for both
+
+[Upgrade instructions, validation and known limits](docs/releases/v0.17.1.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.17.0...v0.17.1)
+
 ## [0.17.1-rc.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.1-rc.1) — 2026-10-27
 
 Pre-release patch, available on the `next` dist-tag
