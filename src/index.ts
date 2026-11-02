@@ -27,7 +27,7 @@ export const AUTO_CONTINUE_NS = 'auto-continue';
 /** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
 const settingsFields = {
   /** Active browser/UI locale mirrored by the client. */
-  locale: z.string().default('zh'),
+  locale: z.string().default('en'),
   /** Text automatically sent after an interruption. */
   continueText: z.string().default(''),
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */

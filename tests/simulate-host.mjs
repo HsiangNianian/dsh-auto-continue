@@ -377,6 +377,7 @@ function check(name, cond) {
 }
 
 const FAST = {
+  locale: 'zh', // These scenarios assert Chinese copy; the default-locale case overrides this.
   graceMs: 200,
   cooldownMs: 300,
   maxConsecutive: 3,
@@ -510,14 +511,14 @@ const stepStart = (turn, step, seq) => ({
 
 // ---------- 测试 1: turn/end error → 宽限期后自动发送 ----------
 {
-  console.log('测试 1: turn/end error → 宽限期后 followup「继续」');
-  const host = startPlugin({ scanOnBoot: false });
+  console.log('测试 1: 未设置语言 + turn/end error → 宽限期后 followup "Continue"');
+  const host = startPlugin({ scanOnBoot: false, locale: undefined });
   const agent = host.makeAgent('s1');
   await sleep(50);
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
   await sleep(600);
   check('已发送', agent.followups.length === 1);
-  check('文本为「继续」', agent.followups[0]?.content?.[0]?.text === '继续');
+  check('未设置语言时使用英文', agent.followups[0]?.content?.[0]?.text === 'Continue');
   await sleep(50);
 }
 
@@ -545,15 +546,15 @@ const stepStart = (turn, step, seq) => ({
   await sleep(50);
 }
 
-// ---------- 测试 1d: 未支持语言回落中文 ----------
+// ---------- 测试 1d: 未支持语言回落英文 ----------
 {
-  console.log('测试 1d: 未支持的 locale → 回落中文默认文本');
+  console.log('测试 1d: 未支持的 locale → 回落英文默认文本');
   const host = startPlugin({ scanOnBoot: false, locale: 'fr' });
   const agent = host.makeAgent('s1');
   await sleep(50);
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
   await sleep(600);
-  check('默认文本回落为「继续」', agent.followups[0]?.content?.[0]?.text === '继续');
+  check('默认文本回落为 "Continue"', agent.followups[0]?.content?.[0]?.text === 'Continue');
   await sleep(50);
 }
 

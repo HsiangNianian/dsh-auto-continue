@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client';
 // Type-only: pulls the `settings.plugin.item` SlotMap merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client';
-import { type AutoContinueSettings } from './engine.ts';
+import { resolveLocale, type AutoContinueSettings } from '../shared/core.ts';
 import { en, zh, type SettingsCardKey } from './locales.ts';
 import {
   AutoContinueSettingsCard,
@@ -125,6 +125,7 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
   let mirrorAttempts = 0;
   const syncLocale = (): void => {
     const active = ctx.locale.getLocale().active;
+    const target = resolveLocale(active);
     const snapshot = scope.getSnapshot();
     if (!canWriteSettings(snapshot)) return;
     // A genuine language switch is the only thing that earns a fresh budget: the
@@ -136,10 +137,10 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
       mirrorAttempts = 0;
     }
     // Converged: nothing to write.
-    if (snapshot.value?.locale === active) return;
+    if (snapshot.value?.locale === target) return;
     if (mirrorAttempts >= MAX_MIRROR_ATTEMPTS) return;
     mirrorAttempts += 1;
-    void scope.set('locale', active);
+    void scope.set('locale', target);
   };
   ctx.effect(() => scope.subscribe(syncLocale), 'auto-continue: locale settings sync');
   ctx.on('locale/change', syncLocale);

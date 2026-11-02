@@ -55,7 +55,7 @@ try {
     await flush();
   }
   assert.equal(runner.followups.length, 3, 'every completed turn is continued');
-  assert.equal(followupText(runner, 0), '继续', 'the loop continue text is used');
+  assert.equal(followupText(runner, 0), 'Continue', 'the loop continue text defaults to English');
 
   // 27c: success never counts toward the consecutive cap (maxConsecutive: 1).
   const single = host({ resumeCompletedTurns: true, maxConsecutive: 1 });
@@ -158,7 +158,7 @@ try {
   silentLoop.emit(quiet, turnEnd(1, 'completed'));
   await flush();
   assert.equal(quiet.followups.length, 1, 'the loop covers silent turns with silent resume off');
-  assert.equal(followupText(quiet, 0), '继续', 'the loop text is used for silent turns');
+  assert.equal(followupText(quiet, 0), 'Continue', 'the loop text is used for silent turns');
 
   // 27k: with both switches on, a silent turn still produces exactly one send.
   const both = host({ resumeCompletedTurns: true, resumeSilentTurns: true });
@@ -168,7 +168,7 @@ try {
   both.emit(twice, turnEnd(1, 'completed'));
   await flush();
   assert.equal(twice.followups.length, 1, 'a silent turn in loop mode sends once, not twice');
-  assert.equal(followupText(twice, 0), '继续', 'the loop text wins in loop mode');
+  assert.equal(followupText(twice, 0), 'Continue', 'the loop text wins in loop mode');
 
   // 27l: a silent (no visible output) turn is a *failure* in loop mode. The
   // loop covers it, but coverage must not exempt it from the retry budget or

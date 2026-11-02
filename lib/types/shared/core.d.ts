@@ -5,8 +5,9 @@
  * 以及回显识别。引擎迁入 host 后(0.8.0), 浏览器半侧只 re-export 本模块。
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
-/** Supported UI/config locales. Any unknown browser locale falls back to Chinese. */
+/** Supported UI/config locales; missing and unsupported values use English. */
 export type AutoContinueLocale = 'en' | 'zh';
+export declare function resolveLocale(locale: unknown): AutoContinueLocale;
 export type SessionMode = 'default' | 'off' | 'recover' | 'loop';
 export interface SessionPolicy {
     modes: Record<string, SessionMode>;
@@ -110,7 +111,7 @@ export interface AutoContinueSettings {
 }
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;
-/** Effective built-in defaults; localized text fields use Chinese until a browser locale is mirrored. */
+/** Effective built-in defaults; localized text fields use English until a browser locale is mirrored. */
 export declare const DEFAULT_CONFIG: AutoContinueConfig;
 /** Resolve a (possibly partial / not-yet-loaded) settings section to a full config. */
 export declare function resolveConfig(section: AutoContinueSettings | undefined): AutoContinueConfig;

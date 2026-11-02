@@ -6,8 +6,12 @@
  */
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
 
-/** Supported UI/config locales. Any unknown browser locale falls back to Chinese. */
+/** Supported UI/config locales; missing and unsupported values use English. */
 export type AutoContinueLocale = 'en' | 'zh';
+
+export function resolveLocale(locale: unknown): AutoContinueLocale {
+  return typeof locale === 'string' && /^zh(?:-|$)/i.test(locale) ? 'zh' : 'en';
+}
 
 export type SessionMode = 'default' | 'off' | 'recover' | 'loop';
 
@@ -129,10 +133,10 @@ export interface AutoContinueSettings {
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;
 
-/** Effective built-in defaults; localized text fields use Chinese until a browser locale is mirrored. */
+/** Effective built-in defaults; localized text fields use English until a browser locale is mirrored. */
 export const DEFAULT_CONFIG: AutoContinueConfig = {
-  locale: 'zh',
-  ...LOCALIZED_TEXT_DEFAULTS.zh,
+  locale: 'en',
+  ...LOCALIZED_TEXT_DEFAULTS.en,
   resumeSilentTurns: true,
   resumeCompletedTurns: false,
   continueTextLoop: '',
@@ -171,7 +175,7 @@ function booleanOr(value: unknown, fallback: boolean): boolean {
 /** Resolve a (possibly partial / not-yet-loaded) settings section to a full config. */
 export function resolveConfig(section: AutoContinueSettings | undefined): AutoContinueConfig {
   const value = section ?? {};
-  const locale: AutoContinueLocale = value.locale === 'en' ? 'en' : 'zh';
+  const locale = resolveLocale(value.locale);
   const localized = LOCALIZED_TEXT_DEFAULTS[locale];
   const text =
     typeof value.continueText === 'string' && value.continueText.trim() !== ''
