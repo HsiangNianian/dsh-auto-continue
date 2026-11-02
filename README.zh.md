@@ -100,7 +100,7 @@ DSH 插件安装进 **profile**(`dsh web` 对应 `web` profile)。下面的命�
 
 | DSH 内核 | 插件版本 | 配置入口 |
 | --- | --- | --- |
-| **0.2.1-rc.2** | **已验证 0.17.2** | **插件 → dsh-client-auto-continue** |
+| **0.2.1-rc.2** | **已验证 0.17.3** | **插件 → dsh-client-auto-continue** |
 | **0.2.1-alpha.1** | **已验证 0.17.2** | **插件 → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 或更新版本** | **插件 → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 或更新版本** | 同上，从主侧栏的插件页进入 |

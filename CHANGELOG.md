@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.3](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.3) — 2026-11-02
+
+### Fixed
+
+- Extend the compact composer viewport fallback from 460px to 640px, covering the 584px DS-Bot / dsh-pocket layout when its query container is removed ([#72](https://github.com/HsiangNianian/dsh-auto-continue/issues/72), thanks @jasoneri)
+- Keep the icon, switch and mode arrow available, with pause/error text below the controls
+
+### Documentation
+
+- Add measured 584px before/after screenshots and document restart/reload steps in both READMEs
+
+[Upgrade instructions, screenshots and validation](docs/releases/v0.17.3.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.17.2...v0.17.3)
+
 ## [0.17.2](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.2) — 2026-11-02
 
 ### Fixed
