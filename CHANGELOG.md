@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.2](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.2) — 2026-11-02
+
+### Fixed
+
+- Use English for missing or unsupported locales, while preserving Chinese for `zh` and `zh-*`, across host prompts, browser locale synchronization and settings-save notifications ([#73](https://github.com/HsiangNianian/dsh-auto-continue/pull/73), thanks @kesha4)
+- Keep host prompts in English when an older tab writes a raw locale such as `ru` after the browser's bounded synchronization attempts are exhausted
+- Preserve custom prompt text and the three-write limit per active browser locale
+
+### Maintenance
+
+- Rebuild source maps with LF source content and enforce LF text checkouts for consistent builds across platforms
+- Add regression coverage for missing and unsupported locales, Chinese regional tags, mixed client versions and localized save notifications
+
+[Upgrade instructions, validation and known limits](docs/releases/v0.17.2.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.17.1...v0.17.2)
+
 ## [0.17.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.1) — 2026-10-30
 
 ### Fixed
