@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { AutoContinueSchema } from '../lib/index.js';
+import { makeHost, turnEnd } from './host-fixture.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const bundle = readFileSync(join(root, '../lib/client.js'), 'utf8');
@@ -270,30 +272,55 @@ for (const options of [{ writable: false }, { mode: 'memory' }]) {
   assert.deepEqual(page.writes, [], 'read-only and legacy memory scopes must not mirror locale');
 }
 
-// 5. A UI locale the plugin does not ship must not be mirrored verbatim: the
-//    host understands en/zh only and would collapse "ru" into Chinese prompts.
-{
-  const exports = loadBundle();
-  const world = makeWorld('zh');
-  const page = openClient(exports, world, 'ru');
+// 5. Client writes and host reads agree, including absent and legacy raw values.
+assert.equal(AutoContinueSchema({}).locale, 'en', 'new profiles default to English');
+for (const [active, target] of [
+  [undefined, 'en'], [null, 'en'], [42, 'en'], ['', 'en'],
+  ['ru', 'en'], ['fr', 'en'], ['en-US', 'en'], ['zhang', 'en'],
+  ['zh', 'zh'], ['zh-CN', 'zh'], ['zh-TW', 'zh'], ['ZH-hant-TW', 'zh'],
+]) {
+  const world = makeWorld(target === 'en' ? 'zh' : 'en');
+  const page = openClient(loadBundle(), world, active);
   world.tick();
   world.drain();
-  assert.equal(
-    page.writes.at(-1),
-    'en',
-    'an unsupported UI locale must mirror the English fallback instead of its own id',
-  );
+  assert.equal(world.host.locale, target, `mirror locale ${active}`);
+  assert.ok(page.writes.length <= MAX_WRITES_PER_LOCALE);
+  const host = makeHost({ scanOnBoot: false, locale: active });
+  try {
+    const agent = host.agent('locale');
+    host.start();
+    host.emit(agent, turnEnd(1, 'max-tokens'));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(agent.followups[0]?.content[0]?.text, target === 'zh' ? '继续' : 'Continue', `host locale ${active}`);
+  } finally { host.dispose(); }
 }
 
-// 6. Chinese regional locales are Chinese, not English: `zh-CN` / `zh-TW` are
-//    valid registered ids that the plugin renders with its `zh` copy.
+// 6. An old tab can exhaust both budgets and leave ru stored; prompts stay English.
 {
-  const exports = loadBundle();
-  const world = makeWorld('en');
-  const page = openClient(exports, world, 'zh-CN');
+  const world = makeWorld('ru');
+  const oldPage = world.openPage('ru');
+  oldPage.listeners.add(() => {
+    if (oldPage.locale !== oldPage.active && oldPage.writes.length < MAX_WRITES_PER_LOCALE) {
+      oldPage.set('locale', oldPage.active);
+    }
+  });
+  const page = openClient(loadBundle(), world, 'ru');
+  world.drain();
+  assert.equal(oldPage.writes.length, MAX_WRITES_PER_LOCALE);
+  assert.equal(page.writes.length, MAX_WRITES_PER_LOCALE);
+  oldPage.listeners.clear();
   world.tick();
   world.drain();
-  assert.equal(page.writes.at(-1), 'zh', 'a Chinese regional locale must mirror zh');
+  assert.equal(world.host.locale, 'ru', 'closing the old tab does not replenish the budget');
+  assert.equal(world.pending(), 0);
+  const host = makeHost({ scanOnBoot: false, ...world.host });
+  try {
+    const agent = host.agent('mixed-tabs');
+    host.start();
+    host.emit(agent, turnEnd(1, 'max-tokens'));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(agent.followups[0]?.content[0]?.text, 'Continue', 'raw legacy locale does not restore Chinese prompts');
+  } finally { host.dispose(); }
 }
 
 console.log('bounded locale mirror ✅');

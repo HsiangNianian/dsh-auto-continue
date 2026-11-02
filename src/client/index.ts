@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client';
 // Type-only: pulls the `settings.plugin.item` SlotMap merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client';
-import { type AutoContinueSettings } from './engine.ts';
+import { resolveLocale, type AutoContinueSettings } from '../shared/core.ts';
 import { en, zh, type SettingsCardKey } from './locales.ts';
 import {
   AutoContinueSettingsCard,
@@ -125,13 +125,7 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
   let mirrorAttempts = 0;
   const syncLocale = (): void => {
     const active = ctx.locale.getLocale().active;
-    // This plugin ships en/zh copy only, while the host collapses every other id
-    // to Chinese. Mirroring a third-party UI locale verbatim ("ru") therefore
-    // stored a value that made every prompt Chinese; store the language the
-    // reader actually receives instead: any Chinese variant is Chinese, and
-    // every other unsupported id falls back to English.
-    const normalized = active.toLowerCase();
-    const target = normalized === 'zh' || normalized.startsWith('zh-') ? 'zh' : 'en';
+    const target = resolveLocale(active);
     const snapshot = scope.getSnapshot();
     if (!canWriteSettings(snapshot)) return;
     // A genuine language switch is the only thing that earns a fresh budget: the

@@ -143,6 +143,17 @@ for (const service of ['configForms', 'settingsScope']) {
   });
 }
 
+for (const [locale, title] of [[undefined, 'Auto-continue settings'], ['ru', 'Auto-continue settings'], ['zh-TW', '自动继续设置']]) {
+  test(`save notification follows the locale fallback: ${locale}`, async t => {
+    const f = fixture(t, { locale });
+    f.face.edit('notify', 'true');
+    f.face.save();
+    await flush();
+    assert.equal(f.notices.length, 1);
+    assert.equal(f.notices[0].title, title);
+  });
+}
+
 test('requests permission during the click and saves without waiting for the answer', async t => {
   const f = fixture(t, { permission: 'default', locale: 'zh' });
   const permission = f.holdPermission();
