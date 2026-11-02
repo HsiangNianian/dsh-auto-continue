@@ -159,7 +159,7 @@ const css = `
   .dshAcModeTriggerLabel { display: none; }
 }
 /* DS-Bot can remove the query container with display: contents. */
-@media (max-width: 460px) {
+@media (max-width: 640px) {
   .dshAcComposer { flex-direction: column; align-items: flex-start; width: min-content; }
   .dshAcComposer > .dshAcComposerLabel { white-space: normal; }
   .dshAcComposerCore { gap: 5px; }

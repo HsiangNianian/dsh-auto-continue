@@ -223,6 +223,8 @@ The notification's **Pause this session 1h** still temporarily suspends one conv
 
 To hide the controls, open **Plugins → dsh-client-auto-continue → General**, turn off **Show auto-continue switch in the composer**, then **Save**. This only changes visibility (`showComposerToggle`, default `true`). Hosts without the composer slot retain the settings card. A failed save surfaces as a DSH toast instead of inline red text, and a host that stays unavailable for three seconds announces itself once without flashing on a normal load. The switch and mode menu stay disabled while the host bridge or writable settings service is unavailable. When the composer row narrows, the same container query used by the native permission picker collapses the label to its icon and the mode menu to its arrow, keeping the switch and menu on one line.
 
+For DS-Bot / dsh-pocket layouts that remove the query container, screens up to **640 CSS pixels** use the same icon + switch + arrow layout, with pause/error text below. After updating the plugin, restart DSH and reload the remote page to pick up the new styles.
+
 ## Configuration
 
 On **DSH 0.1.7 / 0.2**, open **Plugins** from the main sidebar, choose **dsh-client-auto-continue**, then select a settings category. This is separate from **Settings → Built-in plugins**, which only lists component status. Older DSH versions use **Settings → Plugins → Plugin configuration**.
