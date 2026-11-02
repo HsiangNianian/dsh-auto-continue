@@ -270,4 +270,30 @@ for (const options of [{ writable: false }, { mode: 'memory' }]) {
   assert.deepEqual(page.writes, [], 'read-only and legacy memory scopes must not mirror locale');
 }
 
+// 5. A UI locale the plugin does not ship must not be mirrored verbatim: the
+//    host understands en/zh only and would collapse "ru" into Chinese prompts.
+{
+  const exports = loadBundle();
+  const world = makeWorld('zh');
+  const page = openClient(exports, world, 'ru');
+  world.tick();
+  world.drain();
+  assert.equal(
+    page.writes.at(-1),
+    'en',
+    'an unsupported UI locale must mirror the English fallback instead of its own id',
+  );
+}
+
+// 6. Chinese regional locales are Chinese, not English: `zh-CN` / `zh-TW` are
+//    valid registered ids that the plugin renders with its `zh` copy.
+{
+  const exports = loadBundle();
+  const world = makeWorld('en');
+  const page = openClient(exports, world, 'zh-CN');
+  world.tick();
+  world.drain();
+  assert.equal(page.writes.at(-1), 'zh', 'a Chinese regional locale must mirror zh');
+}
+
 console.log('bounded locale mirror ✅');

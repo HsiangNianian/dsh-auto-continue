@@ -5,7 +5,9 @@
  * 以及回显识别。引擎迁入 host 后(0.8.0), 浏览器半侧只 re-export 本模块。
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
-/** Supported UI/config locales. Any unknown browser locale falls back to Chinese. */
+/** Supported UI/config locales. The browser mirror stores `zh` for any Chinese
+ * variant and English for every other unsupported UI locale; a stored value this
+ * type cannot express still resolves to Chinese here. */
 export type AutoContinueLocale = 'en' | 'zh';
 export type SessionMode = 'default' | 'off' | 'recover' | 'loop';
 export interface SessionPolicy {

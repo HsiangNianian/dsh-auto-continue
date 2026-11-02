@@ -125,6 +125,13 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
   let mirrorAttempts = 0;
   const syncLocale = (): void => {
     const active = ctx.locale.getLocale().active;
+    // This plugin ships en/zh copy only, while the host collapses every other id
+    // to Chinese. Mirroring a third-party UI locale verbatim ("ru") therefore
+    // stored a value that made every prompt Chinese; store the language the
+    // reader actually receives instead: any Chinese variant is Chinese, and
+    // every other unsupported id falls back to English.
+    const normalized = active.toLowerCase();
+    const target = normalized === 'zh' || normalized.startsWith('zh-') ? 'zh' : 'en';
     const snapshot = scope.getSnapshot();
     if (!canWriteSettings(snapshot)) return;
     // A genuine language switch is the only thing that earns a fresh budget: the
@@ -136,10 +143,10 @@ function mountSettings(ctx: ClientContext, scope: SettingsScope<AutoContinueSett
       mirrorAttempts = 0;
     }
     // Converged: nothing to write.
-    if (snapshot.value?.locale === active) return;
+    if (snapshot.value?.locale === target) return;
     if (mirrorAttempts >= MAX_MIRROR_ATTEMPTS) return;
     mirrorAttempts += 1;
-    void scope.set('locale', active);
+    void scope.set('locale', target);
   };
   ctx.effect(() => scope.subscribe(syncLocale), 'auto-continue: locale settings sync');
   ctx.on('locale/change', syncLocale);

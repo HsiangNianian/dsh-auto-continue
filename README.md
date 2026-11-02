@@ -241,7 +241,7 @@ DSH 0.1.7 / 0.2 stores these values in the `auto-continue` entry's config in the
 
 Startup recovery polls every three seconds for sessions that load late, up to `freshMs` after the engine starts. Each settled session history is inspected once. `scanLimit` limits eligible recoveries per pass, so healthy or permanent-error sessions cannot crowd out interrupted ones. Pausing suspends recovery within the same window; unloading cancels the poller.
 
-The browser mirrors DSH's active language into the internal `locale` field. Leave the seven localized text fields empty or omit them to follow that language automatically; any non-empty value is treated as your own template and is never rewritten when the language changes:
+The browser mirrors DSH's active language into the internal `locale` field: any Chinese variant (`zh`, `zh-CN`, `zh-TW`, …) is stored as `zh`, and every other unsupported UI locale is stored as `en`, which is the copy the plugin would show for it anyway. Leave the seven localized text fields empty or omit them to follow that language automatically; any non-empty value is treated as your own template and is never rewritten when the language changes:
 
 ```yaml
 - id: auto-continue
