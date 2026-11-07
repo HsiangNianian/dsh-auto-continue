@@ -287,6 +287,8 @@ export function isTransientFailure(failure: FailureFacts, retryableErrorPatterns
   if (explicitlyRetryable) return true;
   const status = failure.status;
   if (status !== undefined && (status === 401 || status === 403)) return false;
+  // Malformed model output can echo tool arguments that look like auth/quota errors.
+  if (failure.code === 'MALFORMED_RESPONSE') return true;
   const permanent =
     /auth|unauthor|forbidden|credential|api[_-]?key|permission/i.test(haystack) ||
     /insufficient.*(balance|quota)|billing|payment|quota.*exceeded.*(?!retry)/i.test(haystack) ||
