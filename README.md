@@ -100,8 +100,8 @@ DSH plugins install into a **profile** (`dsh web` → `web` profile). The comman
 
 | DSH runtime | Plugin version | Configuration entry point |
 | --- | --- | --- |
-| **0.2.1-rc.2** | **0.17.3 verified** | **Plugins → dsh-client-auto-continue** |
-| **0.2.1-alpha.1** | **0.17.2 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.1-rc.2** | **0.17.4 verified** | **Plugins → dsh-client-auto-continue** |
+| **0.2.1-alpha.1** | **0.17.4 verified** | **Plugins → dsh-client-auto-continue** |
 | **0.2.0-rc.1** | **0.12.1 or newer** | **Plugins → dsh-client-auto-continue** |
 | **0.1.7-rc.2** | **0.11.9 or newer** | Same Plugins page |
 | Older hosts with the legacy settings API | Legacy UI retained | **Settings → Plugins → Plugin configuration** |

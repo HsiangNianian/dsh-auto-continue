@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.4](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.4) — 2026-11-07
+
+### Fixed
+
+- Retry `MALFORMED_RESPONSE` errors without treating keywords in echoed tool arguments as permanent authentication, quota or configuration failures ([#75](https://github.com/HsiangNianian/dsh-auto-continue/issues/75), thanks @yuloop)
+- Apply the shared classification fix to live errors, loaded-session startup scans and stored-session scans, preserving explicit HTTP 401/403 checks, custom overrides and retry limits
+
+### Maintenance
+
+- Add regression coverage across all three recovery paths, permanent-error boundaries, the consecutive-attempt cap and custom-pattern precedence
+- Update both READMEs with the built-in behavior and removal of the temporary workaround
+
+[Upgrade instructions and validation](docs/releases/v0.17.4.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.17.3...v0.17.4)
+
 ## [0.17.3](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.3) — 2026-11-02
 
 ### Fixed
