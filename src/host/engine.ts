@@ -153,13 +153,17 @@ const CHILD_CAUSE_COPY = {
 /** Structural view of `ctx.goals`; declared locally because devDeps target an older host. */
 interface GoalRefLike {
   readonly id: string;
+  /** Mutations are CAS-checked against this revision; omitting it raises GOAL_STALE_REVISION. */
+  readonly revision: number;
 }
 
 interface GoalViewLike {
   readonly id: string;
+  /** The host's `view()` exposes no `ref`; callers build `{ id, revision }` from the view. */
   readonly ref?: GoalRefLike;
   readonly phase?: string;
   readonly activation?: string;
+  readonly revision?: number;
 }
 
 interface GoalServiceLike {
@@ -1666,15 +1670,17 @@ export class AutoContinueRunner {
       }
       const sessionId = record.header.id;
       if (this.sessionConfig(sessionId).paused || Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) continue;
-      if (record.live || this.storedSwept.has(sessionId)) continue;
-      this.storedSwept.add(sessionId);
       if (record.header.origin === 'subagent') {
-        // 子会话不在这里续跑(父代理权威), 但可以把它记进 root 会话的唤醒清单。
+        // 子会话的记账完全交给 childSwept。若沿用 storedSwept(它在下面为 root 记账),
+        // 配额用尽的那一批会被永久标成"已裁决": 之后每轮都在这里被挡掉, 775 个子会话
+        // 只判 8 个, 而配额本意只是限制单轮的冷读成本。
         if (config.resumeInterruptedChildren) {
           await this.sweepChild(record, headersById, config, deadline);
         }
         continue;
       }
+      if (record.live || this.storedSwept.has(sessionId)) continue;
+      this.storedSwept.add(sessionId);
       observed += 1;
       let observation: StoredObservation | undefined;
       try {
@@ -1796,6 +1802,8 @@ export class AutoContinueRunner {
     // one-shot 子会话在结果落库后已被丢弃, 没有可续的日志。
     if (record.persisted !== true) return;
     if (this.childSwept.has(sessionId)) return;
+    // live 会话由实时事件路径负责; 冷读它既费钱又会与写归属相撞。
+    if (this.ctx.agents.get(sessionId) !== undefined) return;
     if (this.childScanned >= CHILD_SWEEP_LIMIT) return;
     if (this.sessionConfig(sessionId).paused) return;
     const rootId = resolveRootHeader(header, headersById);
@@ -1849,13 +1857,17 @@ export class AutoContinueRunner {
   ): Promise<void> {
     if (this.disposed || this.childInterrupts.size === 0) return;
     if (config.paused || !config.scanOnBoot || !config.resumeInterruptedChildren) return;
-    const pending = [...this.childInterrupts.entries()];
-    this.childInterrupts.clear();
-    for (const [rootId, children] of pending) {
-      if (this.disposed || Date.now() >= deadline) return;
+    // 不整体 clear: 只有"已裁决"的 root 才销账。若在循环前 clear, 任一 root 因冷却或
+    // 主路径已排期而提前返回, 这批孩子就永久丢了 —— 它们已在 childSwept 里, 不会再被收集。
+    for (const [rootId, children] of [...this.childInterrupts]) {
+      if (this.disposed || Date.now() >= deadline) return; // 未处理的留到下一轮
       try {
-        await this.wakeRoot(config, rootId, children, deadline);
+        if (await this.wakeRoot(config, rootId, children, deadline)) {
+          this.childInterrupts.delete(rootId);
+        }
       } catch (error) {
+        // 抛错也要销账, 否则每轮重试同一条坏数据。
+        this.childInterrupts.delete(rootId);
         if (!this.disposed) {
           this.ctx.logger.info(
             `子会话唤醒 ${rootId} 失败: ${error instanceof Error ? error.message : String(error)}`,
@@ -1874,18 +1886,19 @@ export class AutoContinueRunner {
     rootId: SessionId,
     children: readonly ChildInterrupt[],
     deadline: number,
-  ): Promise<void> {
-    if (this.sessionConfig(rootId).paused) return;
-    if (Date.now() < (this.pauseUntil.get(rootId) ?? 0)) return;
+  ): Promise<boolean> {
+    // 返回值语义: true = 已裁决(可销账), false = 稍后重试(必须留住这一批)。
+    if (this.sessionConfig(rootId).paused) return false;
+    if (Date.now() < (this.pauseUntil.get(rootId) ?? 0)) return false;
     const state = this.state(rootId);
-    if (state.pendingTimer !== undefined) return; // 主路径已排好, 不重复催
-    if (state.consecutive >= config.maxConsecutive) return;
-    if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return;
+    if (state.pendingTimer !== undefined) return false; // 主路径已排好, 下一轮再看
+    if (state.consecutive >= config.maxConsecutive) return true; // 预算耗尽: 不必每轮重试
+    if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return false;
     const batch = children.map(child => `${child.id}:${child.cause}`).sort().join(',');
-    if (this.childWoken.get(rootId) === batch) return;
-    if (!(await this.rootAcceptsWake(rootId, deadline))) return;
+    if (this.childWoken.get(rootId) === batch) return true;
+    if (!(await this.rootAcceptsWake(rootId, deadline))) return true; // 明确裁决: 不该唤醒
     const agent = await this.ensureLiveAgent(rootId, deadline);
-    if (agent === undefined || this.disposed) return;
+    if (agent === undefined || this.disposed) return false;
     const text = this.buildChildResumeText(config, children);
     const message = createUserMessage({
       content: [{ type: 'text', text }],
@@ -1898,6 +1911,7 @@ export class AutoContinueRunner {
       `已唤醒 ${rootId}: ${children.length} 个子会话在重启时被打断, 清单已交给父会话处置`,
     );
     this.rearmGoal(rootId, config);
+    return true;
   }
 
   /** 父会话只在"干净结束"或"被宿主关闭"时接受唤醒; 用户手动停止的绝不复活。 */
@@ -1905,15 +1919,19 @@ export class AutoContinueRunner {
     const query = this.ctx.get('sessionQuery');
     if (query === undefined) return false;
     let events: readonly SessionEvent[];
+    let stored: StoredObservation | undefined;
     try {
-      const stored: StoredObservation = await this.readStored(
+      const observation: StoredObservation = await this.readStored(
         signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
         deadline,
       );
-      events = validateSessionEvents(stored.events);
-      stored[Symbol.dispose]?.();
+      stored = observation;
+      events = validateSessionEvents(observation.events);
     } catch {
       return false;
+    } finally {
+      // validateSessionEvents 可能抛在畸形日志上, 租约必须无条件释放。
+      stored?.[Symbol.dispose]?.();
     }
     if (events.length === 0) return false;
     let lastEnd: SessionEvent<'turn/end'> | undefined;
@@ -1971,8 +1989,8 @@ export class AutoContinueRunner {
       ? '重启时你开的以下子代理 / 团队成员会话被打断, 没有跑完。请逐个检查, 按需要继续或收尾:'
       : 'These child sessions you started (subagent / team member) were interrupted by a restart and did not finish. Check each one and either continue it or wrap it up:';
     const tail = config.locale === 'zh'
-      ? '要继续的用 send_message 通知对应会话; 已完成或不再需要的, 说明结论即可。'
-      : 'Use send_message for the ones that should continue; for finished or abandoned ones, just state the conclusion.';
+      ? '要继续的用 send_message / subagent 重新拉起对应会话(重启后它们并未加载); 已完成或不再需要的, 说明结论即可。'
+      : 'Use send_message (or subagent) to bring back the ones that should continue — they are not loaded after the restart; for finished or abandoned ones, just state the conclusion.';
     return [header, ...lines, tail].join('\n');
   }
 
@@ -1991,7 +2009,15 @@ export class AutoContinueRunner {
     try {
       const view = goals.get(agent);
       if (view === undefined) return;
-      const ref = view.ref ?? { id: view.id };
+      // 宿主的 view() 不带 ref 字段, 而 resume() 用 revision 做 CAS 校验(expectCurrent):
+      // 只带 id 必定抛 GOAL_STALE_REVISION 被这里 catch 成一行日志 —— 等于开关失效。
+      // 缺 revision 时 fail closed, 不猜。
+      const revision = view.revision;
+      if (revision === undefined) {
+        this.log(`会话 ${sessionId}: goal 视图缺 revision, 跳过重新武装(宿主会拒绝无 revision 的 resume)`);
+        return;
+      }
+      const ref: GoalRefLike = view.ref ?? { id: view.id, revision };
       if (view.phase === 'active' && view.activation === 'disarmed') {
         goals.resume(agent, ref);
         this.log(`会话 ${sessionId}: goal 被重启失活, 已重新武装`);

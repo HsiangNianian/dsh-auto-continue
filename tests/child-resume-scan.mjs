@@ -124,12 +124,29 @@ function childSweep(t, {
 /** A parent that finished its turn cleanly: the only state a wake is designed for. */
 const cleanRoot = () => [turnStart(1), turnEnd(1, 'completed')];
 
-const goalService = (view) => {
-  const calls = { get: 0, resume: [] };
+/**
+ * Fake `goals` service. `view` is the GoalView-shaped object the host's `view()`
+ * really returns — or a thunk, for tests that need a fresh object per call.
+ *
+ * `strictRevision` mirrors the real `dsh-goal` `resume()` contract: it runs the
+ * same CAS check `expectCurrent` does — a ref whose `revision` does not match
+ * the stored goal revision throws GOAL_STALE_REVISION. The throw is recorded in
+ * `calls.errors` (and then rethrown) so a test can prove the engine swallowed it
+ * as a log line instead of tearing the sweep down.
+ */
+const goalService = (view, { strictRevision = false, revision = 1 } = {}) => {
+  const calls = { get: 0, resume: [], errors: [] };
   return {
     calls,
     get(agent) { calls.get += 1; calls.agent = agent; return typeof view === 'function' ? view() : view; },
-    resume(agent, ref) { calls.resume.push({ agent, ref }); },
+    resume(agent, ref) {
+      calls.resume.push({ agent, ref });
+      if (strictRevision && (ref === undefined || ref.revision !== revision)) {
+        const error = new Error('GOAL_STALE_REVISION');
+        calls.errors.push(error);
+        throw error;
+      }
+    },
   };
 };
 
@@ -269,7 +286,14 @@ test('⑨ a child whose parent is not in the listing is skipped safely', async (
 
 // ---------- ⑩ goals ----------
 
-const activeDisarmedGoal = () => ({ id: 'goal-1', ref: { id: 'goal-1' }, phase: 'active', activation: 'disarmed' });
+/**
+ * Real GoalView shape, verified against the unpacked dsh-goal bundle: `view()`
+ * returns `{ ...state.goal, roundsStarted, createdAt, updatedAt, activation }`.
+ * The goal keys are exactly `id, maxGoalRounds, objective, phase, revision` —
+ * there is NO `ref` field, and `revision` is always present. The old stub
+ * invented `ref: { id }`, which is why the re-arm used to throw every time.
+ */
+const activeDisarmedGoal = () => ({ id: 'goal-1', revision: 1, phase: 'active', activation: 'disarmed' });
 
 test('⑩-a an active goal disarmed by the restart is re-armed once', async (t) => {
   const goals = goalService(activeDisarmedGoal());
@@ -281,12 +305,12 @@ test('⑩-a an active goal disarmed by the restart is re-armed once', async (t) 
   });
   await tick();
   eq(goals.calls.resume.length, 1, '⑩-a goals.resume is called exactly once');
-  eq(goals.calls.resume[0]?.ref, { id: 'goal-1' }, '⑩-a the goal reference is passed through');
+  eq(goals.calls.resume[0]?.ref, { id: 'goal-1', revision: 1 }, '⑩-a the goal reference carries id AND the current revision');
   isTrue(goals.calls.resume[0]?.agent === parent, '⑩-a the live root agent is the re-arm target');
 });
 
 test('⑩-b a paused goal stays paused unless resumePausedGoals is on', async (t) => {
-  const goals = goalService(() => ({ id: 'goal-2', ref: { id: 'goal-2' }, phase: 'paused', activation: 'disarmed' }));
+  const goals = goalService(() => ({ id: 'goal-2', revision: 1, phase: 'paused', activation: 'disarmed' }));
   const { tick } = childSweep(t, {
     rootEvents: cleanRoot(),
     children: [{ id: CHILD, events: [turnStart(1)] }],
@@ -308,6 +332,71 @@ test('⑩-c with resumeGoals off the goals service is never touched', async (t) 
   await tick();
   eq(goals.calls.get, 0, '⑩-c goals.get is never called when re-arming is off');
   eq(goals.calls.resume.length, 0, '⑩-c and nothing is re-armed');
+});
+
+/**
+ * ⑩-d — the real-API CAS check, on the happy path.
+ *
+ * The stub now enforces what `dsh-goal` really enforces: `resume(agent, ref)`
+ * compares `ref.id`/`ref.revision` against the stored goal and throws
+ * GOAL_STALE_REVISION on any mismatch. This is the test the original bug should
+ * have died on: a ref of `{ id }` (no revision) is rejected by the real service,
+ * the throw is swallowed by the engine's catch, and the switch silently does
+ * nothing. Here the ref must pass the check, so no error may be recorded.
+ */
+test('⑩-d the real revision check accepts the re-arm reference', async (t) => {
+  const goals = goalService(activeDisarmedGoal(), { strictRevision: true, revision: 1 });
+  const { tick } = childSweep(t, {
+    rootEvents: cleanRoot(),
+    children: [{ id: CHILD, events: [turnStart(1)] }],
+    config: { resumeInterruptedChildren: true, resumeGoals: true },
+    services: { goals },
+  });
+  await tick();
+  eq(goals.calls.resume.length, 1, '⑩-d goals.resume is reached once');
+  eq(goals.calls.errors.length, 0,
+    '⑩-d the re-arm did NOT throw GOAL_STALE_REVISION (a revision-less ref would throw here)');
+  eq(goals.calls.resume[0]?.ref, { id: 'goal-1', revision: 1 },
+    '⑩-d the reference satisfies resume(agent, { id, revision })');
+});
+
+/**
+ * ⑩-e — the missing-revision trap, locked shut.
+ *
+ * Real GoalView always carries `revision`; this stub drops it on purpose, so any
+ * implementation that builds a ref out of `view` can only produce
+ * `revision: undefined`. Real `expectCurrent` rejects that, and the engine must
+ * stay alive: the sweep keeps going and still hands the root its wake-up prompt.
+ *
+ * Deliberately shape-agnostic: a correct engine may fail closed BEFORE calling
+ * resume (skip the goal, log it) or may call resume and let the CAS check reject
+ * it. Both are "no silent success", which is what this test locks — what must
+ * never happen again is a re-arm that looks like it worked.
+ */
+test('⑩-e a goal view without revision never ends up as a successful re-arm', async (t) => {
+  // No `revision` key at all — the shape the fabricated stub used to have.
+  const goals = goalService({ id: 'goal-1', phase: 'active', activation: 'disarmed' },
+    { strictRevision: true, revision: 1 });
+  const { tick, parent } = childSweep(t, {
+    rootEvents: cleanRoot(),
+    children: [{ id: CHILD, events: [turnStart(1)] }],
+    config: { resumeInterruptedChildren: true, resumeGoals: true },
+    services: { goals },
+  });
+  await tick(); // must not reject: the engine catches the stale-revision failure
+  eq(goals.calls.resume.length - goals.calls.errors.length, 0,
+    '⑩-e zero successful re-arms when the view has no revision');
+  eq(goals.calls.errors.length, goals.calls.resume.length,
+    '⑩-e every attempt was rejected by the real CAS check (or none was attempted)');
+  if (goals.calls.resume.length === 0) {
+    pass('⑩-e engine failed closed: the revision-less view never reached resume');
+  } else {
+    pass('⑩-e engine attempted the re-arm and the real CAS check rejected it');
+    match(goals.calls.errors[0]?.message, 'GOAL_STALE_REVISION',
+      '⑩-e the rejection is the real stale-revision error');
+  }
+  eq(parent.followups.length, 1, '⑩-e the sweep still finished and woke the root');
+  isTrue(true, '⑩-e the missing revision did not crash the scan');
 });
 
 // ---------- ⑪ one-shot children have no log to resume ----------
