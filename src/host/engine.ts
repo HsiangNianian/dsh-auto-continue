@@ -424,6 +424,8 @@ export class AutoContinueRunner {
   private readonly childInterrupts = new Map<SessionId, ChildInterrupt[]>();
   /** 已唤醒过的 root 会话 → 上次唤醒覆盖的子会话签名, 防止每轮重复催同一批。 */
   private readonly childWoken = new Map<SessionId, string>();
+  /** 已打印过「父链不可解析」的子会话, 避免 15 分钟扫描窗口内每轮重扫把日志刷爆。 */
+  private readonly childDirtyLogged = new Set<SessionId>();
   /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
   private readonly storedSweepFailures = new Map<SessionId, number>();
   private storedSweepAnnounced = false;
@@ -1641,16 +1643,16 @@ export class AutoContinueRunner {
       this.storedSweepAnnounced = true;
       // 诊断口径: 宿主返回的 header 是否携带 origin, 决定子会话分支能否进入。
       let children = 0;
-      let roots = 0;
+      let otherOrigins = 0;
       let originMissing = 0;
       for (const record of records) {
         const origin = (record?.header as { origin?: string } | undefined)?.origin;
         if (origin === 'subagent') children += 1;
         else if (origin === undefined) originMissing += 1;
-        else roots += 1;
+        else otherOrigins += 1;
       }
       this.ctx.logger.info(
-        `存储扫描就绪: ${records.length} 个会话记录 (root ${roots} / subagent ${children} / 无 origin ${originMissing})`,
+        `存储扫描就绪: ${records.length} 个会话记录 (subagent ${children} / 无 origin ${originMissing} / 其它 origin ${otherOrigins})`,
       );
     }
     // 父子链解析只依赖 header: 一次建成索引, 子会话不必各自再读父日志。
@@ -1808,7 +1810,11 @@ export class AutoContinueRunner {
     if (this.sessionConfig(sessionId).paused) return;
     const rootId = resolveRootHeader(header, headersById);
     if (rootId === undefined || rootId === sessionId) {
-      this.log(`子会话 ${sessionId} 父链不可解析(脏引用或自环), 跳过`);
+      // 每轮扫描都会重走这里; 只记一次, 否则 15 分钟 freshMs 窗口内会刷出数万行噪声。
+      if (!this.childDirtyLogged.has(sessionId)) {
+        this.childDirtyLogged.add(sessionId);
+        this.log(`子会话 ${sessionId} 父链不可解析(脏引用或自环), 跳过(每会话只记一次)`);
+      }
       return; // 脏引用或自环: 不猜
     }
     const query = this.ctx.get('sessionQuery');

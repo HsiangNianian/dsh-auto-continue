@@ -55,6 +55,8 @@ export declare class AutoContinueRunner {
     private readonly childInterrupts;
     /** 已唤醒过的 root 会话 → 上次唤醒覆盖的子会话签名, 防止每轮重复催同一批。 */
     private readonly childWoken;
+    /** 已打印过「父链不可解析」的子会话, 避免 15 分钟扫描窗口内每轮重扫把日志刷爆。 */
+    private readonly childDirtyLogged;
     /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
     private readonly storedSweepFailures;
     private storedSweepAnnounced;
