@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Child-session hand-off** (`resumeInterruptedChildren`, off by default): the startup scan now judges subagent and team-member sessions that a restart interrupted (`open-turn`, `aborted{disposed|legacy}`, `interrupted`, `max-tokens`, or a retryable `error`) and sends their root session one message listing them, once per batch signature. Child sessions are still never resumed directly; parents that finished cleanly or that the user stopped by hand are skipped, and at most 8 child logs are cold-read per pass from a dedicated ledger that does not consume the main scan budget
+- **Goal re-arm** (`resumeGoals`, off by default): after an auto-continue send, re-arm an `active` goal that the host disarmed on restart, so its continuation rounds can run again. `goals.resume` performs no human-authorization check in the service layer, so automatic use acts on the user's behalf — hence opt-in only
+- **Resume paused goals** (`resumePausedGoals`, off by default): also resume goals the user paused by hand; gated behind `resumeGoals`
+
 ## [0.17.4](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.4) — 2026-11-07
 
 ### Fixed

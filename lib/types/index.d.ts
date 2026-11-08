@@ -83,6 +83,12 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
 }>, Schemastery.ObjectT<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
@@ -150,6 +156,12 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
 }>>;
 /** Loader config is a live reference on DSH 0.1.7, and a plain object on older hosts. */
 export type AutoContinueEntryConfig = EntrySettings | LiveEntrySettings;
@@ -220,6 +232,12 @@ export declare const Config: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
 }>, Schemastery.ObjectT<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
@@ -287,6 +305,12 @@ export declare const Config: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
 }>> | z<AutoContinueSettings, AutoContinueEntryConfig>;
 /**
  * Plugin body: start the single-instance engine and serve the status bridge.

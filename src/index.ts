@@ -98,6 +98,12 @@ const settingsFields = {
   loopText: z
     .string()
     .default(''),
+  /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+  resumeInterruptedChildren: z.boolean().default(false),
+  /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+  resumeGoals: z.boolean().default(false),
+  /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+  resumePausedGoals: z.boolean().default(false),
 };
 export const AutoContinueSchema = z.object(settingsFields);
 
