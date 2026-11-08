@@ -518,6 +518,7 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
   await sleep(600);
   check('已发送', agent.followups.length === 1);
+  check('续跑消息使用插件来源', agent.followups[0]?.source?.kind === 'plugin:dsh-client-auto-continue');
   check('未设置语言时使用英文', agent.followups[0]?.content?.[0]?.text === 'Continue');
   await sleep(50);
 }
@@ -654,9 +655,9 @@ const stepStart = (turn, step, seq) => ({
   await sleep(50);
 }
 
-// ---------- 测试 2c: 待处理 ID 上限 ----------
+// ---------- 测试 2c: 超出跟踪上限的插件回显 ----------
 {
-  console.log('测试 2c: 待处理插件消息 ID 有上限');
+  console.log('测试 2c: 超出 ID 跟踪上限的插件消息仍不算用户介入');
   const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 100 });
   const agent = host.makeAgent('s1');
   await sleep(50);
@@ -669,13 +670,13 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
   host.emit(agent.session, userMessageEvent(oldestMessage, 30));
   await sleep(100);
-  check('超出上限的最旧 ID 已淘汰', agent.followups.length === 65);
+  check('超出跟踪上限的插件回显不算用户介入', agent.followups.length === 66);
   await sleep(50);
 }
 
-// ---------- 测试 2d: 待处理 ID 过期 ----------
+// ---------- 测试 2d: 过期插件回显 ----------
 {
-  console.log('测试 2d: 旧插件消息 ID 超时 → 不会被新发送重新激活');
+  console.log('测试 2d: 旧插件消息 ID 超时 → 仍不算用户介入');
   const realNow = Date.now;
   let now = realNow();
   try {
@@ -691,7 +692,7 @@ const stepStart = (turn, step, seq) => ({
     host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
     host.emit(agent.session, userMessageEvent(expiredMessage, 10, now));
     await sleep(100);
-    check('过期 ID 按用户介入处理并取消待发送', agent.followups.length === 2);
+    check('过期插件回显不算用户介入', agent.followups.length === 3);
   } finally {
     Date.now = realNow;
   }
@@ -711,7 +712,7 @@ const stepStart = (turn, step, seq) => ({
   check('后续发送成功', agent.followups.length === 1);
 
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
-  host.emit(agent.session, userMessageEvent(agent.followupAttempts[0], 10));
+  host.emit(agent.session, userMessageEvent({ ...agent.followupAttempts[0], source: { kind: 'user' } }, 10));
   await sleep(100);
   check('失败消息 ID 未吞掉后续用户介入', agent.followups.length === 1);
   await sleep(50);
@@ -735,9 +736,9 @@ const stepStart = (turn, step, seq) => ({
   await sleep(50);
 }
 
-// ---------- 测试 2g: 回显 ID 一次性消费 ----------
+// ---------- 测试 2g: 重复插件回显 ----------
 {
-  console.log('测试 2g: 插件消息 ID 只消费一次');
+  console.log('测试 2g: 重复插件回显不重置连续次数');
   const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 1 });
   const agent = host.makeAgent('s1');
   await sleep(50);
@@ -747,7 +748,7 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, { ...echo, seq: 11 });
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
   await sleep(100);
-  check('重复 ID 的第二次事件算作用户介入', agent.followups.length === 2);
+  check('重复插件回显不算用户介入', agent.followups.length === 1);
   await sleep(50);
 }
 

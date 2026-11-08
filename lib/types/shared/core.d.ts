@@ -5,6 +5,14 @@
  * 以及回显识别。引擎迁入 host 后(0.8.0), 浏览器半侧只 re-export 本模块。
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
+export declare const AUTO_CONTINUE_SOURCE_KIND = "plugin:dsh-client-auto-continue";
+declare module '@deepseek-ai/dsh-llm' {
+    interface MessageSourceMap {
+        'plugin:dsh-client-auto-continue': {
+            kind: typeof AUTO_CONTINUE_SOURCE_KIND;
+        };
+    }
+}
 /** Supported UI/config locales; missing and unsupported values use English. */
 export type AutoContinueLocale = 'en' | 'zh';
 export declare function resolveLocale(locale: unknown): AutoContinueLocale;
