@@ -1203,7 +1203,7 @@ export class AutoContinueRunner {
     try {
       const message = createUserMessage({
         content: [{ type: 'text', text }],
-        source: { kind: AUTO_CONTINUE_SOURCE_KIND },
+        source: { kind: config.usePluginSource ? AUTO_CONTINUE_SOURCE_KIND : 'user' },
       });
       // `followup` may publish the matching session event synchronously.
       trackPendingEcho(state, message.id);

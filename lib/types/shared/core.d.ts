@@ -52,6 +52,8 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
 export interface AutoContinueSettings {
     /** Active browser/UI locale mirrored by the client. */
     locale?: AutoContinueLocale;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource?: boolean;
     /** Text automatically sent after an interruption. */
     continueText?: string;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */

@@ -19,6 +19,8 @@ export declare const AUTO_CONTINUE_NS = "auto-continue";
 export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -86,6 +88,8 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
 }>, Schemastery.ObjectT<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -156,6 +160,8 @@ export type AutoContinueEntryConfig = EntrySettings | LiveEntrySettings;
 export declare const Config: z<Schemastery.ObjectS<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -223,6 +229,8 @@ export declare const Config: z<Schemastery.ObjectS<{
 }>, Schemastery.ObjectT<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */

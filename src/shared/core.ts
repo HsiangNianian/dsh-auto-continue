@@ -72,6 +72,8 @@ export const LOCALIZED_TEXT_DEFAULTS = {
 export interface AutoContinueSettings {
   /** Active browser/UI locale mirrored by the client. */
   locale?: AutoContinueLocale;
+  /** Send continue messages with the plugin source instead of the legacy user source. */
+  usePluginSource?: boolean;
   /** Text automatically sent after an interruption. */
   continueText?: string;
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -145,6 +147,7 @@ export type AutoContinueConfig = Required<AutoContinueSettings>;
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   locale: 'en',
   ...LOCALIZED_TEXT_DEFAULTS.en,
+  usePluginSource: false,
   resumeSilentTurns: true,
   resumeCompletedTurns: false,
   continueTextLoop: '',
@@ -215,6 +218,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
       : localized.guardDoneText;
   return {
     locale,
+    usePluginSource: booleanOr(value.usePluginSource, DEFAULT_CONFIG.usePluginSource),
     continueText: text,
     continueTextMaxTokens: maxTokensText,
     resumeSilentTurns: booleanOr(value.resumeSilentTurns, DEFAULT_CONFIG.resumeSilentTurns),

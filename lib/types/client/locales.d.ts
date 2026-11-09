@@ -27,6 +27,8 @@ export declare const zh: {
     'field.paused': string;
     'field.showComposerToggle': string;
     'field.showComposerToggleHint': string;
+    'field.usePluginSource': string;
+    'field.usePluginSourceHint': string;
     'composer.label': string;
     'composer.mode': string;
     'composer.scope': string;
