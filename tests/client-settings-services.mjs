@@ -79,8 +79,10 @@ async function scenario(service, slot, { delayed = false } = {}) {
   let activeLocale = 'en';
   ctx.provide('locale', {
     getLocale: () => ({ active: activeLocale }),
-    register: (_namespace, value) => {
-      dictionaries = value;
+    register: (_namespace, value, dict) => {
+      dictionaries ??= {};
+      if (typeof value === 'string') dictionaries[value] = dict;
+      else Object.assign(dictionaries, value);
       return () => {};
     },
   });

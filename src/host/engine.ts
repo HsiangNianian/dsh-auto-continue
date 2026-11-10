@@ -30,6 +30,7 @@ import {
   isNonHumanReason,
   isOurEcho,
   isNetworkFailure,
+  isSessionMode,
   isTransientAgentError,
   isTransientFailure,
   resolveConfig,
@@ -42,6 +43,7 @@ import {
   type DayStats,
   type RecoveryAttempt,
   type FailureFacts,
+  type SessionMode,
   type SessionState,
   type NotifyAction,
   type NotifyOptions,
@@ -82,6 +84,22 @@ const NOTICE_COPY = {
     loopCapTitle: 'dsh-auto-continue: Autonomous loop limit reached',
     loopCapBody: (sessionId: SessionId, count: number) =>
       `${sessionId}: Stopped after ${count} autonomous rounds; send a message or turn the loop back on to keep going`,
+  },
+  ru: {
+    notContinuedTitle: 'dsh-auto-continue: продолжение не выполнено',
+    permanentErrorBody: (sessionId: SessionId, summary: string) =>
+      `${sessionId}: постоянная ошибка ${summary}; нужно вмешательство вручную`,
+    resumeAction: 'Продолжить сейчас',
+    pauseAction: 'Приостановить сессию на 1 час',
+    continuedTitle: 'dsh-auto-continue: продолжено автоматически',
+    continuedBody: (sessionId: SessionId, text: string, count: number) =>
+      `${sessionId}: отправлено «${text}» (попытка подряд: ${count})`,
+    stoppedTitle: 'dsh-auto-continue: авто-продолжение остановлено',
+    stoppedBody: (sessionId: SessionId, count: number) =>
+      `${sessionId}: сбоев подряд: ${count}; нужно вмешательство вручную`,
+    loopCapTitle: 'dsh-auto-continue: достигнут лимит автономного цикла',
+    loopCapBody: (sessionId: SessionId, count: number) =>
+      `${sessionId}: остановлено после ${count} автономных раундов; отправьте сообщение или включите цикл снова, чтобы продолжить`,
   },
 } as const satisfies Record<AutoContinueLocale, Record<string, unknown>>;
 
@@ -156,6 +174,13 @@ const CHILD_CAUSE_COPY = {
     interrupted: 'closed by crash recovery',
     'max-tokens': 'output ceiling reached',
     error: 'retryable error',
+  },
+  ru: {
+    'open-turn': 'ход прерван после начала',
+    disposed: 'хост уничтожил агента',
+    interrupted: 'закрыт восстановлением после сбоя',
+    'max-tokens': 'достигнут лимит вывода',
+    error: 'повторяемая ошибка',
   },
 } as const satisfies Record<AutoContinueLocale, Record<ChildInterruptCause, string>>;
 
@@ -414,6 +439,10 @@ async function pumpStream<T>(
 /** 插件主体: 一条 mux 流 + 一条 host 流 + 启动/重连扫描。 */
 export class AutoContinueRunner {
   private readonly states = new Map<SessionId, SessionState>();
+  /** Cached subagent lineage: session id -> direct parent id (undefined when the header has none). */
+  private readonly parents = new Map<SessionId, SessionId | undefined>();
+  /** Sessions already identified as subagents, including event views without header metadata. */
+  private readonly subagentSessions = new Set<SessionId>();
   private readonly pauseUntil = new Map<SessionId, number>();
   private dayStats: DayStats = emptyDayStats();
   private readonly recoveryAttempts: RecoveryAttempt[] = [];
@@ -558,6 +587,19 @@ export class AutoContinueRunner {
 
   private sessionConfig(sessionId: SessionId): AutoContinueConfig {
     const config = this.getConfig();
+    if (this.isSubagentSession(sessionId)) {
+      // A subagent inherits only the enabled/off decision of its main
+      // conversation (an explicit mode stored for the child wins). It never runs
+      // the autonomous loop or the loop guard, and the startup scan keeps leaving
+      // it to its parent: those three stay parent-only.
+      const enabled = this.subagentRecoveryEnabled(sessionId);
+      return {
+        ...config,
+        paused: config.paused || !enabled,
+        resumeCompletedTurns: false,
+        loopGuard: false,
+      };
+    }
     const mode = sessionMode(config.sessionModes, sessionId);
     return {
       ...config,
@@ -619,6 +661,8 @@ export class AutoContinueRunner {
       state.offlineWait = undefined;
     }
     this.states.clear();
+    this.parents.clear();
+    this.subagentSessions.clear();
   }
 
   private state(sessionId: SessionId): SessionState {
@@ -630,19 +674,154 @@ export class AutoContinueRunner {
     return state;
   }
 
-  /** Mark a child session and clear queued grace/cooldown sends. */
-  private markSubagent(sessionId: SessionId, state: SessionState): void {
-    state.subagent = true;
-    this.cancelPending(sessionId, '子代理会话');
+  /** Record a subagent session's lineage and its parent id when the header carries one. */
+  private noteSubagent(sessionId: SessionId, parentSession?: SessionId): void {
+    this.subagentSessions.add(sessionId);
+    if (parentSession !== undefined && parentSession !== '') {
+      this.parents.set(sessionId, parentSession);
+    } else if (!this.parents.has(sessionId)) {
+      this.parents.set(sessionId, undefined);
+    }
   }
 
   /** Read durable origin from the live agent for direct action paths as well. */
   private isSubagent(sessionId: SessionId, state: SessionState): boolean {
     if (state.subagent) return true;
-    const agent = this.ctx.agents.get(sessionId);
-    if (agent?.session?.header?.origin !== 'subagent') return false;
-    this.markSubagent(sessionId, state);
+    const header = this.ctx.agents.get(sessionId)?.session?.header;
+    if (header?.origin !== 'subagent') return false;
+    state.subagent = true;
+    this.noteSubagent(sessionId, header.parentSession);
     return true;
+  }
+
+  /** Header origin, cached set or state flag; for paths that only have the session id. */
+  private isSubagentSession(sessionId: SessionId): boolean {
+    if (this.subagentSessions.has(sessionId)) return true;
+    const state = this.states.get(sessionId);
+    if (state?.subagent === true) return true;
+    const header = this.ctx.agents.get(sessionId)?.session?.header;
+    if (header?.origin !== 'subagent') return false;
+    this.noteSubagent(sessionId, header.parentSession);
+    return true;
+  }
+
+  /**
+   * Direct subagent parent id. DSH stores fork lineage in the same
+   * `header.parentSession` field, so only a session whose header origin is
+   * `subagent` may be followed upward: an ordinary ancestor (the visible main
+   * conversation, even a forked one) is the top of the recovery lineage.
+   */
+  private parentOf(sessionId: SessionId): SessionId | undefined {
+    if (this.parents.has(sessionId)) return this.parents.get(sessionId);
+    const header = this.ctx.agents.get(sessionId)?.session?.header;
+    // No live header yet: leave the lineage unresolved so a later live agent
+    // with the same id can still provide it instead of caching "no parent".
+    if (header === undefined) return undefined;
+    if (header.origin !== 'subagent') {
+      this.parents.set(sessionId, undefined); // known ordinary: top of the lineage
+      return undefined;
+    }
+    const parent = header.parentSession;
+    this.noteSubagent(sessionId, parent);
+    return parent;
+  }
+
+  /** Explicit session mode stored for this exact id, if the user gave one. */
+  private explicitMode(sessionId: SessionId): SessionMode | undefined {
+    const modes = this.getConfig().sessionModes;
+    const mode = modes[sessionId];
+    return Object.prototype.hasOwnProperty.call(modes, sessionId) && isSessionMode(mode) ? mode : undefined;
+  }
+
+  /**
+   * A subagent's effective mode, or `undefined` when the lineage cannot be
+   * verified. An intermediate parent that is no longer live (and was never seen
+   * here) used to stop the walk early, fall back to the profile default and
+   * resume a child whose main conversation is Off; refusing the send is safe.
+   */
+  private resolveSubagentMode(sessionId: SessionId): SessionMode | undefined {
+    const own = this.explicitMode(sessionId);
+    if (own !== undefined) return own;
+    const seen = new Set<SessionId>([sessionId]);
+    let current: SessionId = sessionId;
+    for (let depth = 0; depth < 32; depth += 1) {
+      const known = this.parents.has(current);
+      const header = this.ctx.agents.get(current)?.session?.header;
+      // The chain is not visible yet (an intermediate parent never live here), so
+      // neither its mode nor its pause can be verified. Refuse the send and
+      // re-resolve on the next event once that ancestor appears.
+      if (!known && header === undefined) return undefined;
+      const parent = known
+        ? this.parents.get(current)
+        : header?.origin === 'subagent' ? header.parentSession : undefined;
+      if (parent === undefined || parent === '') {
+        // A subagent header without `parentSession` is unlinked: nothing to inherit.
+        if (header?.origin === 'subagent') return undefined;
+        return this.explicitMode(current) ?? 'default';
+      }
+      if (seen.has(parent)) return undefined;
+      seen.add(parent);
+      current = parent;
+    }
+    return undefined;
+  }
+
+  /** Whether the setting and the inherited main-chat mode allow live recovery for this child. */
+  private subagentRecoveryEnabled(sessionId: SessionId): boolean {
+    if (!this.getConfig().resumeSubagentSessions) return false;
+    const mode = this.resolveSubagentMode(sessionId);
+    return mode !== undefined && mode !== 'off';
+  }
+
+  /** Modes children inherit from their main conversation, for the composer's display. */
+  inheritedSubagentModes(): Record<string, SessionMode> {
+    const inherited: Record<string, SessionMode> = {};
+    for (const sessionId of this.parents.keys()) {
+      if (!this.isSubagentSession(sessionId)) continue;
+      if (this.explicitMode(sessionId) !== undefined) continue;
+      const mode = this.resolveSubagentMode(sessionId);
+      if (mode !== undefined) inherited[sessionId] = mode;
+    }
+    return inherited;
+  }
+
+  /** Mark a child session; drop only queued sends that its effective policy no longer allows. */
+  private markSubagent(sessionId: SessionId, state: SessionState, parentSession?: SessionId): void {
+    const first = !state.subagent;
+    state.subagent = true;
+    this.noteSubagent(sessionId, parentSession);
+    if (first && !this.subagentRecoveryEnabled(sessionId)) this.cancelPending(sessionId, '子代理会话');
+  }
+
+  /** Pause deadline, including the parents' "pause this session 1h" for subagents. */
+  private effectivePauseUntil(sessionId: SessionId): number {
+    let until = this.pauseUntil.get(sessionId) ?? 0;
+    if (!this.isSubagentSession(sessionId)) return until;
+    // parentOf() only follows subagent-origin sessions, so fork lineage of the
+    // main conversation is never treated as a parent for pause purposes.
+    const seen = new Set<SessionId>([sessionId]);
+    let current: SessionId | undefined = sessionId;
+    for (let depth = 0; depth < 32; depth += 1) {
+      current = this.parentOf(current);
+      if (current === undefined || current === '' || seen.has(current)) break;
+      seen.add(current);
+      until = Math.max(until, this.pauseUntil.get(current) ?? 0);
+    }
+    return until;
+  }
+
+  /** Whether this session sits below `ancestorId` in the subagent lineage (never fork lineage). */
+  private isDescendantOf(sessionId: SessionId, ancestorId: SessionId): boolean {
+    const seen = new Set<SessionId>([sessionId]);
+    let current: SessionId | undefined = sessionId;
+    for (let depth = 0; depth < 32; depth += 1) {
+      current = this.parentOf(current);
+      if (current === undefined || current === '') return false;
+      if (current === ancestorId) return true;
+      if (seen.has(current)) return false;
+      seen.add(current);
+    }
+    return false;
   }
 
   /**
@@ -653,10 +832,12 @@ export class AutoContinueRunner {
     const sessionId = session.id;
     const sessionState = this.states.get(sessionId);
     if (session.header?.origin === 'subagent') {
-      this.markSubagent(sessionId, sessionState ?? this.state(sessionId));
-      return;
+      this.markSubagent(sessionId, sessionState ?? this.state(sessionId), session.header.parentSession);
+    } else if (sessionState?.subagent) {
+      // Origin known from an earlier frame; keep the lineage fresh and process the
+      // event normally instead of ignoring a subagent's live turn.
+      this.noteSubagent(sessionId, session.header?.parentSession ?? this.parentOf(sessionId));
     }
-    if (sessionState?.subagent) return;
     if (sessionState?.maintenanceTurn !== undefined &&
         sessionState.maintenanceTurn === (event.data as { turn?: number }).turn &&
         event.type !== 'turn/start' && event.type !== 'turn/end') return;
@@ -1096,7 +1277,13 @@ export class AutoContinueRunner {
 
   private onTurnFailure(sessionId: SessionId, reason: string, failure: FailureFacts): void {
     const config = this.getConfig();
-    if (sessionMode(config.sessionModes, sessionId) === 'off') return;
+    if (this.isSubagentSession(sessionId)) {
+      // Subagents inherit only the main conversation's enabled/off decision; an
+      // Off parent or the disabled setting means no live recovery at all. The
+      // global pause is not checked here, so diagnostics for permanent errors
+      // match ordinary sessions while paused.
+      if (!this.subagentRecoveryEnabled(sessionId)) return;
+    } else if (sessionMode(config.sessionModes, sessionId) === 'off') return;
     if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
       const copy = NOTICE_COPY[config.locale];
       const summary = `${failure.code}${failure.status !== undefined ? ` (HTTP ${failure.status})` : ''}`;
@@ -1136,6 +1323,12 @@ export class AutoContinueRunner {
       this.log(`通知按钮: 暂停 ${sessionId} 1 小时`);
       this.pauseUntil.set(sessionId, Date.now() + 60 * 60 * 1000);
       this.cancelPending(sessionId, '通知按钮暂停该会话');
+      // A paused main conversation also suspends the subagents it owns.
+      for (const candidate of this.states.keys()) {
+        if (candidate !== sessionId && this.isDescendantOf(candidate, sessionId)) {
+          this.cancelPending(candidate, '父会话已暂停');
+        }
+      }
     }
   }
 
@@ -1205,12 +1398,13 @@ export class AutoContinueRunner {
   /** 立即为该会话发送一次自动继续(无视冷却与连续上限; 由通知按钮触发)。 */
   async resumeNow(sessionId: SessionId): Promise<void> {
     if (this.disposed) return;
-    const state = this.state(sessionId);
-    if (this.isSubagent(sessionId, state)) return;
-    if (state.pendingTimer !== undefined) {
-      clearTimeout(state.pendingTimer);
-      state.pendingTimer = undefined;
-    }
+    // Subagent recovery is opt-out and inherits the main conversation's mode: an
+    // Off child must not receive a send through the explicit button either, even
+    // though a manual send bypasses the paused flag.
+    if (this.isSubagentSession(sessionId) && !this.subagentRecoveryEnabled(sessionId)) return;
+    // A manual send replaces every queued one: leave a pending cooldown or
+    // offline retry armed and the reader receives the continuation twice.
+    this.cancelPending(sessionId, '手动续跑');
     try {
       await this.fire(sessionId, MANUAL_NOTIFICATION_REASON, true);
     } catch (error) {
@@ -1233,12 +1427,11 @@ export class AutoContinueRunner {
     const state = this.state(sessionId);
     const config = this.sessionConfig(sessionId);
     if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
-    if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
     if (config.paused) {
       this.log(`跳过 ${sessionId}(${reason}): 自动继续已暂停`);
       return;
     }
-    if (Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
+    if (Date.now() < this.effectivePauseUntil(sessionId)) {
       this.log(`跳过 ${sessionId}(${reason}): 会话暂停中`);
       return;
     }
@@ -1351,12 +1544,14 @@ export class AutoContinueRunner {
     // 宽限期内循环被关闭: 发送前必须重新检查开关, 与 :silent 恢复同样处理。
     // 否则「关掉循环」后仍会多发出一次续跑。
     if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
-    if (this.isSubagent(sessionId, state)) return; // 子代理会话由父代理处理, 不抢跑
+    // Direct sends (notifications) must respect the setting and the inherited
+    // mode even though they bypass the paused flag below.
+    if (this.isSubagentSession(sessionId) && !this.subagentRecoveryEnabled(sessionId)) return;
     if (config.paused && !manualResume) {
       this.log(`跳过 ${sessionId}(${reason}): 自动继续已暂停`);
       return;
     }
-    if (!manualResume && Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) {
+    if (!manualResume && Date.now() < this.effectivePauseUntil(sessionId)) {
       this.log(`跳过 ${sessionId}(${reason}): 会话暂停中`);
       return;
     }

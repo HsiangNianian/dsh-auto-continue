@@ -109,8 +109,10 @@ const ctx = {
   },
   locale: {
     getLocale: () => ({ active: activeLocale, locales: [], revision: 0 }),
-    register: (_namespace, dictionaries) => {
-      registeredDictionaries = dictionaries;
+    register: (_namespace, valueOrLocale, dict) => {
+      registeredDictionaries ??= {};
+      if (typeof valueOrLocale === 'string') registeredDictionaries[valueOrLocale] = dict;
+      else Object.assign(registeredDictionaries, valueOrLocale);
       return () => {};
     },
   },
@@ -132,6 +134,9 @@ assert.deepEqual(writes, [
   { field: 'locale', value: 'en' },
   { field: 'locale', value: 'zh' },
 ]);
+activeLocale = 'ru';
+for (const handler of localeHandlers) handler();
+assert.deepEqual(writes.at(-1), { field: 'locale', value: 'ru' }, 'Russian UI mirrors the ru locale');
 assert.deepEqual(
   JSON.parse(JSON.stringify({
     zh: {
@@ -149,6 +154,14 @@ assert.deepEqual(
       guardPendingText: registeredDictionaries?.en?.['default.guardPendingText'],
       guardDoneText: registeredDictionaries?.en?.['default.guardDoneText'],
       loopText: registeredDictionaries?.en?.['default.loopText'],
+    },
+    ru: {
+      continueText: registeredDictionaries?.ru?.['default.continueText'],
+      continueTextMaxTokens: registeredDictionaries?.ru?.['default.continueTextMaxTokens'],
+      continueTextSilent: registeredDictionaries?.ru?.['default.continueTextSilent'],
+      guardPendingText: registeredDictionaries?.ru?.['default.guardPendingText'],
+      guardDoneText: registeredDictionaries?.ru?.['default.guardDoneText'],
+      loopText: registeredDictionaries?.ru?.['default.loopText'],
     },
   })),
   {
@@ -172,6 +185,18 @@ assert.deepEqual(
         '(The previous tool "{tool}" completed successfully. Result: {result}; do not run it again. Continue from there.)',
       loopText:
         '(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)',
+    },
+    ru: {
+      continueText: 'Продолжай',
+      continueTextMaxTokens: 'Продолжай',
+      continueTextSilent:
+        'Продолжай. Предыдущий ход закончился только внутренним рассуждением: ни ответа, ни вызова инструмента, поэтому пользователь ничего не увидел. Каждый ход должен заканчиваться вызовом инструмента или видимым ответом.',
+      guardPendingText:
+        '(Предыдущий инструмент «{tool}», возможно, не завершился. Проверь его состояние перед продолжением и не запускай его повторно.)',
+      guardDoneText:
+        '(Предыдущий инструмент «{tool}» завершился успешно. Результат: {result}; не запускай его повторно, продолжай с этого места.)',
+      loopText:
+        '(Похоже, ты застрял в цикле. Перестань повторять последнее действие и продолжай другим способом.)',
     },
   },
 );

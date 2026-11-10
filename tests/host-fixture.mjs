@@ -42,10 +42,13 @@ export function makeHost(overrides = {}) {
     effect(start) { const stop = start(); if (typeof stop === 'function') cleanups.push(stop); },
     inject(deps, callback) { if (!deps.includes('settings')) callback(ctx); },
   };
-  const buildAgent = (id, events = []) => {
+  // `header` carries the durable session metadata the engine reads (e.g.
+  // `{ origin: 'subagent', parentSession: 'main' }`); existing call sites pass
+  // no header and keep the empty object.
+  const buildAgent = (id, events = [], header = {}) => {
     const agent = {
       session: {
-        id, header: {}, events,
+        id, header, events,
         snapshotEvents() { agent.reads += 1; return [...events]; },
       },
       reads: 0,
@@ -66,7 +69,18 @@ export function makeHost(overrides = {}) {
     start() { apply(ctx, config); },
     settingsChanged() { for (const callback of handlers.get('settings/updated') ?? []) callback('auto-continue'); },
     emit(agent, event) { for (const callback of handlers.get('session/event') ?? []) callback(agent.session, event); },
-    agent(id, events = []) { return buildAgent(id, events); },
+    /** Register a live agent; the optional `header` carries origin/parentSession lineage. */
+    agent(id, events = [], header = {}) { return buildAgent(id, events, header); },
+    /**
+     * Options form: `{ origin, parentSession }` are written into the session
+     * header so subagent-lineage tests resolve the main conversation.
+     */
+    makeAgent(id, { events = [], origin, parentSession } = {}) {
+      return buildAgent(id, events, {
+        ...(origin !== undefined ? { origin } : {}),
+        ...(parentSession !== undefined ? { parentSession } : {}),
+      });
+    },
     /** 声明某次 resume 注册后, 该 agent 快照给扫描看的事件(真实宿主由修复管线补齐)。 */
     onResume(id, events) { resumeEvents.set(id, events); },
     stats() {

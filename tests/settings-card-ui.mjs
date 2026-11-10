@@ -80,11 +80,12 @@ let snapshot = {
   writable: true,
   mode: 'host',
 };
+const writes = [];
 const scope = {
   getSnapshot: () => snapshot,
   subscribe: () => () => {},
   async set(field, value) {
-    snapshot = { ...snapshot, value: { ...snapshot.value, [field]: value } };
+    writes.push([field, value]);
   },
   async unset() {},
 };
@@ -101,8 +102,10 @@ const ctx = {
   },
   locale: {
     getLocale: () => ({ active: 'en', locales: [], revision: 0 }),
-    register: (_namespace, next) => {
-      dictionaries = next;
+    register: (_namespace, next, dict) => {
+      dictionaries ??= {};
+      if (typeof next === 'string') dictionaries[next] = dict;
+      else Object.assign(dictionaries, next);
       return () => {};
     },
   },
@@ -131,7 +134,7 @@ function render(locale) {
 }
 
 
-for (const locale of ['en', 'zh']) {
+for (const locale of ['en', 'zh', 'ru']) {
   const html = render(locale);
   assert.doesNotMatch(html, /dshAcHeaderFrame/, 'the colored header banner stays removed');
   assert.match(html, /role="tablist"/);
@@ -152,22 +155,41 @@ face.edit('paused', 'true');
 assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
 face.discard();
 
+// 子代理续跑: 默认开启的开关在 General 类目下渲染, 编辑后按布尔值保存。
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const subagentSwitch = (locale, checked) => new RegExp(
+  `<button\\b(?=[^>]*role="switch")(?=[^>]*aria-label="${escapeRegExp(dictionaries[locale]['field.resumeSubagentSessions'])}")(?=[^>]*aria-checked="${checked}")`,
+);
+for (const locale of ['en', 'zh', 'ru']) {
+  assert.match(render(locale), subagentSwitch(locale, 'true'), 'subagent recovery switch renders on by default in General');
+}
+face.edit('resumeSubagentSessions', 'false');
+assert.match(render('en'), subagentSwitch('en', 'false'), 'editing stages the inverse subagent setting');
+writes.length = 0;
+face.save();
+for (let i = 0; i < 8; i++) await Promise.resolve();
+assert.deepEqual(writes, [['resumeSubagentSessions', false]], 'saving the switch stages a boolean');
+face.discard();
+
 const expected = Object.entries(face.hooks.autoContinueSettingsCard.getSnapshot())
   .filter(([, value]) => value && typeof value === 'object' && 'text' in value).map(([key]) => key).sort();
 const visible = [];
 for (const category of ['general', 'recovery', 'startup', 'prompts', 'safety', 'status']) {
   activeCategory = category;
-  for (const locale of ['en', 'zh']) {
+  for (const locale of ['en', 'zh', 'ru']) {
     const html = render(locale);
     assert.match(html, new RegExp(`data-category="${category}"[^>]*aria-selected="true"`));
     assert.ok(html.includes(dictionaries[locale][`category.${category}.title`]));
     if (locale === 'en') visible.push(...[...html.matchAll(/data-field="([^"]+)"/g)].map(match => match[1]));
     if (category === 'recovery') {
       assert.ok(html.includes(dictionaries[locale]['field.retryableErrorPatternsPlaceholder']));
-      assert.ok(html.includes(locale === 'zh'
-        ? '宽泛片段也会重试认证、余额等原本跳过的错误'
-        : 'Broad fragments can also retry normally skipped authentication or balance errors'),
-      'custom retry guidance explains the effect on normally skipped errors');
+      const broadGuidance = {
+        en: 'Broad fragments can also retry normally skipped authentication or balance errors',
+        zh: '宽泛片段也会重试认证、余额等原本跳过的错误',
+        ru: 'широкие совпадения также запускают повтор для обычно пропускаемых ошибок аутентификации и баланса',
+      };
+      assert.ok(html.includes(broadGuidance[locale]),
+        'custom retry guidance explains the effect on normally skipped errors');
     }
     if (category === 'status') assert.ok(html.includes(dictionaries[locale]['stats.empty']));
   }
@@ -188,6 +210,7 @@ assert.match(render('en'), /Latest reason: No visible output/);
 assert.match(render('en'), /session-&lt;example&gt;/, 'session identifiers are rendered as text');
 assert.match(render('en'), /<time[^>]*dateTime=/);
 assert.match(render('zh'), /最近原因: 无可见输出/);
+assert.match(render('ru'), /Последняя причина: Нет видимого вывода/);
 pushBridge({ type: 'state' });
 for (let i = 0; i < 8; i++) await Promise.resolve();
 assert.match(render('en'), /No recovery attempts yet/, 'older host payloads remain compatible');

@@ -36,6 +36,8 @@ const settingsFields = {
   continueTextMaxTokens: z.string().default(''),
   /** Resume observed model activity that completes without visible output. */
   resumeSilentTurns: z.boolean().default(true),
+  /** Resume interrupted subagent sessions when their main conversation has auto-continue enabled. Subagents never enter the autonomous loop. */
+  resumeSubagentSessions: z.boolean().default(true),
   /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
   resumeCompletedTurns: z.boolean().default(false),
   /** Text sent to resume a silent turn (same placeholders as `continueText`). */
@@ -202,6 +204,7 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
         recoveryAttempts: runner.recentRecoveryAttempts(),
         sessionPolicy: {
           modes: config.sessionModes,
+          inheritedModes: runner.inheritedSubagentModes(),
           defaultMode: config.resumeCompletedTurns ? 'loop' : 'recover',
           paused: config.paused,
           writable: writableSettings() !== undefined,

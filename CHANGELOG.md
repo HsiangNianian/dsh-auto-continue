@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Subagent sessions now get live auto-continue for failed, output-limit and silent turns when their main conversation has auto-continue enabled, controlled by the new default-on **Resume subagent sessions** setting (`resumeSubagentSessions`). Subagent lineage follows only `origin: 'subagent'` parents (a forked main conversation is not treated as a child), subagents still never run the autonomous loop, are never loop-guard restarted, and are not recovered by the startup scan or stored-session sweep; **Resume now** works for them when enabled, and pausing or turning off the parent cancels queued child continuations for inherited modes.
+- Russian (`ru` / `ru-*`) localization: the settings card, composer switch and mode menu, browser notifications, built-in continue / guard / loop texts, and the plugin's own metadata. `zh`/`zh-*` and every other locale (including English) keep their existing strings and fallbacks unchanged.
+
 ## [0.18.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.18.0) — 2026-11-10
 
 ### Added

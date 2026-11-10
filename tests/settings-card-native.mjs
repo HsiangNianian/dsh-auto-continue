@@ -75,10 +75,13 @@ const snapshot = {
   status: 'ready', value: { locale: 'en' }, base: undefined, user: undefined,
   revision: 0, writable: true, mode: 'host',
 };
+const writes = [];
 const scope = {
   getSnapshot: () => snapshot,
   subscribe: () => () => {},
-  async set() {},
+  async set(field, value) {
+    writes.push([field, value]);
+  },
   async unset() {},
 };
 
@@ -88,7 +91,12 @@ const ctx = {
   effect(start) { return start(); },
   locale: {
     getLocale: () => ({ active: 'en', locales: [], revision: 0 }),
-    register(_namespace, next) { dictionaries = next; return () => {}; },
+    register(_namespace, next, dict) {
+      dictionaries ??= {};
+      if (typeof next === 'string') dictionaries[next] = dict;
+      else Object.assign(dictionaries, next);
+      return () => {};
+    },
   },
   on: () => () => {},
   settingsScope: { bind: () => scope },
@@ -123,6 +131,14 @@ assert.doesNotMatch(general, /dshAcField/, 'the native path does not render the 
 assert.match(general, /href="https:\/\/github\.com\/HsiangNianian\/dsh-auto-continue"/);
 assert.match(general, /data-native-save[^>]*>Save</, 'the native form owns the save button');
 assert.ok((general.match(/role="switch"/g) ?? []).length >= 4, 'boolean fields use native switches');
+assert.match(general, /<button\b(?=[^>]*role="switch")(?=[^>]*aria-label="Resume subagent sessions")(?=[^>]*aria-checked="true")/, 'subagent recovery defaults on in General');
+face.edit('resumeSubagentSessions', 'false');
+assert.match(render('general'), /<button\b(?=[^>]*role="switch")(?=[^>]*aria-label="Resume subagent sessions")(?=[^>]*aria-checked="false")/, 'editing stages the inverse subagent setting');
+writes.length = 0;
+face.save();
+for (let i = 0; i < 8; i++) await Promise.resolve();
+assert.deepEqual(writes, [['resumeSubagentSessions', false]], 'the native form saves a boolean');
+face.discard();
 
 const retry = render('recovery');
 assert.match(retry, /data-native-value[^>]*aria-label="Grace period \(ms\)"/);
