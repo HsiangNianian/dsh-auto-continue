@@ -383,6 +383,7 @@ const FAST = {
   maxConsecutive: 3,
   scanOnBoot: true,
   verbose: false,
+  pauseWhenOffline: false, // connectivity hold has its own suite; keep these off the real network
 };
 
 function startPlugin(overrides = {}) {

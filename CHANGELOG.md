@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Offline hold** (`pauseWhenOffline`, on by default; `offlineCheckMs`, default 15000): a network-error retry first checks that the host is online and, while it is not, waits and re-checks without consuming `maxConsecutive`, then resumes through the usual grace period and cooldown ([#81](https://github.com/HsiangNianian/dsh-auto-continue/issues/81), thanks @xiuchuan666)
+- **Autonomous loop round limit** (`loopMaxIterations`, default 0 = unlimited): stop the loop after N rounds per session and report it once; a user message or turning the loop back on resets the count ([#81](https://github.com/HsiangNianian/dsh-auto-continue/issues/81))
 - **Child-session hand-off** (`resumeInterruptedChildren`, off by default): the startup scan now judges subagent and team-member sessions that a restart interrupted (`open-turn`, `aborted{disposed|legacy}`, `interrupted`, `max-tokens`, or a retryable `error`) and sends their root session one message listing them, once per batch signature. Child sessions are still never resumed directly; parents that finished cleanly or that the user stopped by hand are skipped, and at most 8 child logs are cold-read per pass from a dedicated ledger that does not consume the main scan budget
 - **Goal re-arm** (`resumeGoals`, off by default): after any auto-continue send (or a child-session wake-up), re-arm an `active` goal that the host disarmed on restart, so its continuation rounds can run again. `goals.resume` performs no human-authorization check in the service layer, so automatic use acts on the user's behalf — hence opt-in only
 - **Resume paused goals** (`resumePausedGoals`, off by default): also resume goals the user paused by hand; gated behind `resumeGoals`
