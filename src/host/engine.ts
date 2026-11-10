@@ -309,10 +309,14 @@ function classifyChildInterruption(
   }
   const lastStart = latestTurnStart(events);
   if (lastStart !== undefined && (lastEnd === undefined || lastStart.seq > lastEnd.seq)) {
-    return isMaintenanceTurnStart(lastStart) ? undefined : 'open-turn';
+    if (isMaintenanceTurnStart(lastStart)) return undefined;
+    // 与主扫描同口径: 过了 freshMs 的中断不是这次重启造成的, 唤醒只会复活陈年父会话。
+    if ((events[events.length - 1]?.time ?? 0) < Date.now() - config.freshMs) return undefined;
+    return 'open-turn';
   }
   const end = lastEnd;
   if (end === undefined) return undefined;
+  if (end.time < Date.now() - config.freshMs) return undefined;
   // A message written after the closing turn means someone already took over.
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i];
@@ -1966,17 +1970,24 @@ export class AutoContinueRunner {
     const query = this.ctx.get('sessionQuery');
     if (query === undefined) return undefined;
     let presetId: string | undefined;
+    let model: { provider: string; model: string } | undefined;
+    let stored: StoredObservation | undefined;
     try {
-      const stored: StoredObservation = await this.readStored(
+      const observation: StoredObservation = await this.readStored(
         signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
         deadline,
       );
-      presetId = stored.header.agentPreset;
-      stored[Symbol.dispose]?.();
+      stored = observation;
+      presetId = observation.projections?.values.agentPreset ?? observation.header.agentPreset;
+      // 与主扫描一致回装日志记录的模型选择, 否则父会话会以默认模型被拉起。
+      const loggedConfig = foldRequestHeader(validateSessionEvents(observation.events))?.config;
+      if (loggedConfig !== undefined) model = { provider: loggedConfig.provider, model: loggedConfig.model };
     } catch {
       return undefined;
+    } finally {
+      stored?.[Symbol.dispose]?.();
     }
-    const ok = await this.materializeStored(sessionId, presetId, undefined);
+    const ok = await this.materializeStored(sessionId, presetId, model);
     if (!ok || this.disposed) return undefined;
     return this.ctx.agents.get(sessionId);
   }

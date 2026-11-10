@@ -168,6 +168,23 @@ test('① an interrupted child wakes its cleanly finished root, with the child i
   match(text, 'audit docs', '① wake text carries the child title when the host recorded one');
 });
 
+// ---------- ①-b stale child interruption => no wake ----------
+
+test('①-b a child interrupted long before this restart never wakes its root', async (t) => {
+  const stale = Date.now() - 60 * 60 * 1000;
+  const { tick, parent, observations } = childSweep(t, {
+    rootEvents: cleanRoot(),
+    children: [
+      { id: CHILD, events: [{ ...turnStart(1), time: stale }] },
+      { id: NESTED_MID, events: [turnStart(1), { ...turnEnd(1, 'aborted', { reason: { kind: 'disposed' } }), time: stale }] },
+    ],
+    config: { resumeInterruptedChildren: true },
+  });
+  await tick();
+  isTrue((observations.get(CHILD) ?? 0) >= 1, '①-b the stale child log was still examined');
+  eq(parent.followups.length, 0, '①-b an interruption older than freshMs is not this restart\'s doing');
+});
+
 // ---------- ② child aborted{user} => no wake ----------
 
 test('② a child the user stopped is never handed to the parent', async (t) => {
