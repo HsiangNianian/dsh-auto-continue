@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.18.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.18.0) — 2026-11-10
 
 ### Added
 
@@ -8,7 +8,19 @@
 - **Autonomous loop round limit** (`loopMaxIterations`, default 0 = unlimited): stop the loop after N rounds per session and report it once; a user message or turning the loop back on resets the count ([#81](https://github.com/HsiangNianian/dsh-auto-continue/issues/81))
 - **Child-session hand-off** (`resumeInterruptedChildren`, off by default): the startup scan now judges subagent and team-member sessions that a restart interrupted (`open-turn`, `aborted{disposed|legacy}`, `interrupted`, `max-tokens`, or a retryable `error`) and sends their root session one message listing them, once per batch signature. Child sessions are still never resumed directly; parents that finished cleanly or that the user stopped by hand are skipped, and at most 8 child logs are cold-read per pass from a dedicated ledger that does not consume the main scan budget
 - **Goal re-arm** (`resumeGoals`, off by default): after any auto-continue send (or a child-session wake-up), re-arm an `active` goal that the host disarmed on restart, so its continuation rounds can run again. `goals.resume` performs no human-authorization check in the service layer, so automatic use acts on the user's behalf — hence opt-in only
-- **Resume paused goals** (`resumePausedGoals`, off by default): also resume goals the user paused by hand; gated behind `resumeGoals`
+- **Resume paused goals** (`resumePausedGoals`, off by default): also resume goals the user paused by hand; gated behind `resumeGoals` ([#77](https://github.com/HsiangNianian/dsh-auto-continue/issues/77), [#80](https://github.com/HsiangNianian/dsh-auto-continue/pull/80), thanks @loyalchiiina)
+- **Plugin message source** (`usePluginSource`, off by default): send continue prompts with `source.kind: 'plugin:dsh-client-auto-continue'` instead of `user`; echo matching accepts both, including messages queued before the switch changes ([#79](https://github.com/HsiangNianian/dsh-auto-continue/pull/79), thanks @fu050409)
+
+### Fixed
+
+- Child-session hand-off ignores interruptions older than `freshMs`, so a long-finished root session is not woken for a child cut off days ago, and a woken root is restored with the model its log recorded ([#80](https://github.com/HsiangNianian/dsh-auto-continue/pull/80))
+
+### Maintenance
+
+- Startup scan diagnostics report subagent / no-origin / other-origin session counts, and an unresolvable parent chain is logged once per session instead of every round
+- Recovery test fixtures keep the offline hold off so they never depend on the machine's real network; the new suite fakes DNS and network interfaces
+
+[Upgrade instructions and validation](docs/releases/v0.18.0.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.17.4...v0.18.0)
 
 ## [0.17.4](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.17.4) — 2026-11-07
 
