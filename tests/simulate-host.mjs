@@ -2260,6 +2260,8 @@ const stepStart = (turn, step, seq) => ({
   check('通知含动作', noticeFrame !== undefined && noticeFrame.includes('"action":"resume"'));
   const notice = noticeFrame === undefined ? undefined : JSON.parse(noticeFrame.slice(6)).notice;
   check('通知携带动作目标会话', notice?.sessionId === 's1');
+  check('中文通知说明消息已发送', notice?.title === 'dsh-auto-continue: 已发送继续消息' && notice?.body === 's1: 已发送「继续」（连续尝试 1 次）');
+  check('中文通知说明重试上限', frames.some(frame => frame.includes('已达到重试上限') && frame.includes('已连续尝试恢复 1 次')));
   // 动作端点: resume → 立即续跑
   const before = agent.followups.length;
   const r1 = await postAction(host, { action: 'resume', sessionId: notice?.sessionId });
@@ -2305,10 +2307,11 @@ const stepStart = (turn, step, seq) => ({
   const notices = frames.filter((frame) => frame.includes('"type":"notice"')).join('\n');
   check(
     '英文通知完整',
-    notices.includes('Continued automatically') &&
-      notices.includes('Auto-continue stopped') &&
-      notices.includes('Not continued') &&
-      notices.includes('manual intervention required') &&
+    notices.includes('Continue message sent') &&
+      notices.includes('Retry limit reached') &&
+      notices.includes('Review session error') &&
+      notices.includes('Consecutive recovery attempts: 1. Review the conversation before continuing.') &&
+      notices.includes('Resolve this error before continuing.') &&
       notices.includes('Resume now') &&
       notices.includes('Pause this session for 1 hour'),
   );

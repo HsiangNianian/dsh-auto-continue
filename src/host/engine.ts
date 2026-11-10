@@ -49,30 +49,30 @@ import {
 
 const NOTICE_COPY = {
   zh: {
-    notContinuedTitle: 'dsh-auto-continue: 未自动继续',
+    notContinuedTitle: 'dsh-auto-continue: 请处理会话错误',
     permanentErrorBody: (sessionId: SessionId, summary: string) =>
-      `${sessionId}: 永久性错误 ${summary}，需要人工处理`,
+      `${sessionId}: ${summary}。请处理此错误后再继续。`,
     resumeAction: '立即续跑',
     pauseAction: '暂停该会话 1 小时',
-    continuedTitle: 'dsh-auto-continue: 已自动继续',
+    continuedTitle: 'dsh-auto-continue: 已发送继续消息',
     continuedBody: (sessionId: SessionId, text: string, count: number) =>
-      `${sessionId}: 已发送「${text}」(第 ${count} 次连续)`,
-    stoppedTitle: 'dsh-auto-continue: 已停止自动继续',
+      `${sessionId}: 已发送「${text}」（连续尝试 ${count} 次）`,
+    stoppedTitle: 'dsh-auto-continue: 已达到重试上限',
     stoppedBody: (sessionId: SessionId, count: number) =>
-      `${sessionId}: 连续失败 ${count} 次, 需要人工介入`,
+      `${sessionId}: 已连续尝试恢复 ${count} 次。请检查会话后再继续。`,
   },
   en: {
-    notContinuedTitle: 'dsh-auto-continue: Not continued',
+    notContinuedTitle: 'dsh-auto-continue: Review session error',
     permanentErrorBody: (sessionId: SessionId, summary: string) =>
-      `${sessionId}: Permanent error ${summary}; manual intervention required`,
+      `${sessionId}: ${summary}. Resolve this error before continuing.`,
     resumeAction: 'Resume now',
     pauseAction: 'Pause this session for 1 hour',
-    continuedTitle: 'dsh-auto-continue: Continued automatically',
+    continuedTitle: 'dsh-auto-continue: Continue message sent',
     continuedBody: (sessionId: SessionId, text: string, count: number) =>
-      `${sessionId}: Sent "${text}" (consecutive attempt ${count})`,
-    stoppedTitle: 'dsh-auto-continue: Auto-continue stopped',
+      `${sessionId}: Sent "${text}" (consecutive attempts: ${count})`,
+    stoppedTitle: 'dsh-auto-continue: Retry limit reached',
     stoppedBody: (sessionId: SessionId, count: number) =>
-      `${sessionId}: ${count} consecutive failures; manual intervention required`,
+      `${sessionId}: Consecutive recovery attempts: ${count}. Review the conversation before continuing.`,
   },
 } as const satisfies Record<AutoContinueLocale, Record<string, unknown>>;
 
@@ -341,7 +341,7 @@ export class AutoContinueRunner {
       void this.bootScanLoop();
     }
     this.log(
-      `已启动(host 单实例, 文本="${config.continueText}", 宽限 ${config.graceMs}ms, ` +
+      `已启动(文本="${config.continueText}", 宽限 ${config.graceMs}ms, ` +
         `冷却 ${config.cooldownMs}ms, 最多连续 ${config.maxConsecutive} 次)`,
     );
   }
