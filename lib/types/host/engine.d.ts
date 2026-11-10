@@ -15,6 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { type AutoContinueConfig, type DayStats, type RecoveryAttempt, type NotifyAction } from '../shared/core.ts';
+import { type ConnectivityProbe } from './connectivity.ts';
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
     /** 稳定标识(供 browser 去重)。 */
@@ -31,6 +32,7 @@ export interface HostNotice {
 export declare class AutoContinueRunner {
     private readonly ctx;
     private readonly getConfig;
+    private readonly probe;
     private readonly states;
     private readonly pauseUntil;
     private dayStats;
@@ -64,11 +66,13 @@ export declare class AutoContinueRunner {
     private wakeBootScan;
     private storedSweep;
     private readonly stopStoredSweep;
+    /** 并发的断网挂起共用同一次连通性检测。 */
+    private connectivityCheck;
     /**
      * @param ctx - host plugin context (agents registry, session events).
      * @param getConfig - read the current resolved configuration (entry config).
      */
-    constructor(ctx: Context, getConfig: () => AutoContinueConfig);
+    constructor(ctx: Context, getConfig: () => AutoContinueConfig, probe?: ConnectivityProbe);
     private log;
     /** 对外(状态桥): 今日统计快照。 */
     todayStats(): DayStats;
@@ -145,6 +149,16 @@ export declare class AutoContinueRunner {
     private templateFor;
     private cancelPending;
     private fire;
+    private resetLoopIterations;
+    /** 自主循环轮数上限: 触顶后静默停下, 每次触顶只提示一次。 */
+    private loopCapReached;
+    private checkConnectivity;
+    /**
+     * 网络类失败的续跑先过连通性检测: 断网时发出去必然再失败一次, 白白吃掉连续上限,
+     * 等网络恢复时预算已耗尽。挂起期间不计次数, 每 offlineCheckMs 复检一次, 恢复后
+     * 重新走 schedule(宽限、冷却照常)。手动续跑和非网络原因不受影响。
+     */
+    private fireWhenOnline;
     /**
      * 组装本次续跑消息: 模板填充 + 幂等护栏。
      * 护栏依据上一步工具调用的执行状态附加指引, 防止重跑副作用操作:

@@ -29,6 +29,7 @@ import {
   freshState,
   isNonHumanReason,
   isOurEcho,
+  isNetworkFailure,
   isTransientAgentError,
   isTransientFailure,
   resolveConfig,
@@ -47,6 +48,7 @@ import {
   type TemplateContext,
   type ToolRepeatSignal,
 } from '../shared/core.ts';
+import { probeConnectivity, type ConnectivityProbe } from './connectivity.ts';
 
 const NOTICE_COPY = {
   zh: {
@@ -61,6 +63,9 @@ const NOTICE_COPY = {
     stoppedTitle: 'dsh-auto-continue: 已停止自动继续',
     stoppedBody: (sessionId: SessionId, count: number) =>
       `${sessionId}: 连续失败 ${count} 次, 需要人工介入`,
+    loopCapTitle: 'dsh-auto-continue: 自主循环已到上限',
+    loopCapBody: (sessionId: SessionId, count: number) =>
+      `${sessionId}: 已自主续跑 ${count} 轮, 循环暂停; 发一条消息或重新开启循环即可继续`,
   },
   en: {
     notContinuedTitle: 'dsh-auto-continue: Not continued',
@@ -74,6 +79,9 @@ const NOTICE_COPY = {
     stoppedTitle: 'dsh-auto-continue: Auto-continue stopped',
     stoppedBody: (sessionId: SessionId, count: number) =>
       `${sessionId}: ${count} consecutive failures; manual intervention required`,
+    loopCapTitle: 'dsh-auto-continue: Autonomous loop limit reached',
+    loopCapBody: (sessionId: SessionId, count: number) =>
+      `${sessionId}: Stopped after ${count} autonomous rounds; send a message or turn the loop back on to keep going`,
   },
 } as const satisfies Record<AutoContinueLocale, Record<string, unknown>>;
 
@@ -438,6 +446,8 @@ export class AutoContinueRunner {
   private wakeBootScan: (() => void) | undefined;
   private storedSweep: Promise<void> | undefined;
   private readonly stopStoredSweep = new AbortController();
+  /** 并发的断网挂起共用同一次连通性检测。 */
+  private connectivityCheck: Promise<boolean> | undefined;
 
   /**
    * @param ctx - host plugin context (agents registry, session events).
@@ -446,6 +456,7 @@ export class AutoContinueRunner {
   constructor(
     private readonly ctx: Context,
     private readonly getConfig: () => AutoContinueConfig,
+    private readonly probe: ConnectivityProbe = probeConnectivity,
   ) {
     // 单实例事件源: 宿主进程内的会话事件 firehose, 天然覆盖所有会话。
     this.disposeSessionEvents = ctx.on('session/event', (session, event) => {
@@ -560,6 +571,9 @@ export class AutoContinueRunner {
     if (this.disposed) return;
     for (const [sessionId, state] of this.states) {
       const config = this.sessionConfig(sessionId);
+      // 循环由关到开视为一次新的授权: 轮数上限重新计数。
+      if (config.resumeCompletedTurns && state.loopEnabled === false) this.resetLoopIterations(state);
+      state.loopEnabled = config.resumeCompletedTurns;
       if (config.paused || (isLoopReason(state.pendingReason ?? '') && !config.resumeCompletedTurns)) {
         this.cancelPending(sessionId, '会话模式或全局设置已更改');
       }
@@ -601,6 +615,8 @@ export class AutoContinueRunner {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
       if (state.loopRetryTimer !== undefined) clearTimeout(state.loopRetryTimer);
       if (state.cooldownRetryTimer !== undefined) clearTimeout(state.cooldownRetryTimer);
+      if (state.offlineTimer !== undefined) clearTimeout(state.offlineTimer);
+      state.offlineWait = undefined;
     }
     this.states.clear();
   }
@@ -1067,6 +1083,7 @@ export class AutoContinueRunner {
         if (event.data.source.kind === 'user') {
           // 用户手动介入: 清零上限与跨标签页发送计数
           state.consecutive = 0;
+          this.resetLoopIterations(state);
           this.cancelPending(sessionId, '用户手动发送消息');
         }
         break;
@@ -1226,6 +1243,8 @@ export class AutoContinueRunner {
       return;
     }
     if (state.pendingTimer !== undefined) return; // 已有待发送
+    if (state.offlineWait !== undefined || state.offlineTimer !== undefined) return; // 断网挂起中, 恢复后自会续跑
+    if (isLoopReason(reason) && this.loopCapReached(sessionId, state, config)) return;
     // 连续上限优先于冷却: 已经放弃的会话不该再安排冷却后的重试。
     // 自主循环的完成续跑(force)不受二者约束。
     if (!force && state.consecutive >= config.maxConsecutive) {
@@ -1249,7 +1268,7 @@ export class AutoContinueRunner {
       state.pendingReason = undefined;
       // 保险丝: 定时器回调内任何异常(含 inactive context)都不得成为未捕获异常炸掉进程。
       try {
-        void this.fire(sessionId, reason, force);
+        this.fireWhenOnline(sessionId, reason, force);
       } catch (error) {
         console.error(`[auto-continue] 定时发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1311,6 +1330,13 @@ export class AutoContinueRunner {
     if (state.loopRetryTimer !== undefined) {
       clearTimeout(state.loopRetryTimer);
       state.loopRetryTimer = undefined;
+      cancelled = true;
+    }
+    if (state.offlineWait !== undefined || state.offlineTimer !== undefined) {
+      if (state.offlineTimer !== undefined) clearTimeout(state.offlineTimer);
+      state.offlineTimer = undefined;
+      state.offlineWait = undefined;
+      state.offlineSince = 0;
       cancelled = true;
     }
     if (cancelled) this.log(`取消 ${sessionId} 的自动继续(${why})`);
@@ -1375,6 +1401,7 @@ export class AutoContinueRunner {
       this.rearmGoal(sessionId, config);
       // 自主循环的成功续跑不计入连续上限: 上限只约束失败(网络中断等)。
       if (reason !== LOOP_COMPLETED_REASON) state.consecutive += 1;
+      if (isLoopReason(reason)) state.loopIterations += 1;
       state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
       if (reason !== LOOP_COMPLETED_REASON) {
         this.recoveryAttempts.unshift({
@@ -1414,6 +1441,93 @@ export class AutoContinueRunner {
     } catch (error) {
       this.log(`发送异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private resetLoopIterations(state: SessionState): void {
+    state.loopIterations = 0;
+    state.loopCapNotified = false;
+  }
+
+  /** 自主循环轮数上限: 触顶后静默停下, 每次触顶只提示一次。 */
+  private loopCapReached(sessionId: SessionId, state: SessionState, config: AutoContinueConfig): boolean {
+    const cap = config.loopMaxIterations;
+    if (cap <= 0 || state.loopIterations < cap) return false;
+    if (!state.loopCapNotified) {
+      state.loopCapNotified = true;
+      this.log(`自主循环已续跑 ${state.loopIterations} 轮, 达到上限 ${cap}, 停止 ${sessionId}; 用户发消息或重新开启循环后重新计数`);
+      if (config.notify) {
+        const copy = NOTICE_COPY[config.locale];
+        this.notify(
+          sessionId,
+          copy.loopCapTitle,
+          copy.loopCapBody(sessionId, state.loopIterations),
+          this.notifyOptions(sessionId, config.locale),
+        );
+      }
+    }
+    return true;
+  }
+
+  private checkConnectivity(): Promise<boolean> {
+    if (this.connectivityCheck === undefined) {
+      const check = this.probe()
+        .catch(() => true) // 检测本身出错时放行, 不因探测失败卡住恢复
+        .finally(() => {
+          if (this.connectivityCheck === check) this.connectivityCheck = undefined;
+        });
+      this.connectivityCheck = check;
+    }
+    return this.connectivityCheck;
+  }
+
+  /**
+   * 网络类失败的续跑先过连通性检测: 断网时发出去必然再失败一次, 白白吃掉连续上限,
+   * 等网络恢复时预算已耗尽。挂起期间不计次数, 每 offlineCheckMs 复检一次, 恢复后
+   * 重新走 schedule(宽限、冷却照常)。手动续跑和非网络原因不受影响。
+   */
+  private fireWhenOnline(sessionId: SessionId, reason: string, force: boolean): void {
+    const state = this.state(sessionId);
+    const config = this.sessionConfig(sessionId);
+    const gated = config.pauseWhenOffline &&
+      reason !== MANUAL_NOTIFICATION_REASON &&
+      !isLoopReason(reason) &&
+      state.lastFailure !== undefined &&
+      isNetworkFailure(state.lastFailure);
+    if (!gated) {
+      this.fire(sessionId, reason, force);
+      return;
+    }
+    const token = {};
+    state.offlineWait = token;
+    state.pendingReason = reason;
+    void this.checkConnectivity().then((online) => {
+      if (this.disposed || state.offlineWait !== token) return; // 已被取消或被新的检测取代
+      if (online) {
+        state.offlineWait = undefined;
+        state.pendingReason = undefined;
+        if (state.offlineSince !== 0) {
+          this.log(`网络已恢复 ${sessionId}, 断网挂起 ${Math.round((Date.now() - state.offlineSince) / 1000)}s 后继续(${reason})`);
+          state.offlineSince = 0;
+          this.schedule(sessionId, reason, force);
+          return;
+        }
+        this.fire(sessionId, reason, force);
+        return;
+      }
+      if (state.offlineSince === 0) {
+        state.offlineSince = Date.now();
+        this.log(`网络不可用, 挂起 ${sessionId} 的自动继续(${reason}), 每 ${config.offlineCheckMs}ms 复检, 不消耗重试次数`);
+      }
+      state.offlineTimer = setTimeout(() => {
+        state.offlineTimer = undefined;
+        if (state.offlineWait !== token) return;
+        try {
+          this.fireWhenOnline(sessionId, reason, force);
+        } catch (error) {
+          console.error(`[auto-continue] 断网复检异常 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, config.offlineCheckMs);
+    });
   }
 
   /**

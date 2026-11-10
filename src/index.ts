@@ -106,6 +106,12 @@ const settingsFields = {
   resumeGoals: z.boolean().default(false),
   /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
   resumePausedGoals: z.boolean().default(false),
+  /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+  pauseWhenOffline: z.boolean().default(true),
+  /** How often (ms) a held recovery re-checks connectivity. */
+  offlineCheckMs: z.natural().min(1000).default(15000),
+  /** Autonomous-loop round cap per session; 0 means unlimited. */
+  loopMaxIterations: z.natural().default(0),
 };
 export const AutoContinueSchema = z.object(settingsFields);
 

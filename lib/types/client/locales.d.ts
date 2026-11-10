@@ -57,6 +57,12 @@ export declare const zh: {
     'field.resumeGoalsHint': string;
     'field.resumePausedGoals': string;
     'field.resumePausedGoalsHint': string;
+    'field.pauseWhenOffline': string;
+    'field.pauseWhenOfflineHint': string;
+    'field.offlineCheckMs': string;
+    'field.offlineCheckMsHint': string;
+    'field.loopMaxIterations': string;
+    'field.loopMaxIterationsHint': string;
     'field.continueTextLoop': string;
     'field.continueTextLoopHint': string;
     'default.continueTextLoop': "继续";
