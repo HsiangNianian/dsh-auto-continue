@@ -28,6 +28,8 @@ export const AUTO_CONTINUE_NS = 'auto-continue';
 const settingsFields = {
   /** Active browser/UI locale mirrored by the client. */
   locale: z.string().default('en'),
+  /** Send continue messages with the plugin source instead of the legacy user source. */
+  usePluginSource: z.boolean().default(false),
   /** Text automatically sent after an interruption. */
   continueText: z.string().default(''),
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */

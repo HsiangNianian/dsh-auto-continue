@@ -264,6 +264,7 @@ The browser mirrors DSH's active language into the internal `locale` field: `zh`
     locale: 'en' # normally managed by the browser
     paused: false
     showComposerToggle: true
+    usePluginSource: false
     continueText: ''
     resumeSilentTurns: true
     resumeCompletedTurns: false
@@ -335,6 +336,7 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | --- | --- | --- |
 | Pause auto-continue | `off` | Global pause: no live or scan auto-send fires, queued pending sends are cancelled |
 | Show auto-continue switch in the composer | `on` | Show the session switch and mode menu (`showComposerToggle`); hiding them does not change modes |
+| Send continue messages with plugin source | `off` | `usePluginSource`: off keeps the legacy `user` source; on uses `plugin:dsh-client-auto-continue` |
 | Continue text | `Continue` | Text automatically sent after an interruption |
 | Continue text (max tokens) | `Continue` | Text sent when the output token ceiling is reached (same placeholders) |
 | Resume silent turns | `on` | Resume a turn that ended normally with reasoning only (no text, no tool call); does not reset the consecutive count |
