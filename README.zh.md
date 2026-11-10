@@ -248,6 +248,7 @@ DSH 0.1.7 / 0.2 将这些值保存在当前 profile patch 的 `auto-continue` �
     locale: 'zh' # 通常由浏览器自动维护
     paused: false
     showComposerToggle: true
+    usePluginSource: false
     continueText: ''
     resumeSilentTurns: true
     resumeCompletedTurns: false
@@ -318,6 +319,7 @@ auto-continue:
 | --- | --- | --- |
 | 暂停自动继续 | 关 | 全局暂停: 实时与扫描都不再自动发送, 已排队的待发送也会取消 |
 | 在会话区显示自动继续开关 | 开 | 显示会话开关和模式菜单（`showComposerToggle`）；隐藏不会改变模式 |
+| 以插件来源发送继续消息 | 关 | `usePluginSource`：关闭时沿用旧版 `user` 来源；开启时使用 `plugin:dsh-client-auto-continue` |
 | 继续文本 | `继续` | 中断后自动发送的消息内容 |
 | 超限时的继续文本 | `继续` | 达到输出 token 上限时自动发送的文本(支持相同占位符) |
 | 续跑无输出回合 | 开 | 回合正常结束但只有推理(没有文本、没有工具调用)时自动续跑; 不清零连续次数 |

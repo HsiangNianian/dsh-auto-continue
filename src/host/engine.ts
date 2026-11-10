@@ -19,6 +19,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
 import { foldRequestHeader, type Session } from '@deepseek-ai/dsh-session';
 import {
+  AUTO_CONTINUE_SOURCE_KIND,
   DEFAULT_CONFIG,
   RECOVERY_WINDOW_MS,
   effectiveCooldown,
@@ -1202,7 +1203,7 @@ export class AutoContinueRunner {
     try {
       const message = createUserMessage({
         content: [{ type: 'text', text }],
-        source: { kind: 'user' },
+        source: { kind: config.usePluginSource ? AUTO_CONTINUE_SOURCE_KIND : 'user' },
       });
       // `followup` may publish the matching session event synchronously.
       trackPendingEcho(state, message.id);

@@ -6,6 +6,14 @@
  */
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
 
+export const AUTO_CONTINUE_SOURCE_KIND = 'plugin:dsh-client-auto-continue';
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'plugin:dsh-client-auto-continue': { kind: typeof AUTO_CONTINUE_SOURCE_KIND };
+  }
+}
+
 /** Supported UI/config locales; missing and unsupported values use English. */
 export type AutoContinueLocale = 'en' | 'zh';
 
@@ -64,6 +72,8 @@ export const LOCALIZED_TEXT_DEFAULTS = {
 export interface AutoContinueSettings {
   /** Active browser/UI locale mirrored by the client. */
   locale?: AutoContinueLocale;
+  /** Send continue messages with the plugin source instead of the legacy user source. */
+  usePluginSource?: boolean;
   /** Text automatically sent after an interruption. */
   continueText?: string;
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -137,6 +147,7 @@ export type AutoContinueConfig = Required<AutoContinueSettings>;
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   locale: 'en',
   ...LOCALIZED_TEXT_DEFAULTS.en,
+  usePluginSource: false,
   resumeSilentTurns: true,
   resumeCompletedTurns: false,
   continueTextLoop: '',
@@ -207,6 +218,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
       : localized.guardDoneText;
   return {
     locale,
+    usePluginSource: booleanOr(value.usePluginSource, DEFAULT_CONFIG.usePluginSource),
     continueText: text,
     continueTextMaxTokens: maxTokensText,
     resumeSilentTurns: booleanOr(value.resumeSilentTurns, DEFAULT_CONFIG.resumeSilentTurns),
@@ -983,7 +995,7 @@ export function forgetPendingEcho(state: SessionState, messageId: string): void 
 export function isOurEcho(state: SessionState, event: SessionEvent): boolean {
   if (event.type !== 'user/message') return false;
   const message = event.data;
-  if (message.source.kind !== 'user') return false;
+  if (message.source.kind !== 'user' && message.source.kind !== AUTO_CONTINUE_SOURCE_KIND) return false;
   if (state.pendingEchoMessageIds.size === 0) return false;
   const now = Date.now();
   prunePendingEchoMessageIds(state, now);

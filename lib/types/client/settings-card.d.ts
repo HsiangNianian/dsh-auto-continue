@@ -12,6 +12,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
     notificationFeedback: SettingsCardKey | undefined;
     paused: CardFieldState;
     showComposerToggle: CardFieldState;
+    usePluginSource: CardFieldState;
     continueText: CardFieldState;
     continueTextMaxTokens: CardFieldState;
     resumeSilentTurns: CardFieldState;

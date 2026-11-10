@@ -84,6 +84,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
   notificationFeedback: SettingsCardKey | undefined;
   paused: CardFieldState;
   showComposerToggle: CardFieldState;
+  usePluginSource: CardFieldState;
   continueText: CardFieldState;
   continueTextMaxTokens: CardFieldState;
   resumeSilentTurns: CardFieldState;
@@ -145,6 +146,7 @@ export class AutoContinueSettingsCardController {
     this.form = new CardForm(scope, [
       booleanField('paused'),
       booleanField('showComposerToggle'),
+      booleanField('usePluginSource'),
       textField('continueText'),
       textField('continueTextMaxTokens'),
       booleanField('resumeSilentTurns'),
@@ -187,6 +189,7 @@ export class AutoContinueSettingsCardController {
       notificationFeedback: this.notificationFeedback,
       paused: this.form.field('paused'),
       showComposerToggle: this.form.field('showComposerToggle'),
+      usePluginSource: this.form.field('usePluginSource'),
       continueText: this.form.field('continueText'),
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
       resumeSilentTurns: this.form.field('resumeSilentTurns'),
@@ -301,7 +304,7 @@ export function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps) {
 
 type FieldName = Exclude<keyof AutoContinueSettingsCardState, keyof CardShell | 'enabled' | 'notificationFeedback'>;
 const groups = [
-  { id: 'general', fields: ['paused', 'showComposerToggle', 'resumeSilentTurns', 'resumeCompletedTurns', 'notify'] },
+  { id: 'general', fields: ['paused', 'showComposerToggle', 'usePluginSource', 'resumeSilentTurns', 'resumeCompletedTurns', 'notify'] },
   { id: 'recovery', fields: ['graceMs', 'cooldownMs', 'maxConsecutive', 'classify', 'retryableErrorPatterns', 'backoffFactor', 'backoffMaxMs'] },
   { id: 'startup', fields: ['scanOnBoot', 'scanLimit', 'freshMs'] },
   { id: 'prompts', fields: ['continueText', 'continueTextMaxTokens', 'continueTextSilent', 'continueTextInterrupted', 'continueTextLoop', 'guardPendingText', 'guardDoneText', 'loopText'] },
