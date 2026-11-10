@@ -118,6 +118,12 @@ export interface AutoContinueSettings {
     loopRepeatText?: number;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText?: string;
+    /** Recover child (subagent / Agent Teams) sessions that a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren?: boolean;
+    /** Re-arm a goal that a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals?: boolean;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals?: boolean;
 }
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;

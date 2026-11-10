@@ -51,6 +51,12 @@ export declare const zh: {
     'field.resumeSilentTurnsHint': string;
     'field.resumeCompletedTurns': string;
     'field.resumeCompletedTurnsHint': string;
+    'field.resumeInterruptedChildren': string;
+    'field.resumeInterruptedChildrenHint': string;
+    'field.resumeGoals': string;
+    'field.resumeGoalsHint': string;
+    'field.resumePausedGoals': string;
+    'field.resumePausedGoalsHint': string;
     'field.continueTextLoop': string;
     'field.continueTextLoopHint': string;
     'default.continueTextLoop': "继续";

@@ -103,6 +103,75 @@ const STORED_READ_TIMEOUT_MS = 5000;
 /** 单个存储会话连续观察/物化失败达此数后放弃, 避免坏日志反复占满每轮观察配额。 */
 const SWEEP_MAX_FAILURES = 3;
 
+/** Why a child session needs its root session woken after a restart. */
+type ChildInterruptCause = 'open-turn' | 'disposed' | 'interrupted' | 'max-tokens' | 'error';
+
+/** One interrupted child session, grouped under the root session that owns it. */
+interface ChildInterrupt {
+  readonly id: SessionId;
+  readonly title: string | undefined;
+  readonly preset: string | undefined;
+  readonly cause: ChildInterruptCause;
+  readonly at: number;
+}
+
+/** A header-shaped record good enough to resolve a parent chain. */
+interface SessionHeaderLike {
+  readonly id: SessionId;
+  readonly parentSession?: SessionId;
+}
+
+/** Cancel causes a host shutdown or a restart produces; only these justify a wake-up. */
+const RESTART_CANCEL_CAUSES: ReadonlySet<string> = new Set(['disposed', 'legacy']);
+/** Cancel causes that record an explicit human or parent decision; never recover these. */
+const DECISION_CANCEL_CAUSES: ReadonlySet<string> = new Set(['user', 'parent', 'hook']);
+/** Bound child observations per sweep round: child logs are as large as root logs. */
+const CHILD_SWEEP_LIMIT = 8;
+/** Bound how many ancestor hops a dirty parent chain may cost before giving up. */
+const CHILD_ROOT_MAX_DEPTH = 8;
+
+/** Host service key for goals (0.2.x); older hosts simply do not register it. */
+const GOALS_SERVICE_KEY = 'goals';
+
+/** Copy for each child interruption cause, keyed by UI locale. */
+const CHILD_CAUSE_COPY = {
+  zh: {
+    'open-turn': '回合开始后中断',
+    disposed: '宿主销毁',
+    interrupted: '崩溃恢复标记',
+    'max-tokens': '输出长度耗尽',
+    error: '可重试错误',
+  },
+  en: {
+    'open-turn': 'turn cut off after start',
+    disposed: 'host disposed the agent',
+    interrupted: 'closed by crash recovery',
+    'max-tokens': 'output ceiling reached',
+    error: 'retryable error',
+  },
+} as const satisfies Record<AutoContinueLocale, Record<ChildInterruptCause, string>>;
+
+/** Structural view of `ctx.goals`; declared locally because devDeps target an older host. */
+interface GoalRefLike {
+  readonly id: string;
+  /** Mutations are CAS-checked against this revision; omitting it raises GOAL_STALE_REVISION. */
+  readonly revision: number;
+}
+
+interface GoalViewLike {
+  readonly id: string;
+  /** The host's `view()` exposes no `ref`; callers build `{ id, revision }` from the view. */
+  readonly ref?: GoalRefLike;
+  readonly phase?: string;
+  readonly activation?: string;
+  readonly revision?: number;
+}
+
+interface GoalServiceLike {
+  get(agent: Agent): GoalViewLike | undefined;
+  resume(agent: Agent, ref: GoalRefLike): unknown;
+}
+
 /**
  * 存储扫描消费的宿主服务结构类型。这些服务(sessionQuery 等)随 dsh
  * 版本整组演进, 直接引类型包会拖动 devDependency 时代; 按消费面声明,
@@ -215,6 +284,80 @@ function readReasonKind(value: unknown): string | undefined {
   return typeof kind === 'string' && kind.trim() !== '' ? kind : undefined;
 }
 
+/** Read the nested cancel cause of an `aborted` turn/end (`reason.reason.kind`). */
+function readCancelCause(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const reason = value as { kind?: unknown; reason?: unknown };
+  if (reason.kind !== 'aborted') return undefined;
+  return readReasonKind(reason.reason);
+}
+
+/**
+ * Decide whether a child session's tail is a restart interruption worth waking
+ * its root session for. Returns `undefined` when the child finished normally,
+ * was stopped by a human or by its parent, or was superseded by a later user
+ * message — i.e. whenever a wake-up would be a ghost turn.
+ */
+function classifyChildInterruption(
+  events: readonly SessionEvent[],
+  config: AutoContinueConfig,
+): ChildInterruptCause | undefined {
+  let lastEnd: SessionEvent<'turn/end'> | undefined;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type === 'turn/end') { lastEnd = event; break; }
+  }
+  const lastStart = latestTurnStart(events);
+  if (lastStart !== undefined && (lastEnd === undefined || lastStart.seq > lastEnd.seq)) {
+    if (isMaintenanceTurnStart(lastStart)) return undefined;
+    // 与主扫描同口径: 过了 freshMs 的中断不是这次重启造成的, 唤醒只会复活陈年父会话。
+    if ((events[events.length - 1]?.time ?? 0) < Date.now() - config.freshMs) return undefined;
+    return 'open-turn';
+  }
+  const end = lastEnd;
+  if (end === undefined) return undefined;
+  if (end.time < Date.now() - config.freshMs) return undefined;
+  // A message written after the closing turn means someone already took over.
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event === undefined || event.seq <= end.seq) break;
+    if (event.type === 'user/message') return undefined;
+  }
+  const reason = end.data.reason;
+  const kind = readReasonKind(reason);
+  if (kind === undefined) return undefined;
+  if (kind === 'aborted') {
+    const cause = readCancelCause(reason);
+    if (cause === undefined || DECISION_CANCEL_CAUSES.has(cause)) return undefined;
+    return RESTART_CANCEL_CAUSES.has(cause) ? 'disposed' : undefined;
+  }
+  if (kind === 'interrupted') return 'interrupted';
+  if (kind === 'max-tokens') return 'max-tokens';
+  if (kind === 'error') {
+    const failure = parseFailureFacts((reason as { error?: unknown }).error);
+    if (failure === undefined) return undefined;
+    if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) return undefined;
+    return 'error';
+  }
+  return undefined;
+}
+
+/** Walk `parentSession` up to a root session; `undefined` when the chain is dirty. */
+function resolveRootHeader(
+  header: SessionHeaderLike,
+  byId: ReadonlyMap<string, SessionHeaderLike>,
+): SessionId | undefined {
+  let current: SessionHeaderLike = header;
+  for (let depth = 0; depth <= CHILD_ROOT_MAX_DEPTH; depth += 1) {
+    const parentId = current.parentSession;
+    if (parentId === undefined || parentId === '') return current.id;
+    const parent = byId.get(parentId);
+    if (parent === undefined) return undefined;
+    current = parent;
+  }
+  return undefined;
+}
+
 function isLoopGuardCancelReason(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const cause = value as { kind?: unknown; reason?: unknown };
@@ -278,6 +421,16 @@ export class AutoContinueRunner {
   private readonly bootScanErrors = new WeakSet<object>();
   /** 存储扫描已裁决的会话 id, 避免每轮重复冷读大日志。 */
   private readonly storedSwept = new Set<SessionId>();
+  /** 子会话裁决独立记账: storedSwept 在 origin 判断之前就已标记, 不能复用。 */
+  private readonly childSwept = new Set<SessionId>();
+  /** 本轮已花掉的子会话观察配额(每轮重置, 子会话日志与主会话同等昂贵)。 */
+  private childScanned = 0;
+  /** 本轮收集到的子会话中断, 按 root 主会话 id 归组。 */
+  private readonly childInterrupts = new Map<SessionId, ChildInterrupt[]>();
+  /** 已唤醒过的 root 会话 → 上次唤醒覆盖的子会话签名, 防止每轮重复催同一批。 */
+  private readonly childWoken = new Map<SessionId, string>();
+  /** 已打印过「父链不可解析」的子会话, 避免 15 分钟扫描窗口内每轮重扫把日志刷爆。 */
+  private readonly childDirtyLogged = new Set<SessionId>();
   /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
   private readonly storedSweepFailures = new Map<SessionId, number>();
   private storedSweepAnnounced = false;
@@ -1217,6 +1370,9 @@ export class AutoContinueRunner {
         this.prioritizedFollowups.delete(message.id);
       }
       const now = Date.now();
+      // 续跑已发出: 被重启失活的 goal 需要在这里重新武装, 否则续跑消息会跑但
+      // goal 的自动继续轮不会转起来(disarm 是宿主卸载驱动的正常动作)。
+      this.rearmGoal(sessionId, config);
       // 自主循环的成功续跑不计入连续上限: 上限只约束失败(网络中断等)。
       if (reason !== LOOP_COMPLETED_REASON) state.consecutive += 1;
       state.pendingRecoveryAt = now; // 等待窗口内的下一个回合结束来判定恢复结果
@@ -1308,7 +1464,9 @@ export class AutoContinueRunner {
         if (await this.scanInterrupted()) return;
         const config = this.getConfig();
         if (!config.paused && config.scanOnBoot && this.storedSweep === undefined) {
+          this.childScanned = 0; // 每轮重置子会话观察配额
           this.storedSweep = this.sweepStoredSessions(config, deadline)
+            .then(() => this.wakeInterruptedChildren(config, deadline))
             .catch(error => {
               if (!this.disposed) this.ctx.logger.error(`Stored session scan failed: ${String(error)}`);
             })
@@ -1488,7 +1646,27 @@ export class AutoContinueRunner {
     if (!Array.isArray(records)) throw new TypeError('stored session listing is not an array');
     if (!this.storedSweepAnnounced) {
       this.storedSweepAnnounced = true;
-      this.ctx.logger.info(`存储扫描就绪: ${records.length} 个会话记录`);
+      // 诊断口径: 宿主返回的 header 是否携带 origin, 决定子会话分支能否进入。
+      let children = 0;
+      let otherOrigins = 0;
+      let originMissing = 0;
+      for (const record of records) {
+        const origin = (record?.header as { origin?: string } | undefined)?.origin;
+        if (origin === 'subagent') children += 1;
+        else if (origin === undefined) originMissing += 1;
+        else otherOrigins += 1;
+      }
+      this.ctx.logger.info(
+        `存储扫描就绪: ${records.length} 个会话记录 (subagent ${children} / 无 origin ${originMissing} / 其它 origin ${otherOrigins})`,
+      );
+    }
+    // 父子链解析只依赖 header: 一次建成索引, 子会话不必各自再读父日志。
+    const headersById = new Map<string, SessionHeaderLike>();
+    for (const record of records) {
+      const header = record?.header as SessionHeaderLike | undefined;
+      if (header !== undefined && typeof header.id === 'string' && header.id !== '') {
+        headersById.set(header.id, header);
+      }
     }
     let observed = 0;
     for (const record of records) {
@@ -1499,9 +1677,17 @@ export class AutoContinueRunner {
       }
       const sessionId = record.header.id;
       if (this.sessionConfig(sessionId).paused || Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) continue;
+      if (record.header.origin === 'subagent') {
+        // 子会话的记账完全交给 childSwept。若沿用 storedSwept(它在下面为 root 记账),
+        // 配额用尽的那一批会被永久标成"已裁决": 之后每轮都在这里被挡掉, 775 个子会话
+        // 只判 8 个, 而配额本意只是限制单轮的冷读成本。
+        if (config.resumeInterruptedChildren) {
+          await this.sweepChild(record, headersById, config, deadline);
+        }
+        continue;
+      }
       if (record.live || this.storedSwept.has(sessionId)) continue;
       this.storedSwept.add(sessionId);
-      if (record.header.origin === 'subagent') continue;
       observed += 1;
       let observation: StoredObservation | undefined;
       try {
@@ -1594,6 +1780,275 @@ export class AutoContinueRunner {
           await new Promise<void>(resolve => setTimeout(resolve, 0));
         }
       }
+    }
+  }
+
+  /**
+   * 子会话裁决。子会话本身永不直接续跑(父代理权威, 见 README), 但启动扫描要
+   * 知道它是否在重启时被打断, 才能在自己的 root 会话上补一次带清单的唤醒。
+   * 独立 `childSwept` 记账与独立配额: 主扫描的 `storedSwept` 在 origin 判断
+   * 之前就已标记, 复用它会让子会话永远扫不到, 也会吃掉主扫描的观察预算。
+   */
+  private async sweepChild(
+    record: {
+      readonly header: SessionHeaderLike & {
+        readonly origin?: string;
+        readonly agentPreset?: string;
+        readonly title?: unknown;
+      };
+      readonly persisted?: boolean;
+    },
+    headersById: ReadonlyMap<string, SessionHeaderLike>,
+    config: AutoContinueConfig,
+    deadline: number,
+  ): Promise<void> {
+    const header = record.header;
+    const sessionId = header.id;
+    const parentId = header.parentSession;
+    if (parentId === undefined || parentId === '') return;
+    // one-shot 子会话在结果落库后已被丢弃, 没有可续的日志。
+    if (record.persisted !== true) return;
+    if (this.childSwept.has(sessionId)) return;
+    // live 会话由实时事件路径负责; 冷读它既费钱又会与写归属相撞。
+    if (this.ctx.agents.get(sessionId) !== undefined) return;
+    if (this.childScanned >= CHILD_SWEEP_LIMIT) return;
+    if (this.sessionConfig(sessionId).paused) return;
+    const rootId = resolveRootHeader(header, headersById);
+    if (rootId === undefined || rootId === sessionId) {
+      // 每轮扫描都会重走这里; 只记一次, 否则 15 分钟 freshMs 窗口内会刷出数万行噪声。
+      if (!this.childDirtyLogged.has(sessionId)) {
+        this.childDirtyLogged.add(sessionId);
+        this.log(`子会话 ${sessionId} 父链不可解析(脏引用或自环), 跳过(每会话只记一次)`);
+      }
+      return; // 脏引用或自环: 不猜
+    }
+    const query = this.ctx.get('sessionQuery');
+    if (query === undefined) return;
+    this.childSwept.add(sessionId);
+    this.childScanned += 1;
+    let observation: StoredObservation | undefined;
+    try {
+      const stored: StoredObservation = await this.readStored(
+        signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
+        deadline,
+      );
+      observation = stored;
+      if (this.disposed) return;
+      const events = validateSessionEvents(stored.events);
+      if (events.length === 0) return;
+      const cause = classifyChildInterruption(events, config);
+      if (cause === undefined) return;
+      const tail = events[events.length - 1];
+      const list = this.childInterrupts.get(rootId) ?? [];
+      list.push({
+        id: sessionId,
+        title: typeof header.title === 'string' && header.title !== '' ? header.title : undefined,
+        preset: header.agentPreset,
+        cause,
+        at: tail?.time ?? Date.now(),
+      });
+      this.childInterrupts.set(rootId, list);
+      this.log(`子会话 ${sessionId} 重启时被打断(${cause}), 记入 root ${rootId}`);
+    } catch (error) {
+      this.childSwept.delete(sessionId); // 冷读失败允许下一轮重试
+      if (!this.disposed) {
+        this.ctx.logger.info(
+          `子会话 ${sessionId} 冷读失败: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } finally {
+      observation?.[Symbol.dispose]?.();
+    }
+  }
+
+  /** 把本轮收集到的子会话中断转成 root 会话上的一次唤醒(同一批只催一次)。 */
+  private async wakeInterruptedChildren(
+    config: AutoContinueConfig,
+    deadline: number,
+  ): Promise<void> {
+    if (this.disposed || this.childInterrupts.size === 0) return;
+    if (config.paused || !config.scanOnBoot || !config.resumeInterruptedChildren) return;
+    // 不整体 clear: 只有"已裁决"的 root 才销账。若在循环前 clear, 任一 root 因冷却或
+    // 主路径已排期而提前返回, 这批孩子就永久丢了 —— 它们已在 childSwept 里, 不会再被收集。
+    for (const [rootId, children] of [...this.childInterrupts]) {
+      if (this.disposed || Date.now() >= deadline) return; // 未处理的留到下一轮
+      try {
+        if (await this.wakeRoot(config, rootId, children, deadline)) {
+          this.childInterrupts.delete(rootId);
+        }
+      } catch (error) {
+        // 抛错也要销账, 否则每轮重试同一条坏数据。
+        this.childInterrupts.delete(rootId);
+        if (!this.disposed) {
+          this.ctx.logger.info(
+            `子会话唤醒 ${rootId} 失败: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * 在 root 会话上唤醒一次。只有在 root 自己是"干净终态"时才动手: 它若被打断,
+   * 主扫描本来就会续跑它; 它若被用户手动停止, 唤醒就是幽灵回合。
+   */
+  private async wakeRoot(
+    config: AutoContinueConfig,
+    rootId: SessionId,
+    children: readonly ChildInterrupt[],
+    deadline: number,
+  ): Promise<boolean> {
+    // 返回值语义: true = 已裁决(可销账), false = 稍后重试(必须留住这一批)。
+    if (this.sessionConfig(rootId).paused) return false;
+    if (Date.now() < (this.pauseUntil.get(rootId) ?? 0)) return false;
+    const state = this.state(rootId);
+    if (state.pendingTimer !== undefined) return false; // 主路径已排好, 下一轮再看
+    if (state.consecutive >= config.maxConsecutive) return true; // 预算耗尽: 不必每轮重试
+    if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return false;
+    const batch = children.map(child => `${child.id}:${child.cause}`).sort().join(',');
+    if (this.childWoken.get(rootId) === batch) return true;
+    if (!(await this.rootAcceptsWake(rootId, deadline))) return true; // 明确裁决: 不该唤醒
+    const agent = await this.ensureLiveAgent(rootId, deadline);
+    if (agent === undefined || this.disposed) return false;
+    const text = this.buildChildResumeText(config, children);
+    const message = createUserMessage({
+      content: [{ type: 'text', text }],
+      source: { kind: 'user' },
+    });
+    state.lastAttemptAt = Date.now();
+    agent.followup(message);
+    this.childWoken.set(rootId, batch);
+    this.log(
+      `已唤醒 ${rootId}: ${children.length} 个子会话在重启时被打断, 清单已交给父会话处置`,
+    );
+    this.rearmGoal(rootId, config);
+    return true;
+  }
+
+  /** 父会话只在"干净结束"或"被宿主关闭"时接受唤醒; 用户手动停止的绝不复活。 */
+  private async rootAcceptsWake(sessionId: SessionId, deadline: number): Promise<boolean> {
+    const query = this.ctx.get('sessionQuery');
+    if (query === undefined) return false;
+    let events: readonly SessionEvent[];
+    let stored: StoredObservation | undefined;
+    try {
+      const observation: StoredObservation = await this.readStored(
+        signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
+        deadline,
+      );
+      stored = observation;
+      events = validateSessionEvents(observation.events);
+    } catch {
+      return false;
+    } finally {
+      // validateSessionEvents 可能抛在畸形日志上, 租约必须无条件释放。
+      stored?.[Symbol.dispose]?.();
+    }
+    if (events.length === 0) return false;
+    let lastEnd: SessionEvent<'turn/end'> | undefined;
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const event = events[i];
+      if (event?.type === 'turn/end') { lastEnd = event; break; }
+    }
+    const lastStart = latestTurnStart(events);
+    const end = lastEnd;
+    if (lastStart !== undefined && (end === undefined || lastStart.seq > end.seq)) return false;
+    if (end === undefined) return false;
+    const kind = readReasonKind(end.data.reason);
+    if (kind === 'completed') return true;
+    if (kind === 'aborted') {
+      const cause = readCancelCause(end.data.reason);
+      return cause !== undefined && RESTART_CANCEL_CAUSES.has(cause);
+    }
+    return false;
+  }
+
+  /** 发送需要 live agent; 存储会话沿既有物化路径拉起, 复用 preset 与模型回装。 */
+  private async ensureLiveAgent(sessionId: SessionId, deadline: number): Promise<Agent | undefined> {
+    const live = this.ctx.agents.get(sessionId);
+    if (live !== undefined) return live;
+    const query = this.ctx.get('sessionQuery');
+    if (query === undefined) return undefined;
+    let presetId: string | undefined;
+    let model: { provider: string; model: string } | undefined;
+    let stored: StoredObservation | undefined;
+    try {
+      const observation: StoredObservation = await this.readStored(
+        signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
+        deadline,
+      );
+      stored = observation;
+      presetId = observation.projections?.values.agentPreset ?? observation.header.agentPreset;
+      // 与主扫描一致回装日志记录的模型选择, 否则父会话会以默认模型被拉起。
+      const loggedConfig = foldRequestHeader(validateSessionEvents(observation.events))?.config;
+      if (loggedConfig !== undefined) model = { provider: loggedConfig.provider, model: loggedConfig.model };
+    } catch {
+      return undefined;
+    } finally {
+      stored?.[Symbol.dispose]?.();
+    }
+    const ok = await this.materializeStored(sessionId, presetId, model);
+    if (!ok || this.disposed) return undefined;
+    return this.ctx.agents.get(sessionId);
+  }
+
+  /** 唤醒文本必须带会话级证据: 否则父会话看不到任何状态, 只会白跑一轮再回一句"都结束了"。 */
+  private buildChildResumeText(
+    config: AutoContinueConfig,
+    children: readonly ChildInterrupt[],
+  ): string {
+    const lines = children.map((child) => {
+      const label = child.title !== undefined ? `「${child.title}」` : '';
+      const preset = child.preset !== undefined ? ` (${child.preset})` : '';
+      const cause = CHILD_CAUSE_COPY[config.locale][child.cause];
+      return `- ${child.id} ${label}${preset} — ${cause}`;
+    });
+    const header = config.locale === 'zh'
+      ? '重启时你开的以下子代理 / 团队成员会话被打断, 没有跑完。请逐个检查, 按需要继续或收尾:'
+      : 'These child sessions you started (subagent / team member) were interrupted by a restart and did not finish. Check each one and either continue it or wrap it up:';
+    const tail = config.locale === 'zh'
+      ? '要继续的用 send_message / subagent 重新拉起对应会话(重启后它们并未加载); 已完成或不再需要的, 说明结论即可。'
+      : 'Use send_message (or subagent) to bring back the ones that should continue — they are not loaded after the restart; for finished or abandoned ones, just state the conclusion.';
+    return [header, ...lines, tail].join('\n');
+  }
+
+  /**
+   * 重启会把 active goal 置为 disarmed(宿主卸载驱动的正常动作), 只有人类授权的
+   * resume 能重新 arm; paused 则是人类的显式决定。两者都默认关闭。
+   */
+  private rearmGoal(sessionId: SessionId, config: AutoContinueConfig): void {
+    if (!config.resumeGoals) return;
+    const goals = (this.ctx as unknown as { get(key: string): unknown }).get(GOALS_SERVICE_KEY) as
+      | GoalServiceLike
+      | undefined;
+    if (goals === undefined) return;
+    const agent = this.ctx.agents.get(sessionId);
+    if (agent === undefined) return;
+    try {
+      const view = goals.get(agent);
+      if (view === undefined) return;
+      // 宿主的 view() 不带 ref 字段, 而 resume() 用 revision 做 CAS 校验(expectCurrent):
+      // 只带 id 必定抛 GOAL_STALE_REVISION 被这里 catch 成一行日志 —— 等于开关失效。
+      // 缺 revision 时 fail closed, 不猜。
+      const revision = view.revision;
+      if (revision === undefined) {
+        this.log(`会话 ${sessionId}: goal 视图缺 revision, 跳过重新武装(宿主会拒绝无 revision 的 resume)`);
+        return;
+      }
+      const ref: GoalRefLike = view.ref ?? { id: view.id, revision };
+      if (view.phase === 'active' && view.activation === 'disarmed') {
+        goals.resume(agent, ref);
+        this.log(`会话 ${sessionId}: goal 被重启失活, 已重新武装`);
+        return;
+      }
+      if (view.phase === 'paused' && config.resumePausedGoals) {
+        goals.resume(agent, ref);
+        this.log(`会话 ${sessionId}: 已恢复被暂停的 goal`);
+      }
+    } catch (error) {
+      this.ctx.logger.info(
+        `goal 恢复失败 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

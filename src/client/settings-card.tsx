@@ -89,6 +89,9 @@ export interface AutoContinueSettingsCardState extends CardShell {
   continueTextMaxTokens: CardFieldState;
   resumeSilentTurns: CardFieldState;
   resumeCompletedTurns: CardFieldState;
+  resumeInterruptedChildren: CardFieldState;
+  resumeGoals: CardFieldState;
+  resumePausedGoals: CardFieldState;
   continueTextLoop: CardFieldState;
   continueTextSilent: CardFieldState;
   continueTextInterrupted: CardFieldState;
@@ -151,6 +154,9 @@ export class AutoContinueSettingsCardController {
       textField('continueTextMaxTokens'),
       booleanField('resumeSilentTurns'),
       booleanField('resumeCompletedTurns'),
+      booleanField('resumeInterruptedChildren'),
+      booleanField('resumeGoals'),
+      booleanField('resumePausedGoals'),
       textField('continueTextLoop'),
       textField('continueTextSilent'),
       textField('continueTextInterrupted'),
@@ -194,6 +200,9 @@ export class AutoContinueSettingsCardController {
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
       resumeSilentTurns: this.form.field('resumeSilentTurns'),
       resumeCompletedTurns: this.form.field('resumeCompletedTurns'),
+      resumeInterruptedChildren: this.form.field('resumeInterruptedChildren'),
+      resumeGoals: this.form.field('resumeGoals'),
+      resumePausedGoals: this.form.field('resumePausedGoals'),
       continueTextLoop: this.form.field('continueTextLoop'),
       continueTextSilent: this.form.field('continueTextSilent'),
       continueTextInterrupted: this.form.field('continueTextInterrupted'),
@@ -305,8 +314,8 @@ export function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps) {
 type FieldName = Exclude<keyof AutoContinueSettingsCardState, keyof CardShell | 'enabled' | 'notificationFeedback'>;
 const groups = [
   { id: 'general', fields: ['paused', 'showComposerToggle', 'usePluginSource', 'resumeSilentTurns', 'resumeCompletedTurns', 'notify'] },
-  { id: 'recovery', fields: ['graceMs', 'cooldownMs', 'maxConsecutive', 'classify', 'retryableErrorPatterns', 'backoffFactor', 'backoffMaxMs'] },
-  { id: 'startup', fields: ['scanOnBoot', 'scanLimit', 'freshMs'] },
+  { id: 'recovery', fields: ['graceMs', 'cooldownMs', 'maxConsecutive', 'classify', 'retryableErrorPatterns', 'backoffFactor', 'backoffMaxMs', 'resumeGoals', 'resumePausedGoals'] },
+  { id: 'startup', fields: ['scanOnBoot', 'resumeInterruptedChildren', 'scanLimit', 'freshMs'] },
   { id: 'prompts', fields: ['continueText', 'continueTextMaxTokens', 'continueTextSilent', 'continueTextInterrupted', 'continueTextLoop', 'guardPendingText', 'guardDoneText', 'loopText'] },
   { id: 'safety', fields: ['guardTools', 'loopGuard', 'loopShortChars', 'loopWindowMs', 'loopShortCount', 'loopRepeatText', 'loopToolRepeat'] },
   { id: 'status', fields: ['verbose'] },

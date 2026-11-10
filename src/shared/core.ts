@@ -138,6 +138,12 @@ export interface AutoContinueSettings {
   loopRepeatText?: number;
   /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
   loopText?: string;
+  /** Recover child (subagent / Agent Teams) sessions that a restart interrupted by waking their root session once. */
+  resumeInterruptedChildren?: boolean;
+  /** Re-arm a goal that a restart left `active` but `disarmed`, when its own session is resumed. */
+  resumeGoals?: boolean;
+  /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+  resumePausedGoals?: boolean;
 }
 
 /** Fully resolved configuration (built-in defaults + user overrides). */
@@ -173,6 +179,9 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   loopShortCount: 12,
   loopRepeatText: 4,
   loopToolRepeat: 5,
+  resumeInterruptedChildren: false,
+  resumeGoals: false,
+  resumePausedGoals: false,
 };
 
 function numberOr(value: unknown, fallback: number): number {
@@ -258,6 +267,12 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
       typeof value.loopText === 'string' && value.loopText.trim() !== ''
         ? value.loopText
         : localized.loopText,
+    resumeInterruptedChildren: booleanOr(
+      value.resumeInterruptedChildren,
+      DEFAULT_CONFIG.resumeInterruptedChildren,
+    ),
+    resumeGoals: booleanOr(value.resumeGoals, DEFAULT_CONFIG.resumeGoals),
+    resumePausedGoals: booleanOr(value.resumePausedGoals, DEFAULT_CONFIG.resumePausedGoals),
   };
 }
 

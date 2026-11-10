@@ -54,6 +54,8 @@ Automatic recovery for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 - **Autonomous loop** — off by default (`resumeCompletedTurns`). When enabled, normally completed turns continue after the grace period, without the recovery cooldown or attempt cap. Reasoning-only turns and explicit `no-visible-output` endings still consume the recovery budget and obey backoff. Global pause, a session pause, manual Stop or changing that session to Recovery only / Off stops the loop. The profile default only affects sessions using Follow default. Its prompt is separate from the loop guard’s prompt (`continueTextLoop`, default `Continue`).
 - **Pause** — turning off **Enable auto-continue globally** in **General** and saving stops automatic sends from live events and startup scanning; per-session pauses (e.g. via a notification button) suspend only one session until they expire. **Resume now** requests one send even when both pauses are active. It leaves the pauses in place, so later automatic recovery and autonomous-loop sends remain paused
 - **Notification buttons** — notifications carry **Resume now** (send immediately, ignoring cooldown, the consecutive cap and any pause) and **Pause this session 1h** actions
+- **Child-session hand-off** — opt-in (`resumeInterruptedChildren`, off by default): when the startup scan finds subagent or team-member sessions that a restart interrupted, the plugin sends each **root session** one message listing those children, once per batch. The child itself is still never resumed — the root decides whether to continue each task or wrap it up. A wake only goes to a parent whose own last turn ended cleanly or was closed by that same restart; a parent still mid-turn is left to the normal recovery path, and one you stopped yourself is never woken
+- **Goal re-arm** — opt-in (`resumeGoals`, off by default): after any auto-continue send (or a child-session wake-up), re-arm an `active` goal that the host disarmed on restart, so its continuation rounds can run again. **Resume paused goals** (`resumePausedGoals`) additionally resumes goals you paused by hand, and only takes effect when `resumeGoals` is on as well
 - **Loop guard** — watches **running** turns too. Four signals trip the guard, which cancels the turn and restarts it with a configurable loop text ("stop repeating, try another way"): the model repeating the **exact same message** several times (any length — e.g. "Let me test variants of the regex…" ×7), repeated near-duplicate paragraphs **inside one streamed assistant message**, many short messages inside a short time window with no tool call in between (the "Let me read…" spin), or the same tool called repeatedly with the **same arguments and the same results** (a changed argument or result counts as progress). The cancel carries an internal marker so it is never confused with a user stop — the restart only happens for guard-initiated cancels. Thresholds, the time window and the loop text are configurable
 - **Stats panel** — the settings card shows today's auto-continue count, recoveries, failures, permanent skips, give-ups and loop breaks, broken down by error code, with a one-click reset
 - **Browser notifications** — optional alerts for auto-continue events and successful settings saves. Saving a change to the notification switch confirms its new state, including one final confirmation when turning it off. The browser may ask for permission when you enable it; a denial is explained in the settings page and does not prevent saving.
@@ -68,9 +70,20 @@ It watches the live event streams and reacts to:
 | `turn/end` → `completed` / `no-visible-output` with no visible output | Observed model activity without visible output, or an explicit silent-ending marker |
 | `turn/end` → `completed` | Continue a normal completion only when autonomous loop is enabled |
 
+What each kind of turn gets, and which switch gates it:
+
+| Scenario | Auto-continues? | Trigger path | Gated by |
+| --- | --- | --- | --- |
+| This session's turn failed, hit the output ceiling, or was closed by a host restart | Yes — one followup message in the same session | Live event, or the startup scan after a restart | **Enable auto-continue globally**, the session mode, **Scan on host startup** (`scanOnBoot`) |
+| This session's turn ended with no visible output | Yes | Live event, or the startup scan | **Resume silent turns** (`resumeSilentTurns`) |
+| This session's turn completed normally | Only in **Autonomous loop** | `turn/end` → `completed` | `resumeCompletedTurns` / the session mode |
+| A subagent or team-member session was interrupted by a restart | **No** — the child session is never resumed directly | Startup scan collects the list, then sends **one wake-up message to its root session** | `resumeInterruptedChildren` (off by default) |
+| The session carries an `active` goal that the restart disarmed | Not by itself: the resumed turn needs the goal armed again | After any auto-continue send for that session | `resumeGoals` (off by default) |
+| The session carries a goal you paused by hand | Only if you opt in | Same path | `resumeGoals` **and** `resumePausedGoals` (both off by default) |
+
 **Recovery stops for:** manual Stop, policy rejection (`blocked`), paused sessions, subagent sessions and the consecutive-attempt cap. A new turn or manual user message cancels a queued continuation. Live `interrupted` markers are left to the startup recovery scan. Recoverable failures during cooldown are **deferred**, not discarded. If an interrupted session already has queued turns, the continuation runs first and the existing turns retain their order behind it. The loop guard can separately cancel and restart a running turn that is repeating itself.
 
-Subagent sessions stay under their parent agent's control. The plugin skips them during live recovery and startup scanning, ignores **Resume now** for them, and leaves them out of loop-guard cancellation. Any queued recovery is cancelled when a session is identified as a subagent.
+Subagent sessions stay under their parent agent's control. The plugin skips them during live recovery and startup scanning, ignores **Resume now** for them, and leaves them out of loop-guard cancellation. Any queued recovery is cancelled when a session is identified as a subagent. The optional **Wake child sessions after restart** (`resumeInterruptedChildren`, off by default) does not change that: the plugin still never resumes a child, it only tells the child's root session which children a restart interrupted, so the root can continue them or wrap them up.
 
 ---
 
@@ -255,6 +268,9 @@ The browser mirrors DSH's active language into the internal `locale` field: `zh`
     continueText: ''
     resumeSilentTurns: true
     resumeCompletedTurns: false
+    resumeInterruptedChildren: false # Startup recovery: wake the root session about interrupted children
+    resumeGoals: false # Retry strategy: re-arm a goal the host disarmed on restart
+    resumePausedGoals: false # Retry strategy: also resume goals paused by hand (needs resumeGoals)
     continueTextSilent: ''
     continueTextLoop: ''
     continueTextInterrupted: ''
@@ -341,9 +357,12 @@ When migrating from the legacy settings file to DSH 0.1.7 / 0.2, move these valu
 | Grace period (ms) | `3000` | Wait after an interruption; cancelled if the host recovers on its own |
 | Cooldown (ms) | `20000` | Min interval between recovery attempts per session; failures during cooldown wait for the remaining interval, then grace |
 | Max consecutive | `3` | Consecutive recovery-attempt cap; resets on user intervention or an observed completion with visible output. Normal autonomous-loop handoffs are exempt |
+| Re-arm goals disarmed by a restart | `off` | **Retry strategy** — after an auto-continue send, re-arm an `active` goal the host disarmed on restart, so its continuation rounds run again (`resumeGoals`). `goals.resume` performs no human-authorization check in the service layer, so calling it automatically acts on your behalf — that is why this is off by default |
+| Resume paused goals | `off` | **Retry strategy** — also resume goals you paused by hand (`resumePausedGoals`). Pausing is normally a deliberate human decision; takes effect only together with **Re-arm goals disarmed by a restart** |
 | Scan on host startup | `on` | Recover interrupted sessions that become available during the startup window |
 | Scan limit | `8` | Maximum eligible recoveries per pass, most recently active first |
 | Scan window (ms) | `900000` | Maximum interruption age and duration of startup polling |
+| Wake child sessions after restart | `off` | **Startup recovery** — when the startup scan finds subagent / team-member sessions that a restart interrupted, send their root session one message listing them (`resumeInterruptedChildren`). Children are never resumed directly; at most 8 child logs are cold-read per pass, independent of **Scan limit** |
 | Verbose logs | `on` | `[auto-continue]` engine logs in the DSH terminal |
 | Classify errors | `on` | Auto-resume transient failures only; auth / balance / model errors are skipped and notified |
 | Custom retryable errors | empty | One case-insensitive literal per line; matching the error code, HTTP status, or message explicitly overrides the built-in classifier |
@@ -399,7 +418,7 @@ npm test
 npm run test:runtime
 ```
 
-`npm test` covers recovery, autonomous-loop limits and toggles, child-session exclusion, manual resume during pauses, startup scanning and malformed-session isolation, queue ordering, statistics, localization, settings UI lifecycle and edits made during pending saves. `npm run test:runtime` uses published DSH **0.1.7-rc.2**, **0.2.0-rc.1** and **0.2.1-alpha.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation when one settings provider is absent. Startup recovery tests inject session read failures into real **0.2.0-rc.2** and **0.2.1-alpha.1** Session/Cordis/HTTP components and verify that healthy sessions still recover. These controlled faults do not imply that normal DSH loading produces malformed logs. The runtime harness controls agent events; it does not send requests to a model provider.
+`npm test` covers recovery, autonomous-loop limits and toggles, child-session exclusion and the post-restart hand-off, manual resume during pauses, startup scanning and malformed-session isolation, queue ordering, statistics, localization, settings UI lifecycle and edits made during pending saves. `npm run test:runtime` uses published DSH **0.1.7-rc.2**, **0.2.0-rc.1** and **0.2.1-alpha.1** Settings, Loader and HTTP services. It also runs the actual 0.2 profile compatibility gate and checks client activation when one settings provider is absent. Startup recovery tests inject session read failures into real **0.2.0-rc.2** and **0.2.1-alpha.1** Session/Cordis/HTTP components and verify that healthy sessions still recover. These controlled faults do not imply that normal DSH loading produces malformed logs. The runtime harness controls agent events; it does not send requests to a model provider.
 
 The rc.2 check also loads the published client settings service and verifies card save/reset, per-session composer choices, concurrent saves, disk reloads, locale synchronization and a fresh Host read, using snapshots without the removed `mode` field.
 
