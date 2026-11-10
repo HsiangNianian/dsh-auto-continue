@@ -144,6 +144,10 @@ for (const locale of ['en', 'zh']) {
 }
 assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="true")/);
 assert.match(render('en'), /<select[^>]*aria-label="Default session mode"/);
+assert.match(render('en'), /<button\b(?=[^>]*aria-label="Send continue messages with plugin source")(?=[^>]*aria-checked="false")/, 'source switch defaults to legacy user messages');
+face.edit('usePluginSource', 'true');
+assert.match(render('en'), /<button\b(?=[^>]*aria-label="Send continue messages with plugin source")(?=[^>]*aria-checked="true")/, 'source switch stages plugin messages');
+face.discard();
 face.edit('paused', 'true');
 assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
 face.discard();
@@ -158,7 +162,13 @@ for (const category of ['general', 'recovery', 'startup', 'prompts', 'safety', '
     assert.match(html, new RegExp(`data-category="${category}"[^>]*aria-selected="true"`));
     assert.ok(html.includes(dictionaries[locale][`category.${category}.title`]));
     if (locale === 'en') visible.push(...[...html.matchAll(/data-field="([^"]+)"/g)].map(match => match[1]));
-    if (category === 'recovery') assert.ok(html.includes(dictionaries[locale]['field.retryableErrorPatternsPlaceholder']));
+    if (category === 'recovery') {
+      assert.ok(html.includes(dictionaries[locale]['field.retryableErrorPatternsPlaceholder']));
+      assert.ok(html.includes(locale === 'zh'
+        ? '宽泛片段也会重试认证、余额等原本跳过的错误'
+        : 'Broad fragments can also retry normally skipped authentication or balance errors'),
+      'custom retry guidance explains the effect on normally skipped errors');
+    }
     if (category === 'status') assert.ok(html.includes(dictionaries[locale]['stats.empty']));
   }
 }

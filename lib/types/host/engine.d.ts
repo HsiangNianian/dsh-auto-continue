@@ -15,6 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { type AutoContinueConfig, type DayStats, type RecoveryAttempt, type NotifyAction } from '../shared/core.ts';
+import { type ConnectivityProbe } from './connectivity.ts';
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
     /** 稳定标识(供 browser 去重)。 */
@@ -31,6 +32,7 @@ export interface HostNotice {
 export declare class AutoContinueRunner {
     private readonly ctx;
     private readonly getConfig;
+    private readonly probe;
     private readonly states;
     private readonly pauseUntil;
     private dayStats;
@@ -47,6 +49,16 @@ export declare class AutoContinueRunner {
     private readonly bootScanErrors;
     /** 存储扫描已裁决的会话 id, 避免每轮重复冷读大日志。 */
     private readonly storedSwept;
+    /** 子会话裁决独立记账: storedSwept 在 origin 判断之前就已标记, 不能复用。 */
+    private readonly childSwept;
+    /** 本轮已花掉的子会话观察配额(每轮重置, 子会话日志与主会话同等昂贵)。 */
+    private childScanned;
+    /** 本轮收集到的子会话中断, 按 root 主会话 id 归组。 */
+    private readonly childInterrupts;
+    /** 已唤醒过的 root 会话 → 上次唤醒覆盖的子会话签名, 防止每轮重复催同一批。 */
+    private readonly childWoken;
+    /** 已打印过「父链不可解析」的子会话, 避免 15 分钟扫描窗口内每轮重扫把日志刷爆。 */
+    private readonly childDirtyLogged;
     /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
     private readonly storedSweepFailures;
     private storedSweepAnnounced;
@@ -54,11 +66,13 @@ export declare class AutoContinueRunner {
     private wakeBootScan;
     private storedSweep;
     private readonly stopStoredSweep;
+    /** 并发的断网挂起共用同一次连通性检测。 */
+    private connectivityCheck;
     /**
      * @param ctx - host plugin context (agents registry, session events).
      * @param getConfig - read the current resolved configuration (entry config).
      */
-    constructor(ctx: Context, getConfig: () => AutoContinueConfig);
+    constructor(ctx: Context, getConfig: () => AutoContinueConfig, probe?: ConnectivityProbe);
     private log;
     /** 对外(状态桥): 今日统计快照。 */
     todayStats(): DayStats;
@@ -135,6 +149,16 @@ export declare class AutoContinueRunner {
     private templateFor;
     private cancelPending;
     private fire;
+    private resetLoopIterations;
+    /** 自主循环轮数上限: 触顶后静默停下, 每次触顶只提示一次。 */
+    private loopCapReached;
+    private checkConnectivity;
+    /**
+     * 网络类失败的续跑先过连通性检测: 断网时发出去必然再失败一次, 白白吃掉连续上限,
+     * 等网络恢复时预算已耗尽。挂起期间不计次数, 每 offlineCheckMs 复检一次, 恢复后
+     * 重新走 schedule(宽限、冷却照常)。手动续跑和非网络原因不受影响。
+     */
+    private fireWhenOnline;
     /**
      * 组装本次续跑消息: 模板填充 + 幂等护栏。
      * 护栏依据上一步工具调用的执行状态附加指引, 防止重跑副作用操作:
@@ -156,6 +180,31 @@ export declare class AutoContinueRunner {
      * 则启动扫描永远看不到它们; 谓词与上方扫描一致, 仅失败类原因。
      */
     private sweepStoredSessions;
+    /**
+     * 子会话裁决。子会话本身永不直接续跑(父代理权威, 见 README), 但启动扫描要
+     * 知道它是否在重启时被打断, 才能在自己的 root 会话上补一次带清单的唤醒。
+     * 独立 `childSwept` 记账与独立配额: 主扫描的 `storedSwept` 在 origin 判断
+     * 之前就已标记, 复用它会让子会话永远扫不到, 也会吃掉主扫描的观察预算。
+     */
+    private sweepChild;
+    /** 把本轮收集到的子会话中断转成 root 会话上的一次唤醒(同一批只催一次)。 */
+    private wakeInterruptedChildren;
+    /**
+     * 在 root 会话上唤醒一次。只有在 root 自己是"干净终态"时才动手: 它若被打断,
+     * 主扫描本来就会续跑它; 它若被用户手动停止, 唤醒就是幽灵回合。
+     */
+    private wakeRoot;
+    /** 父会话只在"干净结束"或"被宿主关闭"时接受唤醒; 用户手动停止的绝不复活。 */
+    private rootAcceptsWake;
+    /** 发送需要 live agent; 存储会话沿既有物化路径拉起, 复用 preset 与模型回装。 */
+    private ensureLiveAgent;
+    /** 唤醒文本必须带会话级证据: 否则父会话看不到任何状态, 只会白跑一轮再回一句"都结束了"。 */
+    private buildChildResumeText;
+    /**
+     * 重启会把 active goal 置为 disarmed(宿主卸载驱动的正常动作), 只有人类授权的
+     * resume 能重新 arm; paused 则是人类的显式决定。两者都默认关闭。
+     */
+    private rearmGoal;
     /**
      * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
      * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。模型选择

@@ -383,6 +383,7 @@ const FAST = {
   maxConsecutive: 3,
   scanOnBoot: true,
   verbose: false,
+  pauseWhenOffline: false, // connectivity hold has its own suite; keep these off the real network
 };
 
 function startPlugin(overrides = {}) {
@@ -518,6 +519,7 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
   await sleep(600);
   check('已发送', agent.followups.length === 1);
+  check('默认沿用旧版用户消息来源', agent.followups[0]?.source?.kind === 'user');
   check('未设置语言时使用英文', agent.followups[0]?.content?.[0]?.text === 'Continue');
   await sleep(50);
 }
@@ -619,6 +621,19 @@ const stepStart = (turn, step, seq) => ({
   await sleep(50);
 }
 
+// ---------- 测试 1h: 消息来源开关 ----------
+{
+  console.log('测试 1h: 开启插件来源后再关闭 → 后续消息恢复用户来源');
+  const host = startPlugin({ scanOnBoot: false, usePluginSource: true });
+  const agent = host.makeAgent('s1');
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  check('开启后使用插件来源', agent.followups[0]?.source?.kind === 'plugin:dsh-client-auto-continue');
+  host.setConfig({ usePluginSource: false });
+  await postAction(host, { action: 'resume', sessionId: 's1' });
+  check('关闭后恢复用户来源', agent.followups[1]?.source?.kind === 'user');
+  check('来源切换不改变消息文本', agent.followups[0]?.content?.[0]?.text === agent.followups[1]?.content?.[0]?.text);
+}
+
 // ---------- 测试 2: 宽限期内 turn/start → 取消 ----------
 {
   console.log('测试 2: 宽限期内 turn/start → 取消');
@@ -655,9 +670,9 @@ const stepStart = (turn, step, seq) => ({
 }
 
 // ---------- 测试 2c: 待处理 ID 上限 ----------
-{
-  console.log('测试 2c: 待处理插件消息 ID 有上限');
-  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 100 });
+for (const usePluginSource of [false, true]) {
+  console.log(`测试 2c: 待处理 ID 上限 (usePluginSource=${usePluginSource})`);
+  const host = startPlugin({ usePluginSource, scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 100 });
   const agent = host.makeAgent('s1');
   await sleep(50);
   for (let i = 0; i < 65; i += 1) {
@@ -669,18 +684,18 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, turnEnd(2, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
   host.emit(agent.session, userMessageEvent(oldestMessage, 30));
   await sleep(100);
-  check('超出上限的最旧 ID 已淘汰', agent.followups.length === 65);
+  check('淘汰的 ID 仅在用户来源模式下视为介入', agent.followups.length === (usePluginSource ? 66 : 65));
   await sleep(50);
 }
 
 // ---------- 测试 2d: 待处理 ID 过期 ----------
-{
-  console.log('测试 2d: 旧插件消息 ID 超时 → 不会被新发送重新激活');
+for (const usePluginSource of [false, true]) {
+  console.log(`测试 2d: 待处理 ID 过期 (usePluginSource=${usePluginSource})`);
   const realNow = Date.now;
   let now = realNow();
   try {
     Date.now = () => now;
-    const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0 });
+    const host = startPlugin({ usePluginSource, scanOnBoot: false, graceMs: 20, cooldownMs: 0 });
     const agent = host.makeAgent('s1');
     await sleep(50);
     await postAction(host, { action: 'resume', sessionId: 's1' });
@@ -691,7 +706,7 @@ const stepStart = (turn, step, seq) => ({
     host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
     host.emit(agent.session, userMessageEvent(expiredMessage, 10, now));
     await sleep(100);
-    check('过期 ID 按用户介入处理并取消待发送', agent.followups.length === 2);
+    check('过期 ID 仅在用户来源模式下取消待发送', agent.followups.length === (usePluginSource ? 3 : 2));
   } finally {
     Date.now = realNow;
   }
@@ -718,9 +733,9 @@ const stepStart = (turn, step, seq) => ({
 }
 
 // ---------- 测试 2f: followup 同步发布回显 ----------
-{
-  console.log('测试 2f: followup 同步回显 → 发送前已登记消息 ID');
-  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 2 });
+for (const usePluginSource of [false, true]) {
+  console.log(`测试 2f: followup 同步回显 (usePluginSource=${usePluginSource})`);
+  const host = startPlugin({ usePluginSource, scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 2 });
   const agent = host.makeAgent('s1');
   await sleep(50);
   await postAction(host, { action: 'resume', sessionId: 's1' });
@@ -736,9 +751,9 @@ const stepStart = (turn, step, seq) => ({
 }
 
 // ---------- 测试 2g: 回显 ID 一次性消费 ----------
-{
-  console.log('测试 2g: 插件消息 ID 只消费一次');
-  const host = startPlugin({ scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 1 });
+for (const usePluginSource of [false, true]) {
+  console.log(`测试 2g: 重复回显 (usePluginSource=${usePluginSource})`);
+  const host = startPlugin({ usePluginSource, scanOnBoot: false, graceMs: 20, cooldownMs: 0, maxConsecutive: 1 });
   const agent = host.makeAgent('s1');
   await sleep(50);
   await postAction(host, { action: 'resume', sessionId: 's1' });
@@ -747,7 +762,7 @@ const stepStart = (turn, step, seq) => ({
   host.emit(agent.session, { ...echo, seq: 11 });
   host.emit(agent.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'again' } }));
   await sleep(100);
-  check('重复 ID 的第二次事件算作用户介入', agent.followups.length === 2);
+  check('重复回显仅在用户来源模式下重置连续次数', agent.followups.length === (usePluginSource ? 1 : 2));
   await sleep(50);
 }
 

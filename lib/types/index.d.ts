@@ -19,6 +19,8 @@ export declare const AUTO_CONTINUE_NS = "auto-continue";
 export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -83,9 +85,23 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
+    /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+    pauseWhenOffline: z<boolean, boolean>;
+    /** How often (ms) a held recovery re-checks connectivity. */
+    offlineCheckMs: z<number, number>;
+    /** Autonomous-loop round cap per session; 0 means unlimited. */
+    loopMaxIterations: z<number, number>;
 }>, Schemastery.ObjectT<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -150,12 +166,26 @@ export declare const AutoContinueSchema: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
+    /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+    pauseWhenOffline: z<boolean, boolean>;
+    /** How often (ms) a held recovery re-checks connectivity. */
+    offlineCheckMs: z<number, number>;
+    /** Autonomous-loop round cap per session; 0 means unlimited. */
+    loopMaxIterations: z<number, number>;
 }>>;
 /** Loader config is a live reference on DSH 0.1.7, and a plain object on older hosts. */
 export type AutoContinueEntryConfig = EntrySettings | LiveEntrySettings;
 export declare const Config: z<Schemastery.ObjectS<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -220,9 +250,23 @@ export declare const Config: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
+    /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+    pauseWhenOffline: z<boolean, boolean>;
+    /** How often (ms) a held recovery re-checks connectivity. */
+    offlineCheckMs: z<number, number>;
+    /** Autonomous-loop round cap per session; 0 means unlimited. */
+    loopMaxIterations: z<number, number>;
 }>, Schemastery.ObjectT<{
     /** Active browser/UI locale mirrored by the client. */
     locale: z<string, string>;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource: z<boolean, boolean>;
     /** Text automatically sent after an interruption. */
     continueText: z<string, string>;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -287,6 +331,18 @@ export declare const Config: z<Schemastery.ObjectS<{
     loopToolRepeat: z<number, number>;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText: z<string, string>;
+    /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren: z<boolean, boolean>;
+    /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals: z<boolean, boolean>;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals: z<boolean, boolean>;
+    /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+    pauseWhenOffline: z<boolean, boolean>;
+    /** How often (ms) a held recovery re-checks connectivity. */
+    offlineCheckMs: z<number, number>;
+    /** Autonomous-loop round cap per session; 0 means unlimited. */
+    loopMaxIterations: z<number, number>;
 }>> | z<AutoContinueSettings, AutoContinueEntryConfig>;
 /**
  * Plugin body: start the single-instance engine and serve the status bridge.

@@ -28,6 +28,8 @@ export const AUTO_CONTINUE_NS = 'auto-continue';
 const settingsFields = {
   /** Active browser/UI locale mirrored by the client. */
   locale: z.string().default('en'),
+  /** Send continue messages with the plugin source instead of the legacy user source. */
+  usePluginSource: z.boolean().default(false),
   /** Text automatically sent after an interruption. */
   continueText: z.string().default(''),
   /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -98,6 +100,18 @@ const settingsFields = {
   loopText: z
     .string()
     .default(''),
+  /** Recover child (subagent / Agent Teams) sessions a restart interrupted by waking their root session once. */
+  resumeInterruptedChildren: z.boolean().default(false),
+  /** Re-arm a goal a restart left `active` but `disarmed`, when its own session is resumed. */
+  resumeGoals: z.boolean().default(false),
+  /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+  resumePausedGoals: z.boolean().default(false),
+  /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+  pauseWhenOffline: z.boolean().default(true),
+  /** How often (ms) a held recovery re-checks connectivity. */
+  offlineCheckMs: z.natural().min(1000).default(15000),
+  /** Autonomous-loop round cap per session; 0 means unlimited. */
+  loopMaxIterations: z.natural().default(0),
 };
 export const AutoContinueSchema = z.object(settingsFields);
 

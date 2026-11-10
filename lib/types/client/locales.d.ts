@@ -27,6 +27,8 @@ export declare const zh: {
     'field.paused': string;
     'field.showComposerToggle': string;
     'field.showComposerToggleHint': string;
+    'field.usePluginSource': string;
+    'field.usePluginSourceHint': string;
     'composer.label': string;
     'composer.mode': string;
     'composer.scope': string;
@@ -49,6 +51,18 @@ export declare const zh: {
     'field.resumeSilentTurnsHint': string;
     'field.resumeCompletedTurns': string;
     'field.resumeCompletedTurnsHint': string;
+    'field.resumeInterruptedChildren': string;
+    'field.resumeInterruptedChildrenHint': string;
+    'field.resumeGoals': string;
+    'field.resumeGoalsHint': string;
+    'field.resumePausedGoals': string;
+    'field.resumePausedGoalsHint': string;
+    'field.pauseWhenOffline': string;
+    'field.pauseWhenOfflineHint': string;
+    'field.offlineCheckMs': string;
+    'field.offlineCheckMsHint': string;
+    'field.loopMaxIterations': string;
+    'field.loopMaxIterationsHint': string;
     'field.continueTextLoop': string;
     'field.continueTextLoopHint': string;
     'default.continueTextLoop': "继续";

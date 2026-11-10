@@ -2,7 +2,8 @@
 import { apply } from '../lib/index.js';
 
 export function makeHost(overrides = {}) {
-  const config = { scanOnBoot: true, verbose: false, graceMs: 10, cooldownMs: 0, ...overrides };
+  // pauseWhenOffline is off so recovery tests never depend on the machine's real network.
+  const config = { scanOnBoot: true, verbose: false, graceMs: 10, cooldownMs: 0, pauseWhenOffline: false, ...overrides };
   const agents = new Map();
   const handlers = new Map();
   const routes = new Map();

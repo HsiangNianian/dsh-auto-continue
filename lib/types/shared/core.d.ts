@@ -5,6 +5,14 @@
  * 以及回显识别。引擎迁入 host 后(0.8.0), 浏览器半侧只 re-export 本模块。
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types';
+export declare const AUTO_CONTINUE_SOURCE_KIND = "plugin:dsh-client-auto-continue";
+declare module '@deepseek-ai/dsh-llm' {
+    interface MessageSourceMap {
+        'plugin:dsh-client-auto-continue': {
+            kind: typeof AUTO_CONTINUE_SOURCE_KIND;
+        };
+    }
+}
 /** Supported UI/config locales; missing and unsupported values use English. */
 export type AutoContinueLocale = 'en' | 'zh';
 export declare function resolveLocale(locale: unknown): AutoContinueLocale;
@@ -44,6 +52,8 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
 export interface AutoContinueSettings {
     /** Active browser/UI locale mirrored by the client. */
     locale?: AutoContinueLocale;
+    /** Send continue messages with the plugin source instead of the legacy user source. */
+    usePluginSource?: boolean;
     /** Text automatically sent after an interruption. */
     continueText?: string;
     /** Text sent when the output token ceiling is reached (same placeholders as `continueText`). */
@@ -108,6 +118,18 @@ export interface AutoContinueSettings {
     loopRepeatText?: number;
     /** Text sent after the loop guard cancels and restarts a turn (supports {tool}). */
     loopText?: string;
+    /** Recover child (subagent / Agent Teams) sessions that a restart interrupted by waking their root session once. */
+    resumeInterruptedChildren?: boolean;
+    /** Re-arm a goal that a restart left `active` but `disarmed`, when its own session is resumed. */
+    resumeGoals?: boolean;
+    /** Also resume goals the user explicitly paused. Off by default: pausing is a human decision. */
+    resumePausedGoals?: boolean;
+    /** Hold network-error recoveries while the host is offline; waiting does not consume the retry budget. */
+    pauseWhenOffline?: boolean;
+    /** How often (ms) a held recovery re-checks connectivity. */
+    offlineCheckMs?: number;
+    /** Autonomous-loop round cap per session; 0 means unlimited. Resets when the user sends a message or turns the loop back on. */
+    loopMaxIterations?: number;
 }
 /** Fully resolved configuration (built-in defaults + user overrides). */
 export type AutoContinueConfig = Required<AutoContinueSettings>;
@@ -145,6 +167,11 @@ export declare function isTransientFailure(failure: FailureFacts, retryableError
  * 序列化失败(如 Windows 下 abort 的 DOMException reason)绝不能自动续跑。
  */
 export declare function isTransientAgentError(message: string): boolean;
+/**
+ * 失败是否属于连接层(断网/DNS/连接被拒/传输超时)。只有这类失败值得先做连通性
+ * 检测: 断网时续跑必然再失败一次, 白白消耗连续上限。5xx/429 等服务端错误不在此列。
+ */
+export declare function isNetworkFailure(failure: FailureFacts): boolean;
 /** 通知上的一个操作按钮(action 标识 + 显示文案)。 */
 export interface NotifyAction {
     /** 稳定动作标识, 点击时经 onAction 回调传出。 */
@@ -353,6 +380,18 @@ export interface SessionState {
     loopRetryTimer: ReturnType<typeof setTimeout> | undefined;
     /** 冷却期恢复的延迟定时器(等到冷却结束再 schedule, 而不是丢弃这次恢复)。 */
     cooldownRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 断网挂起: 进行中的连通性检测令牌(取消时置空, 迟到的检测结果据此作废)。 */
+    offlineWait: object | undefined;
+    /** 断网挂起: 下一次连通性复检的定时器。 */
+    offlineTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 本次断网挂起开始的时间; 0 = 未挂起(只在挂起开始/结束时各记一次日志)。 */
+    offlineSince: number;
+    /** 自主循环已续跑的轮数(用户发消息或重新开启循环时清零)。 */
+    loopIterations: number;
+    /** 本轮循环上限提示已发出(每次触顶只提示一次)。 */
+    loopCapNotified: boolean;
+    /** 上次观察到的循环开关; 由关到开时清零轮数。 */
+    loopEnabled: boolean | undefined;
 }
 export declare const freshState: () => SessionState;
 export declare const RECOVERY_WINDOW_MS: number;
