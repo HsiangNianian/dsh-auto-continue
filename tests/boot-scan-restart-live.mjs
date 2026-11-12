@@ -1,4 +1,4 @@
-/** Kill/restart real rc.2 agents and JSONL storage; only the model is deterministic. */
+/** Kill or gracefully dispose real agents, then restart; only the model is deterministic. */
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
@@ -8,10 +8,14 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const modules = join(project, 'tests/fixtures/dsh-0.2.1-rc.2/node_modules');
+const isWorker = process.argv[2] === 'worker';
+/** Fixture cohort, and how the first host loses its turn: `kill` (SIGKILL) or `dispose`. */
+const cohort = (isWorker ? process.argv[5] : process.argv[2]) ?? '0.2.1-rc.2';
+const shutdown = (isWorker ? process.argv[6] : process.argv[3]) ?? 'kill';
+const modules = join(project, `tests/fixtures/dsh-${cohort}/node_modules`);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-if (process.argv[2] === 'worker') {
+if (isWorker) {
   const root = process.argv[3];
   const load = name => import(pathToFileURL(join(modules, '@deepseek-ai', name, 'lib/index.js')).href);
   const { Context } = await load('cordis');
@@ -24,6 +28,8 @@ if (process.argv[2] === 'worker') {
     const service = await load(name);
     await ctx.plugin(service.default, name === 'dsh-system-prompt' ? { personaPrefix: 'Route: {{provider}}/{{model}}' } : {});
   }
+  // 0.2.2 moved the native executor out of dsh-tools into its own plugin; older cohorts own it inside dsh-tools.
+  try { await ctx.plugin(await load('dsh-tool-executor-native'), {}); } catch (error) { if (error?.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
   await ctx.plugin(await load('dsh-session-persistence-jsonl'), { root: join(root, 'sessions') });
   await ctx.plugin((await load('dsh-session-query')).SessionQueryEngine);
   await ctx.plugin((await load('dsh-agent-loop')).default, {});
@@ -52,6 +58,11 @@ if (process.argv[2] === 'worker') {
   if (!restart) {
     const { agent } = await ctx.agents.create({ sessionId: 'restart-test', agentOptions: { provider: 'test', model: 'original' } });
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Start the task.' }], source: { kind: 'user' } }));
+    // The parent either SIGKILLs us (tail turn stays open) or asks for a graceful
+    // dispose, which flushes the cancelled turn's own turn/end before we exit.
+    await new Promise(resolve => process.once('message', message => { if (message === 'dispose') resolve(); }));
+    await ctx.fiber.dispose();
+    process.disconnect();
   } else {
     assert.equal(ctx.agents.list().length, 0, 'no conversation was opened');
     ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'test', model: 'wrong-default' }) });
@@ -63,7 +74,11 @@ if (process.argv[2] === 'worker') {
     const agent = ctx.agents.get('restart-test');
     assert.ok(agent, 'cold session becomes a real live agent');
     const events = agent.session.snapshotEvents();
-    assert.ok(events.some(event => event.type === 'turn/end' && event.data.reason.kind === 'interrupted'));
+    // The shutdown shape is what the boot scan must recognise: SIGKILL leaves the tail
+    // turn open and the host synthesises `interrupted`, a graceful dispose persists its
+    // own `aborted` turn/end whose cancel cause is `disposed`.
+    const shutdownKind = shutdown === 'dispose' ? 'aborted' : 'interrupted';
+    assert.ok(events.some(event => event.type === 'turn/end' && event.data.reason.kind === shutdownKind), JSON.stringify(events));
     assert.ok(events.some(event => event.type === 'turn/end' && event.data.reason.kind === 'completed'), JSON.stringify(events));
     await sleep(3300);
     assert.equal(calls, 1, 'exactly one resumed model call across another scan');
@@ -76,7 +91,7 @@ if (process.argv[2] === 'worker') {
   const root = mkdtempSync(join(tmpdir(), 'auto-continue-restart-'));
   const children = [];
   function worker(restart = false) {
-    const child = fork(fileURLToPath(import.meta.url), ['worker', root, ...(restart ? ['restart'] : [])], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const child = fork(fileURLToPath(import.meta.url), ['worker', root, restart ? 'restart' : 'first', cohort, shutdown], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     children.push(child);
     let output = '';
     child.stdout.on('data', data => { output += data; });
@@ -97,11 +112,12 @@ if (process.argv[2] === 'worker') {
     const first = worker();
     assert.deepEqual(await first.result, { ready: true });
     const stopped = once(first, 'exit');
-    first.kill('SIGKILL');
+    if (shutdown === 'dispose') first.send('dispose');
+    else first.kill('SIGKILL');
     await stopped;
     const second = worker(true);
     assert.deepEqual(await second.result, { recovered: true });
-    console.log('Real rc.2 process restart: unopened JSONL session recovered once with its original model and prompt variables ✅');
+    console.log(`Real ${cohort} restart after ${shutdown === 'dispose' ? 'a graceful dispose' : 'SIGKILL'}: unopened JSONL session recovered once with its original model and prompt variables ✅`);
   } finally {
     for (const child of children) {
       if (child.exitCode === null && child.signalCode === null) {
