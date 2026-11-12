@@ -128,6 +128,7 @@ const retry = render('recovery');
 assert.match(retry, /data-native-value[^>]*aria-label="Grace period \(ms\)"/);
 assert.match(retry, /<textarea/);
 assert.match(retry, /role="switch"[^>]*aria-label="Classify errors"/);
+assert.match(retry, /Broad fragments can also retry normally skipped authentication or balance errors/);
 
 const prompts = render('prompts');
 assert.equal((prompts.match(/<textarea/g) ?? []).length, 8, 'prompt fields stay editable textareas');

@@ -12,19 +12,19 @@
         "id": "auto_recovery",
         "label": "自动恢复主链",
         "focus": ["turn_end", "classify_failure", "safety_gate", "grace_wait", "compose_prompt", "agent_followup", "recovery_feedback"],
-        "note": "从非人为中断判定，到安全调度、自动续跑与恢复记账。"
+        "note": "会话中断后自动发送继续消息，并显示恢复记录。"
       },
       {
         "id": "loop_recovery",
         "label": "循环守卫",
         "focus": ["turn_end", "agent_cancel", "safety_gate", "compose_prompt", "agent_followup"],
-        "note": "检测空转后取消当前回合，并用 loopText 重新进入受控恢复链。"
+        "note": "打断重复输出的回合，并使用循环提示文本继续。"
       },
       {
         "id": "human_feedback",
         "label": "人工介入与反馈",
         "focus": ["safety_gate", "manual_stop", "recovery_feedback"],
-        "note": "查看不自动继续的出口，以及浏览器端的状态、通知与操作入口。"
+        "note": "查看会话状态与恢复记录，选择立即续跑或暂停会话。"
       }
     ],
     "legend": {

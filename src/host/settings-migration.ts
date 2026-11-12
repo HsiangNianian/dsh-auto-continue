@@ -49,7 +49,7 @@ export function migrateLegacySettings(
       if (disposed) return;
       // YAML errors may quote other plugins' secrets, so do not log the source
       // or parser exception. Leave the original document available for repair.
-      migration.logger.error('[auto-continue] Could not import settings-legacy.yaml; automatic recovery and loop guard are held until the file/profile can be read and saved, then restart the host');
+      migration.logger.error('[auto-continue] Could not import settings-legacy.yaml. Automatic recovery and loop guard are paused. Check the legacy settings file and profile permissions, then restart DSH.');
     };
     // Do not return this task to Cordis: profile edits require the owning entry
     // to be active, and Loader.await() must not wait for this migration itself.

@@ -162,7 +162,13 @@ for (const category of ['general', 'recovery', 'startup', 'prompts', 'safety', '
     assert.match(html, new RegExp(`data-category="${category}"[^>]*aria-selected="true"`));
     assert.ok(html.includes(dictionaries[locale][`category.${category}.title`]));
     if (locale === 'en') visible.push(...[...html.matchAll(/data-field="([^"]+)"/g)].map(match => match[1]));
-    if (category === 'recovery') assert.ok(html.includes(dictionaries[locale]['field.retryableErrorPatternsPlaceholder']));
+    if (category === 'recovery') {
+      assert.ok(html.includes(dictionaries[locale]['field.retryableErrorPatternsPlaceholder']));
+      assert.ok(html.includes(locale === 'zh'
+        ? '宽泛片段也会重试认证、余额等原本跳过的错误'
+        : 'Broad fragments can also retry normally skipped authentication or balance errors'),
+      'custom retry guidance explains the effect on normally skipped errors');
+    }
     if (category === 'status') assert.ok(html.includes(dictionaries[locale]['stats.empty']));
   }
 }

@@ -64,6 +64,21 @@ test('malformed recovery still obeys the consecutive limit', async t => {
   assert.equal(agent.followups.length, 1);
 });
 
+test('broad retryable patterns also retry authentication and balance errors', async t => {
+  const { host, tick } = scenario(t, { scanOnBoot: false, retryableErrorPatterns: 'error' });
+  host.start();
+  for (const [id, error] of [
+    ['auth', { code: 'AUTH_ERROR', status: 401, message: 'Authentication error' }],
+    ['balance', { code: 'BALANCE_ERROR', message: 'Insufficient balance' }],
+  ]) {
+    const agent = host.agent(id);
+    host.emit(agent, turnStart(1));
+    host.emit(agent, turnEnd(1, 'error', { error }));
+    await tick();
+    assert.equal(agent.followups.length, 1, id);
+  }
+});
+
 test('explicit retryable patterns retain precedence over built-in classification', async t => {
   const { host, tick } = scenario(t, { scanOnBoot: false, retryableErrorPatterns: 'other text\nprovider retry allowed' });
   host.start();

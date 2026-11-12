@@ -12,19 +12,19 @@
         "id": "auto_recovery",
         "label": "Automatic recovery",
         "focus": ["turn_end", "classify_failure", "safety_gate", "grace_wait", "compose_prompt", "agent_followup", "recovery_feedback"],
-        "note": "Classify a non-human interruption, apply recovery safeguards, resume the agent, and record the outcome."
+        "note": "Send a continue message after an interruption and show the recovery history."
       },
       {
         "id": "loop_recovery",
         "label": "Loop guard",
         "focus": ["turn_end", "agent_cancel", "safety_gate", "compose_prompt", "agent_followup"],
-        "note": "Cancel a spinning turn, preserve loop context, and re-enter the guarded recovery path."
+        "note": "Stop a repeating turn and continue with the loop prompt."
       },
       {
         "id": "human_feedback",
         "label": "Human action & feedback",
         "focus": ["safety_gate", "manual_stop", "recovery_feedback"],
-        "note": "Inspect non-recoverable exits and the browser-side status, notification, and action surface."
+        "note": "View session status and recovery history, then resume or pause a session."
       }
     ],
     "legend": {
