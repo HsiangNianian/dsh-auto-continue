@@ -631,6 +631,24 @@ const reasoningOnlyMsg = (seq, turn = 1) => ({
   await sleep(20);
 }
 
+// ---------- 测试 1a.4h: 子代理已被释放 → 失败移交主会话 ----------
+{
+  console.log('测试 1a.4h: 无 live 子代理 → 失败移交给主会话, 且不重复');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('handoff-child', { origin: 'subagent', parentSession: 'main' });
+  await sleep(20);
+  // The subagent runtime disposes a failed child before the grace window closes.
+  host.removeAgent('handoff-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'network down' } }));
+  await sleep(60);
+  check('子代理没有收到续跑', child.followups.length === 0);
+  check('主会话收到一次移交', main.followups.length === 1);
+  host.emit(child.session, turnEnd(2, { kind: 'error', error: { code: 'TRANSPORT', message: 'network down again' } }));
+  await sleep(60);
+  check('冷却期内不重复移交', main.followups.length === 1);
+}
+
 // ---------- 测试 1a.4b: Off 的主会话 → 子代理连手动续跑也不发 ----------
 {
   console.log('测试 1a.4b: Off 主会话 → 子代理自动与手动续跑都被拒绝');

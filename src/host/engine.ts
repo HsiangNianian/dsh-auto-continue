@@ -155,6 +155,18 @@ const DECISION_CANCEL_CAUSES: ReadonlySet<string> = new Set(['user', 'parent', '
 const CHILD_SWEEP_LIMIT = 8;
 /** Bound how many ancestor hops a dirty parent chain may cost before giving up. */
 const CHILD_ROOT_MAX_DEPTH = 8;
+/** Do not hand the same child failure to its main conversation more often than this. */
+const HANDOFF_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** Copy for the live hand-off that replaces an impossible child resume, keyed by UI locale. */
+const HANDOFF_COPY = {
+  zh: (child: string, code: string) =>
+    `子代理会话 ${child} 因 ${code} 中断, 已无法直接续跑。请检查它的状态, 然后继续或收尾。`,
+  en: (child: string, code: string) =>
+    `Child session ${child} was interrupted by ${code} and can no longer be resumed directly. Check its state, then continue it or wrap it up.`,
+  ru: (child: string, code: string) =>
+    `Дочерняя сессия ${child} прервалась из-за ${code} и больше не может быть продолжена напрямую. Проверь её состояние и продолжи или заверши.`,
+} as const satisfies Record<AutoContinueLocale, (child: string, code: string) => string>;
 
 /** Host service key for goals (0.2.x); older hosts simply do not register it. */
 const GOALS_SERVICE_KEY = 'goals';
@@ -1582,6 +1594,37 @@ export class AutoContinueRunner {
     if (cancelled) this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
+  /**
+   * Ask the child's main conversation to take over a failure the plugin cannot
+   * repair itself: the child handle is gone, so only the root can continue it.
+   */
+  private handOffToParent(sessionId: SessionId, reason: string): void {
+    if (this.disposed || this.getConfig().paused) return;
+    const parent = this.parentOf(sessionId);
+    if (parent === undefined || parent === '') return;
+    if (this.explicitMode(parent) === 'off') return;
+    const parentAgent = this.ctx.agents.get(parent);
+    if (parentAgent === undefined) {
+      this.log(`移交跳过 ${sessionId}: 主会话 ${parent} 无 live agent`);
+      return;
+    }
+    const state = this.state(sessionId);
+    const now = Date.now();
+    if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) return;
+    const code = state.lastFailure?.code ?? reason;
+    const text = HANDOFF_COPY[this.sessionConfig(sessionId).locale](sessionId, code);
+    try {
+      parentAgent.followup(createUserMessage({
+        content: [{ type: 'text', text }],
+        source: { kind: 'user' },
+      }));
+      state.handedOffAt = now;
+      this.log(`已将子代理 ${sessionId} 的失败移交主会话 ${parent}(${code})`);
+    } catch (error) {
+      this.log(`移交 ${sessionId} 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private fire(sessionId: SessionId, reason: string, force = false): void {
     if (this.disposed) return;
     const state = this.state(sessionId);
@@ -1617,6 +1660,12 @@ export class AutoContinueRunner {
     // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) {
+      // A failed child is settled and disposed by the subagent runtime before the
+      // send window opens, so a direct resume cannot reach it. Hand the failure
+      // to its main conversation instead, which can continue or wrap it up.
+      if (!manualResume && this.isSubagentSession(sessionId) && this.subagentRecoveryEnabled(sessionId)) {
+        this.handOffToParent(sessionId, reason);
+      }
       this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
       return;
     }

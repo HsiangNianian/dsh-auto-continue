@@ -191,6 +191,11 @@ export declare class AutoContinueRunner {
     /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens、自主循环, 其余用通用继续文本。 */
     private templateFor;
     private cancelPending;
+    /**
+     * Ask the child's main conversation to take over a failure the plugin cannot
+     * repair itself: the child handle is gone, so only the root can continue it.
+     */
+    private handOffToParent;
     private fire;
     private resetLoopIterations;
     /** 自主循环轮数上限: 触顶后静默停下, 每次触顶只提示一次。 */
