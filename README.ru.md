@@ -310,7 +310,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 
 ## Как это работает
 
-[![Как auto-continue принимает решение](docs/workflow-ru.svg)](docs/workflow-ru.svg)
+[![Как auto-continue принимает решение](docs/auto-continue-workflow.ru.svg)](docs/auto-continue-workflow.en.html)
 
 1. **Источники.** Движок слушает события сессий в хосте. Процесс запускает `turn/end` с причиной `error`, `max-tokens`, завершение без видимого ответа или `completed` (только в режиме цикла). После перезапуска хоста стартовое сканирование каждые 3 секунды проверяет открытые и сохранённые сессии, пока не закончится окно сканирования. Защита от зацикливания следит за идущими ходами и прерывает тот, что повторяется.
 2. **Проверка сессии.** Ничего не отправляется, если auto-continue глобально на паузе, беседа в режиме Off или на часовой паузе, либо это сессия субагента. Субагентами управляет их родитель.
@@ -364,7 +364,7 @@ npm run test:runtime
 
 Эти тесты используют настоящие сервисы DSH с детерминированным адаптером модели и не обращаются к провайдерам моделей. CI также проверяет, что закоммиченный `lib/` совпадает со свежей сборкой, и запускает [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check).
 
-Баннеры, схемы и превью для соцсетей генерирует `npm run docs:assets` (PNG рендерится командой `rsvg-convert -w 1280 -h 640 docs/social-preview.svg -o docs/social-preview.png`). Как снимать скриншоты, описано в [docs/screenshots/README.md](docs/screenshots/README.md).
+Баннеры и превью для соцсетей генерирует `npm run docs:assets`; схема работы — экспорт [Archify](https://github.com/tt-a1i/archify) (`docs/auto-continue-workflow.*`, исходники в `*.archify.json`) (PNG рендерится командой `rsvg-convert -w 1280 -h 640 docs/social-preview.svg -o docs/social-preview.png`). Как снимать скриншоты, описано в [docs/screenshots/README.md](docs/screenshots/README.md).
 
 ## Ссылки
 

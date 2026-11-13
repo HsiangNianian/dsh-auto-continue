@@ -308,7 +308,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 
 ## 工作原理
 
-[![自动继续的决策流程](docs/workflow-zh.svg)](docs/workflow-zh.svg)
+[![自动继续的决策流程](docs/auto-continue-workflow.svg)](docs/auto-continue-workflow.html)
 
 1. **触发。** 引擎在宿主中监听会话事件。`turn/end` 的原因是 `error`、`max-tokens`、无可见输出，或 `completed`(仅自主循环)时进入流程。宿主重启后，启动扫描每 3 秒检查一次已打开和已存储的会话，直到扫描时间窗结束。循环守卫监视正在运行的回合，发现原地打转就打断。
 2. **会话检查。** 全局暂停、会话设为“关闭”或暂停了 1 小时、会话是子代理时，不发送任何内容。子代理由它的父代理负责。
@@ -362,7 +362,7 @@ npm run test:runtime
 
 运行时测试驱动真实的 DSH 服务，模型适配器是确定性的，不会向模型服务商发请求。CI 还会检查提交的 `lib/` 与重新构建的结果一致，并运行 [dsh-plugin-check](https://github.com/omdsh-dev/dsh-plugin-check)。
 
-横幅、流程图和社交预览图由 `npm run docs:assets` 生成(PNG 用 `rsvg-convert -w 1280 -h 640 docs/social-preview.svg -o docs/social-preview.png` 渲染)。截图的采集方法见 [docs/screenshots/README.md](docs/screenshots/README.md)。
+横幅和社交预览图由 `npm run docs:assets` 生成，流程图是 [Archify](https://github.com/tt-a1i/archify) 导出的(`docs/auto-continue-workflow.*`，源文件为 `*.archify.json`)(PNG 用 `rsvg-convert -w 1280 -h 640 docs/social-preview.svg -o docs/social-preview.png` 渲染)。截图的采集方法见 [docs/screenshots/README.md](docs/screenshots/README.md)。
 
 ## 链接
 
