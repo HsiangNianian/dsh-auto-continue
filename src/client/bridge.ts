@@ -32,6 +32,8 @@ interface BridgeState {
   paused: PausedSessionView[];
   recoveryAttempts: RecoveryAttempt[];
   sessionPolicy?: SessionPolicy;
+  /** False while the SSE stream is down; the last known policy stays readable but not writable. */
+  connected: boolean;
 }
 
 interface BridgeNotice {
@@ -54,7 +56,7 @@ const EMPTY_STATS: DayStatsView = {
   byCode: {},
 };
 
-let state: BridgeState = { stats: EMPTY_STATS, paused: [], recoveryAttempts: [] };
+let state: BridgeState = { stats: EMPTY_STATS, paused: [], recoveryAttempts: [], connected: false };
 const listeners = new Set<() => void>();
 
 /** 当前桥状态里的已暂停会话(卡片面板用)。 */
@@ -71,12 +73,17 @@ export function readRecoveryAttempts(): RecoveryAttempt[] {
   return state.recoveryAttempts;
 }
 
+/** Last policy the host sent. It survives a bridge reconnect, so check {@link isBridgeConnected} before writing. */
 export function readSessionPolicy(): SessionPolicy | undefined {
   return state.sessionPolicy;
 }
 
+export function isBridgeConnected(): boolean {
+  return state.connected;
+}
+
 export async function setSessionMode(sessionId: string, mode: SessionMode): Promise<void> {
-  if (!state.sessionPolicy?.writable) throw new Error('Session settings are unavailable');
+  if (!state.connected || !state.sessionPolicy?.writable) throw new Error('Session settings are unavailable');
   const response = await fetch('/api/auto-continue-action', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -129,6 +136,7 @@ function handleEvent(event: { type: string; notice?: BridgeNotice; stats?: DaySt
       sessionPolicy: policy && typeof policy.modes === 'object' && policy.modes !== null && !Array.isArray(policy.modes) &&
         (policy.defaultMode === 'recover' || policy.defaultMode === 'loop') && typeof policy.paused === 'boolean' && typeof policy.writable === 'boolean'
         ? policy : undefined,
+      connected: true,
     };
     for (const listener of listeners) listener();
   } else if (event.type === 'notice' && event.notice !== undefined) {
@@ -187,11 +195,19 @@ function showNotification(notice: BridgeNotice): void {
 export function startBridge(): () => void {
   let stopped = false;
   let controller: AbortController | undefined;
+  // A dropped stream (engine rebuild, sleep, a proxy closing an idle socket) keeps the
+  // last policy on screen so the composer does not flash to "off" while reconnecting (#86).
   const disconnected = () => {
-    state = { ...state, sessionPolicy: undefined };
+    if (!state.connected) return;
+    state = { ...state, connected: false };
     for (const listener of listeners) listener();
   };
-  disconnected();
+  const reset = () => {
+    state = { ...state, sessionPolicy: undefined, connected: false };
+    for (const listener of listeners) listener();
+  };
+  reset();
+  let failures = 0;
 
   const loop = async (): Promise<void> => {
     while (!stopped) {
@@ -199,6 +215,7 @@ export function startBridge(): () => void {
       try {
         const response = await fetch('/api/auto-continue-bridge', { signal: controller.signal });
         if (!response.ok || response.body === null) throw new Error(`bridge HTTP ${response.status}`);
+        failures = 0;
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -227,7 +244,10 @@ export function startBridge(): () => void {
       }
       if (!stopped) {
         disconnected();
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        // The first retry is quick: most drops are the host rebuilding its engine.
+        const delay = failures === 0 ? 500 : 3000;
+        failures += 1;
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   };
@@ -236,6 +256,6 @@ export function startBridge(): () => void {
   return () => {
     stopped = true;
     controller?.abort();
-    disconnected();
+    reset();
   };
 }
