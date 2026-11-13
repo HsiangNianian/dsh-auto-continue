@@ -73,7 +73,7 @@ dsh web
 
 | Среда DSH | Версия плагина | Где настройки |
 | --- | --- | --- |
-| 0.2.2-rc.1, 0.2.1-rc.2, 0.2.1-alpha.1 | 0.18.0 проверена | **Plugins → dsh-client-auto-continue** |
+| 0.2.2-rc.1, 0.2.1-rc.2, 0.2.1-alpha.1 | 0.19.0 проверена | **Plugins → dsh-client-auto-continue** |
 | 0.2.0-rc.1 | 0.12.1 и новее | **Plugins → dsh-client-auto-continue** |
 | 0.1.7-rc.2 | 0.11.9 и новее | **Plugins → dsh-client-auto-continue** |
 | Старые хосты с устаревшим API настроек | старый интерфейс | **Settings → Plugins → Plugin configuration** |

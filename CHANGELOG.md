@@ -1,11 +1,29 @@
 # Changelog
 
-## Unreleased
+## [0.19.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.19.0) — 2026-11-13
 
 ### Added
 
-- Subagent sessions now get live auto-continue for failed, output-limit and silent turns when their main conversation has auto-continue enabled, controlled by the new **Resume subagent sessions** setting (`resumeSubagentSessions`, off by default). It only helps while the child is still loaded: DSH 0.2.2 closes a background subagent as soon as a turn fails and reports the failure to its parent, so most failed children are already gone by the time the grace period ends. Subagent lineage follows only `origin: 'subagent'` parents (a forked main conversation is not treated as a child), subagents still never run the autonomous loop, are never loop-guard restarted, and are not recovered by the startup scan or stored-session sweep; **Resume now** works for them when enabled, and pausing or turning off the parent cancels queued child continuations for inherited modes.
-- Russian (`ru` / `ru-*`) localization: the settings card, composer switch and mode menu, browser notifications, built-in continue / guard / loop texts, and the plugin's own metadata. `zh`/`zh-*` and every other locale (including English) keep their existing strings and fallbacks unchanged. With a `ru` locale and the default texts, the continue message the model receives is now Russian (`Продолжай`) instead of English.
+- Subagent sessions now get live auto-continue for failed, output-limit and silent turns when their main conversation has auto-continue enabled, controlled by the new **Resume subagent sessions** setting (`resumeSubagentSessions`, off by default). It only helps while the child is still loaded: DSH 0.2.2 closes a background subagent as soon as a turn fails and reports the failure to its parent, so most failed children are already gone by the time the grace period ends. Subagent lineage follows only `origin: 'subagent'` parents (a forked main conversation is not treated as a child), subagents still never run the autonomous loop, are never loop-guard restarted, and are not recovered by the startup scan or stored-session sweep; **Resume now** works for them when enabled, and pausing or turning off the parent cancels queued child continuations for inherited modes. ([#84](https://github.com/HsiangNianian/dsh-auto-continue/pull/84), thanks @kesha4)
+- Russian (`ru` / `ru-*`) localization: the settings card, composer switch and mode menu, browser notifications, built-in continue / guard / loop texts, and the plugin's own metadata. `zh`/`zh-*` and every other locale (including English) keep their existing strings and fallbacks unchanged. With a `ru` locale and the default texts, the continue message the model receives is now Russian (`Продолжай`) instead of English. ([#84](https://github.com/HsiangNianian/dsh-auto-continue/pull/84), thanks @kesha4)
+
+### Fixed
+
+- Restart recovery works again on DSH 0.2.2. A clean host shutdown now writes the cancelled turn as `aborted` with cause `disposed`, which the startup scan and the stored-session sweep read as a manual stop and skipped without logging anything. Both now treat a host-closed turn as a restart interruption, the same way the child-session hand-off already did, and a stop you made yourself still never matches ([#87](https://github.com/HsiangNianian/dsh-auto-continue/pull/87), thanks @palxex)
+- The composer switch no longer flips to off for a few seconds whenever the status bridge drops (engine rebuild, sleep, an idle connection being cut). It keeps the last known setting, dimmed and read-only, until the bridge is back; the first reconnect happens after 500 ms instead of 3 s, and the host sends a `: ping` comment every 20 s ([#86](https://github.com/HsiangNianian/dsh-auto-continue/issues/86), thanks @simon333888)
+- Turning **Resume subagent sessions** off no longer stops **Wake child sessions after restart** from collecting children it had already seen live
+
+### Changed
+
+- The composer control is now one 28px ∞ icon switch plus a chevron-only mode menu, instead of icon, label, switch and dropdown (about 200px). The mode name moved into the menu, tooltip and accessible name, and the borrowed refresh icon is gone ([#86](https://github.com/HsiangNianian/dsh-auto-continue/issues/86))
+- The READMEs are reorganized around install, usage and settings tables, with a new Russian README and Russian banner, demo and workflow map ([#89](https://github.com/HsiangNianian/dsh-auto-continue/pull/89))
+
+### Maintenance
+
+- The restart runtime test takes the DSH fixture cohort and the shutdown shape (`kill` or `dispose`), and CI runs it against 0.2.1-rc.2 and 0.2.2-rc.1
+- `npm run docs:assets` regenerates the banners and the social preview; the workflow map stays an [Archify](https://github.com/tt-a1i/archify) export
+
+[Upgrade instructions and validation](docs/releases/v0.19.0.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.18.0...v0.19.0)
 
 ## [0.18.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.18.0) — 2026-11-10
 

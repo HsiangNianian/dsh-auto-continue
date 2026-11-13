@@ -73,7 +73,7 @@ dsh web
 
 | DSH 内核 | 插件版本 | 设置入口 |
 | --- | --- | --- |
-| 0.2.2-rc.1、0.2.1-rc.2、0.2.1-alpha.1 | 0.18.0 已验证 | **插件 → dsh-client-auto-continue** |
+| 0.2.2-rc.1、0.2.1-rc.2、0.2.1-alpha.1 | 0.19.0 已验证 | **插件 → dsh-client-auto-continue** |
 | 0.2.0-rc.1 | 0.12.1 及以上 | **插件 → dsh-client-auto-continue** |
 | 0.1.7-rc.2 | 0.11.9 及以上 | **插件 → dsh-client-auto-continue** |
 | 仅有旧版设置 API 的宿主 | 旧版界面 | **设置 → 插件 → 插件配置** |

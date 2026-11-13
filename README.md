@@ -73,7 +73,7 @@ To update, let running work finish, stop DSH, run the same command again, then r
 
 | DSH runtime | Plugin version | Settings location |
 | --- | --- | --- |
-| 0.2.2-rc.1, 0.2.1-rc.2, 0.2.1-alpha.1 | 0.18.0 verified | **Plugins → dsh-client-auto-continue** |
+| 0.2.2-rc.1, 0.2.1-rc.2, 0.2.1-alpha.1 | 0.19.0 verified | **Plugins → dsh-client-auto-continue** |
 | 0.2.0-rc.1 | 0.12.1 or newer | **Plugins → dsh-client-auto-continue** |
 | 0.1.7-rc.2 | 0.11.9 or newer | **Plugins → dsh-client-auto-continue** |
 | Older hosts with the legacy settings API | legacy UI | **Settings → Plugins → Plugin configuration** |
