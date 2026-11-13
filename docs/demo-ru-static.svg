@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" lang="ru" aria-labelledby="title description">
   <title id="title">Auto-continue: пример восстановления после сбоя</title>
-  <desc id="description">Иллюстрация: сетевая ошибка прерывает ассистента. После паузы в 3 секунды плагин отправляет Continue, и ассистент продолжает работу. Переключатель auto-continue рядом с полем ввода остаётся включённым. При ограничении анимации показывается вся последовательность одним кадром.</desc>
+  <desc id="description">Иллюстрация: сетевая ошибка прерывает ассистента. После паузы в 3 секунды плагин отправляет «Продолжай», и ассистент продолжает работу. Переключатель авто-продолжения рядом с полем ввода остаётся включённым. При ограничении анимации показывается вся последовательность одним кадром.</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
     .body { font-size: 24px; }
@@ -24,7 +24,7 @@
   <g transform="translate(28 18) scale(.5)"><path d="M49 17A24 24 0 1 0 56 38" fill="none" stroke="#f4f4f5" stroke-width="5" stroke-linecap="round"/>
     <path d="M49 6v12H37" fill="none" stroke="#f4f4f5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M27 22l16 10-16 10Z" fill="#f4f4f5" stroke="#f4f4f5" stroke-width="2" stroke-linejoin="round"/></g>
-  <text class="heading" x="74" y="42" fill="#f4f4f5" font-size="20" font-weight="600">Auto-continue</text>
+  <text class="heading" x="74" y="42" fill="#f4f4f5" font-size="20" font-weight="600">Авто-продолжение</text>
   <text class="annotation" x="920" y="42" fill="#b9bec8" font-size="14" text-anchor="end" letter-spacing=".7">ДЕМО ВОССТАНОВЛЕНИЯ</text>
 
   <!-- A simplified conversation, not a recording of a live DSH session. -->
@@ -54,7 +54,7 @@
   <g class="auto-message">
     <text class="annotation" x="710" y="360" fill="#b9bec8" font-size="18" text-anchor="end">Отправлено автоматически</text>
     <rect x="732" y="326" width="188" height="54" rx="16" fill="#2b2b2b"/>
-    <text class="body" x="756" y="361" fill="#f4f4f5">Continue</text>
+    <text class="body" x="756" y="361" fill="#f4f4f5">Продолжай</text>
   </g>
   <g class="resumed-message">
     <text class="role" x="40" y="418" fill="#f4f4f5" font-size="17" font-weight="600">DSH</text>
@@ -66,7 +66,7 @@
   <text class="full" x="61" y="514" fill="#b5b5bd" font-size="21">Сообщение агенту…</text>
   <text class="body compact" x="61" y="516" fill="#b5b5bd">Сообщение…</text>
   <path d="M62 537v14m-7-7h14" fill="none" stroke="#c4c7ce" stroke-width="1.8" stroke-linecap="round"/>
-  <text class="toggle-label" x="92" y="551" fill="#d7d9de" font-size="18">Auto-continue</text>
+  <text class="toggle-label" x="92" y="551" fill="#d7d9de" font-size="18">Авто</text>
   <g class="composer-switch" transform="translate(230 532)">
     <rect width="44" height="24" rx="12" fill="#f4f4f5"/>
     <circle cx="32" cy="12" r="9" fill="#141414"/>

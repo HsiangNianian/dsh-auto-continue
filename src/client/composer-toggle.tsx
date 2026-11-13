@@ -47,7 +47,13 @@ export function AutoContinueComposerToggle(props: PropsLocale<'auto-continue'> &
   const failed = state.failed.has(props.sessionId);
   const saving = state.saving.has(props.sessionId);
   const policy = state.policy;
-  const mode = sessionMode(policy?.modes ?? {}, props.sessionId);
+  // A child with no mode of its own shows what it actually inherits; the host
+  // resolves that alongside the explicit modes so the control never reports the
+  // profile default while recovery is disabled by the main conversation.
+  const ownMode = sessionMode(policy?.modes ?? {}, props.sessionId);
+  const mode: SessionMode = ownMode === 'default'
+    ? policy?.inheritedModes?.[props.sessionId] ?? 'default'
+    : ownMode;
   const disabled = !policy || !state.writable || saving;
   const title = props.t(!policy ? 'composer.unavailable' : !state.writable ? 'chrome.readOnly' : saving ? 'composer.saving' : 'composer.scope');
   const modeName = props.t(`composer.${mode}`);

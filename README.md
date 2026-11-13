@@ -211,6 +211,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | Show auto-continue switch in the composer | `showComposerToggle` | `true` | Only hides or shows the controls |
 | Send continue messages with plugin source | `usePluginSource` | `false` | Off sends as the `user` source; on marks messages as `plugin:dsh-client-auto-continue` |
 | Resume silent turns | `resumeSilentTurns` | `true` | Resume turns that had model activity but no visible output; they still count toward **Max consecutive** |
+| Resume subagent sessions | `resumeSubagentSessions` | `false` | Resume a failed, cut-off or silent subagent while it's still loaded, using its main conversation's mode. DSH usually closes a failed background subagent right away, so this mostly helps subagents that stay loaded |
 | Default session mode | `resumeCompletedTurns` | `false` | `false` = Recovery only, `true` = Autonomous loop, for sessions on Follow default |
 | Autonomous loop round limit | `loopMaxIterations` | `0` | Loop rounds per session, `0` = no limit. Resets when you send a message or turn the loop back on |
 | Browser notifications | `notify` | `false` | Notifications for sends, skips, give-ups and saved settings. The browser asks for permission the first time |
@@ -255,7 +256,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 
 All default to `''`, which means the built-in text. Continue texts accept `{code}`, `{message}`, `{status}`, `{tool}`, `{turn}`, `{errorCount}` and `{elapsed}`; for example `Continue ({tool}: {code})` becomes `Continue (git push: UPSTREAM)`. Guard texts and the loop text accept `{tool}`, and `guardDoneText` also `{result}` (a short excerpt of the tool output).
 
-Built-in texts exist in English and Chinese. They follow the DSH language: `zh` and `zh-*` use Chinese, every other locale uses English. Your own non-empty text is never replaced when the language changes.
+Built-in texts exist in English, Chinese and Russian. They follow the DSH language: `zh` and `zh-*` use Chinese, `ru` and `ru-*` use Russian, every other locale uses English. Your own non-empty text is never replaced when the language changes.
 
 <details>
 <summary>Built-in English texts</summary>
@@ -311,14 +312,14 @@ Patterns are plain substrings, not regular expressions. Cooldown and **Max conse
 [![Auto-continue decision flow](docs/auto-continue-workflow.en.svg)](docs/auto-continue-workflow.en.html)
 
 1. **Triggers.** The engine listens to session events in the host. A `turn/end` with `error`, `max-tokens`, a silent ending, or `completed` (loop mode only) starts the flow. After a host restart, the startup scan checks open and stored sessions every 3 seconds until the scan window ends. The loop guard watches running turns and cancels one that repeats itself.
-2. **Session check.** Nothing is sent while auto-continue is paused globally, the session is Off or paused for an hour, or the session is a subagent. Subagents stay under their parent's control.
+2. **Session check.** Nothing is sent while auto-continue is paused globally, the session is Off or paused for an hour, or the session is a subagent and **Resume subagent sessions** is off. A subagent follows its main conversation's mode unless it has its own, and never runs the autonomous loop or the loop guard.
 3. **End reason.** Manual Stop and policy blocks (`blocked`) are left alone, and so are permanent errors. Everything else recoverable goes to recovery. A normal completion only continues in Autonomous loop mode, which skips the cooldown and the consecutive limit but respects `loopMaxIterations`.
 4. **Retry budget.** Recovery stops at **Max consecutive**. Inside the cooldown, the send is deferred rather than dropped. The cooldown is multiplied by the backoff factor after each failure, up to the maximum.
 5. **Grace period.** The engine waits `graceMs`. A new turn or a message from you cancels the send.
 6. **Offline hold.** For network errors, the host checks for a non-loopback network interface and one resolvable public name. While offline it waits and re-checks every `offlineCheckMs`, then goes through grace and cooldown again. With `HTTP(S)_PROXY` or `ALL_PROXY` set, only interfaces are checked.
 7. **Send.** The engine picks the text for the reason, appends the idempotency-guard note, and sends it with `agent.followup` using the session's preset and model. If user turns are already queued, the continue message is moved ahead of them while their order is kept. With `resumeGoals` on, a goal the restart disarmed is re-armed.
 
-**Child sessions.** Subagent and team-member sessions are never resumed directly. With **Wake child sessions after restart** on, the startup scan collects children a restart interrupted (at most 8 child logs per pass) and sends their root session one message listing them, once per batch. The root decides whether to continue or wrap up. A root still mid-turn is left to normal recovery, and a root you stopped yourself is never woken.
+**Child sessions.** Outside of **Resume subagent sessions**, subagent and team-member sessions are never resumed directly, and that setting only covers live ones. After a restart, with **Wake child sessions after restart** on, the startup scan collects children a restart interrupted (at most 8 child logs per pass) and sends their root session one message listing them, once per batch. The root decides whether to continue or wrap up. A root still mid-turn is left to normal recovery, and a root you stopped yourself is never woken.
 
 **Unreadable sessions.** If a session's history cannot be read during the startup scan, that session is skipped and an error is logged; other sessions still recover ([#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58)). Repair it and restart DSH within the scan window to try again.
 

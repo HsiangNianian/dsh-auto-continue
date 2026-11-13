@@ -276,8 +276,9 @@ for (const options of [{ writable: false }, { mode: 'memory' }]) {
 assert.equal(AutoContinueSchema({}).locale, 'en', 'new profiles default to English');
 for (const [active, target] of [
   [undefined, 'en'], [null, 'en'], [42, 'en'], ['', 'en'],
-  ['ru', 'en'], ['fr', 'en'], ['en-US', 'en'], ['zhang', 'en'],
+  ['fr', 'en'], ['en-US', 'en'], ['zhang', 'en'],
   ['zh', 'zh'], ['zh-CN', 'zh'], ['zh-TW', 'zh'], ['ZH-hant-TW', 'zh'],
+  ['ru', 'ru'], ['ru-RU', 'ru'], ['RU', 'ru'],
 ]) {
   const world = makeWorld(target === 'en' ? 'zh' : 'en');
   const page = openClient(loadBundle(), world, active);
@@ -291,27 +292,29 @@ for (const [active, target] of [
     host.start();
     host.emit(agent, turnEnd(1, 'max-tokens'));
     await new Promise(resolve => setTimeout(resolve, 30));
-    assert.equal(agent.followups[0]?.content[0]?.text, target === 'zh' ? '继续' : 'Continue', `host locale ${active}`);
+    const expectedPrompt = target === 'zh' ? '继续' : target === 'ru' ? 'Продолжай' : 'Continue';
+    assert.equal(agent.followups[0]?.content[0]?.text, expectedPrompt, `host locale ${active}`);
   } finally { host.dispose(); }
 }
 
-// 6. An old tab can exhaust both budgets and leave ru stored; prompts stay English.
+// 6. An old tab can exhaust both budgets and leave an unsupported raw value stored;
+//    prompts still fall back to English for it.
 {
-  const world = makeWorld('ru');
-  const oldPage = world.openPage('ru');
+  const world = makeWorld('fr');
+  const oldPage = world.openPage('fr');
   oldPage.listeners.add(() => {
     if (oldPage.locale !== oldPage.active && oldPage.writes.length < MAX_WRITES_PER_LOCALE) {
       oldPage.set('locale', oldPage.active);
     }
   });
-  const page = openClient(loadBundle(), world, 'ru');
+  const page = openClient(loadBundle(), world, 'fr');
   world.drain();
   assert.equal(oldPage.writes.length, MAX_WRITES_PER_LOCALE);
   assert.equal(page.writes.length, MAX_WRITES_PER_LOCALE);
   oldPage.listeners.clear();
   world.tick();
   world.drain();
-  assert.equal(world.host.locale, 'ru', 'closing the old tab does not replenish the budget');
+  assert.equal(world.host.locale, 'fr', 'closing the old tab does not replenish the budget');
   assert.equal(world.pending(), 0);
   const host = makeHost({ scanOnBoot: false, ...world.host });
   try {
@@ -319,7 +322,7 @@ for (const [active, target] of [
     host.start();
     host.emit(agent, turnEnd(1, 'max-tokens'));
     await new Promise(resolve => setTimeout(resolve, 30));
-    assert.equal(agent.followups[0]?.content[0]?.text, 'Continue', 'raw legacy locale does not restore Chinese prompts');
+    assert.equal(agent.followups[0]?.content[0]?.text, 'Continue', 'an unsupported raw locale falls back to English prompts');
   } finally { host.dispose(); }
 }
 
