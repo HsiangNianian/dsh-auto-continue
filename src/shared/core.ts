@@ -183,7 +183,7 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   ...LOCALIZED_TEXT_DEFAULTS.en,
   usePluginSource: false,
   resumeSilentTurns: true,
-  resumeSubagentSessions: true,
+  resumeSubagentSessions: false,
   resumeCompletedTurns: false,
   continueTextLoop: '',
   guardTools: true,

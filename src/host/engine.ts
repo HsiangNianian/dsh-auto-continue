@@ -443,6 +443,9 @@ async function pumpStream<T>(
 }
 
 /** 插件主体: 一条 mux 流 + 一条 host 流 + 启动/重连扫描。 */
+/** Soft cap on cached subagent lineage entries before stale ones are pruned. */
+const LINEAGE_CACHE_LIMIT = 2000;
+
 export class AutoContinueRunner {
   private readonly states = new Map<SessionId, SessionState>();
   /** Cached subagent lineage: session id -> direct parent id (undefined when the header has none). */
@@ -606,6 +609,16 @@ export class AutoContinueRunner {
         loopGuard: false,
       };
     }
+    return this.ownSessionConfig(sessionId);
+  }
+
+  /**
+   * The session's own mode, ignoring subagent inheritance. The stored-session
+   * sweep and the restart hand-off (`resumeInterruptedChildren`) use this, so
+   * turning live subagent recovery off never silently disables them.
+   */
+  private ownSessionConfig(sessionId: SessionId): AutoContinueConfig {
+    const config = this.getConfig();
     const mode = sessionMode(config.sessionModes, sessionId);
     return {
       ...config,
@@ -761,8 +774,9 @@ export class AutoContinueRunner {
         ? this.parents.get(current)
         : header?.origin === 'subagent' ? header.parentSession : undefined;
       if (parent === undefined || parent === '') {
-        // A subagent header without `parentSession` is unlinked: nothing to inherit.
-        if (header?.origin === 'subagent') return undefined;
+        // A subagent without `parentSession` is unlinked: nothing to inherit. Check the
+        // cached flag too, so this still holds once the child's header is gone.
+        if (header?.origin === 'subagent' || this.subagentSessions.has(current)) return undefined;
         return this.explicitMode(current) ?? 'default';
       }
       if (seen.has(parent)) return undefined;
@@ -781,14 +795,41 @@ export class AutoContinueRunner {
 
   /** Modes children inherit from their main conversation, for the composer's display. */
   inheritedSubagentModes(): Record<string, SessionMode> {
+    this.pruneLineage();
     const inherited: Record<string, SessionMode> = {};
     for (const sessionId of this.parents.keys()) {
+      // Only children that are still loaded can show a composer; skip the rest.
+      if (this.ctx.agents.get(sessionId) === undefined) continue;
       if (!this.isSubagentSession(sessionId)) continue;
       if (this.explicitMode(sessionId) !== undefined) continue;
       const mode = this.resolveSubagentMode(sessionId);
-      if (mode !== undefined) inherited[sessionId] = mode;
+      // Children never run the autonomous loop, so a loop parent means recovery for them.
+      if (mode !== undefined) inherited[sessionId] = mode === 'loop' ? 'recover' : mode;
     }
     return inherited;
+  }
+
+  /**
+   * Keep the lineage caches bounded on long-lived hosts. Once the cache grows,
+   * entries for sessions that are no longer loaded are dropped; they are re-read
+   * from the live header if the session comes back.
+   */
+  private pruneLineage(): void {
+    if (this.parents.size + this.subagentSessions.size <= LINEAGE_CACHE_LIMIT) return;
+    // `states` keeps its own `subagent` flag, so dropping a non-loaded child here loses nothing.
+    const keep = (sessionId: SessionId) => this.ctx.agents.get(sessionId) !== undefined;
+    const needed = new Set<SessionId>();
+    for (const sessionId of this.parents.keys()) {
+      if (!keep(sessionId)) continue;
+      // Keep the chain above a loaded child so its inherited mode still resolves.
+      let current: SessionId | undefined = sessionId;
+      for (let depth = 0; depth < 32 && current !== undefined && !needed.has(current); depth += 1) {
+        needed.add(current);
+        current = this.parents.get(current);
+      }
+    }
+    for (const sessionId of [...this.parents.keys()]) if (!needed.has(sessionId)) this.parents.delete(sessionId);
+    for (const sessionId of [...this.subagentSessions]) if (!needed.has(sessionId) && !keep(sessionId)) this.subagentSessions.delete(sessionId);
   }
 
   /** Mark a child session; drop only queued sends that its effective policy no longer allows. */
@@ -1993,7 +2034,7 @@ export class AutoContinueRunner {
         continue;
       }
       const sessionId = record.header.id;
-      if (this.sessionConfig(sessionId).paused || Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) continue;
+      if (this.ownSessionConfig(sessionId).paused || Date.now() < (this.pauseUntil.get(sessionId) ?? 0)) continue;
       if (record.header.origin === 'subagent') {
         // 子会话的记账完全交给 childSwept。若沿用 storedSwept(它在下面为 root 记账),
         // 配额用尽的那一批会被永久标成"已裁决": 之后每轮都在这里被挡掉, 775 个子会话
@@ -2130,7 +2171,7 @@ export class AutoContinueRunner {
     // live 会话由实时事件路径负责; 冷读它既费钱又会与写归属相撞。
     if (this.ctx.agents.get(sessionId) !== undefined) return;
     if (this.childScanned >= CHILD_SWEEP_LIMIT) return;
-    if (this.sessionConfig(sessionId).paused) return;
+    if (this.ownSessionConfig(sessionId).paused) return;
     const rootId = resolveRootHeader(header, headersById);
     if (rootId === undefined || rootId === sessionId) {
       // 每轮扫描都会重走这里; 只记一次, 否则 15 分钟 freshMs 窗口内会刷出数万行噪声。

@@ -131,13 +131,13 @@ assert.doesNotMatch(general, /dshAcField/, 'the native path does not render the 
 assert.match(general, /href="https:\/\/github\.com\/HsiangNianian\/dsh-auto-continue"/);
 assert.match(general, /data-native-save[^>]*>Save</, 'the native form owns the save button');
 assert.ok((general.match(/role="switch"/g) ?? []).length >= 4, 'boolean fields use native switches');
-assert.match(general, /<button\b(?=[^>]*role="switch")(?=[^>]*aria-label="Resume subagent sessions")(?=[^>]*aria-checked="true")/, 'subagent recovery defaults on in General');
-face.edit('resumeSubagentSessions', 'false');
-assert.match(render('general'), /<button\b(?=[^>]*role="switch")(?=[^>]*aria-label="Resume subagent sessions")(?=[^>]*aria-checked="false")/, 'editing stages the inverse subagent setting');
+assert.match(general, /<button\b(?=[^>]*role="switch")(?=[^>]*aria-label="Resume subagent sessions")(?=[^>]*aria-checked="false")/, 'subagent recovery defaults off in General');
+face.edit('resumeSubagentSessions', 'true');
+assert.match(render('general'), /<button\b(?=[^>]*role="switch")(?=[^>]*aria-label="Resume subagent sessions")(?=[^>]*aria-checked="true")/, 'editing stages the inverse subagent setting');
 writes.length = 0;
 face.save();
 for (let i = 0; i < 8; i++) await Promise.resolve();
-assert.deepEqual(writes, [['resumeSubagentSessions', false]], 'the native form saves a boolean');
+assert.deepEqual(writes, [['resumeSubagentSessions', true]], 'the native form saves a boolean');
 face.discard();
 
 const retry = render('recovery');

@@ -155,20 +155,20 @@ face.edit('paused', 'true');
 assert.match(render('en'), /<button\b(?=[^>]*aria-label="Enable auto-continue globally")(?=[^>]*aria-checked="false")/, 'positive switch correctly stages the inverse paused setting');
 face.discard();
 
-// 子代理续跑: 默认开启的开关在 General 类目下渲染, 编辑后按布尔值保存。
+// 子代理续跑: 默认关闭的开关在 General 类目下渲染, 编辑后按布尔值保存。
 const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const subagentSwitch = (locale, checked) => new RegExp(
   `<button\\b(?=[^>]*role="switch")(?=[^>]*aria-label="${escapeRegExp(dictionaries[locale]['field.resumeSubagentSessions'])}")(?=[^>]*aria-checked="${checked}")`,
 );
 for (const locale of ['en', 'zh', 'ru']) {
-  assert.match(render(locale), subagentSwitch(locale, 'true'), 'subagent recovery switch renders on by default in General');
+  assert.match(render(locale), subagentSwitch(locale, 'false'), 'subagent recovery switch renders off by default in General');
 }
-face.edit('resumeSubagentSessions', 'false');
-assert.match(render('en'), subagentSwitch('en', 'false'), 'editing stages the inverse subagent setting');
+face.edit('resumeSubagentSessions', 'true');
+assert.match(render('en'), subagentSwitch('en', 'true'), 'editing stages the inverse subagent setting');
 writes.length = 0;
 face.save();
 for (let i = 0; i < 8; i++) await Promise.resolve();
-assert.deepEqual(writes, [['resumeSubagentSessions', false]], 'saving the switch stages a boolean');
+assert.deepEqual(writes, [['resumeSubagentSessions', true]], 'saving the switch stages a boolean');
 face.discard();
 
 const expected = Object.entries(face.hooks.autoContinueSettingsCard.getSnapshot())

@@ -28,7 +28,6 @@ export interface HostNotice {
     /** 产生时间。 */
     at: number;
 }
-/** 插件主体: 一条 mux 流 + 一条 host 流 + 启动/重连扫描。 */
 export declare class AutoContinueRunner {
     private readonly ctx;
     private readonly getConfig;
@@ -92,6 +91,12 @@ export declare class AutoContinueRunner {
     subscribeState(listener: () => void): () => void;
     private emitState;
     private sessionConfig;
+    /**
+     * The session's own mode, ignoring subagent inheritance. The stored-session
+     * sweep and the restart hand-off (`resumeInterruptedChildren`) use this, so
+     * turning live subagent recovery off never silently disables them.
+     */
+    private ownSessionConfig;
     configurationChanged(): void;
     /** 对外(状态桥): 消费待展示的通知。 */
     drainNotices(): HostNotice[];
@@ -125,6 +130,12 @@ export declare class AutoContinueRunner {
     private subagentRecoveryEnabled;
     /** Modes children inherit from their main conversation, for the composer's display. */
     inheritedSubagentModes(): Record<string, SessionMode>;
+    /**
+     * Keep the lineage caches bounded on long-lived hosts. Once the cache grows,
+     * entries for sessions that are no longer loaded are dropped; they are re-read
+     * from the live header if the session comes back.
+     */
+    private pruneLineage;
     /** Mark a child session; drop only queued sends that its effective policy no longer allows. */
     private markSubagent;
     /** Pause deadline, including the parents' "pause this session 1h" for subagents. */

@@ -413,6 +413,7 @@ const FAST = {
   scanOnBoot: true,
   verbose: false,
   pauseWhenOffline: false, // connectivity hold has its own suite; keep these off the real network
+  resumeSubagentSessions: true, // off by default; the subagent scenarios exercise it on, 1a.0 checks the default
 };
 
 function startPlugin(overrides = {}) {
@@ -574,6 +575,22 @@ const reasoningOnlyMsg = (seq, turn = 1) => ({
   cancelHost.settingsChanged();
   await sleep(350);
   check('主会话切到 off 后取消已排队的子代理续跑', queuedChild.followups.length === 0);
+  await sleep(20);
+}
+
+// ---------- 测试 1a.0: 默认配置 → 子代理不实时恢复 ----------
+{
+  console.log('测试 1a.0: resumeSubagentSessions 默认关闭 → 子代理不实时恢复');
+  const host = makeHost();
+  const { resumeSubagentSessions: _omit, ...defaults } = FAST;
+  host.setConfig({ ...defaults, scanOnBoot: false, graceMs: 10, cooldownMs: 0 });
+  mod.apply(host.ctx, host.configValue());
+  host.makeAgent('default-main');
+  const child = host.makeAgent('default-child', { origin: 'subagent', parentSession: 'default-main' });
+  await sleep(20);
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'UPSTREAM', message: 'boom' } }));
+  await sleep(60);
+  check('默认配置下子代理不实时恢复', child.followups.length === 0);
   await sleep(20);
 }
 
