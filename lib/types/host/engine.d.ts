@@ -191,6 +191,21 @@ export declare class AutoContinueRunner {
     /** 按调度原因选择续跑模板: loop 重启、无输出回合、max-tokens、自主循环, 其余用通用继续文本。 */
     private templateFor;
     private cancelPending;
+    /** Host-service facade used to cold-resume a disposed direct child. */
+    private subagentPromptProvider;
+    /** Attach the loader-provided subagent service; it may load after this plugin. */
+    setSubagentPromptProvider(provider: (() => unknown) | undefined): void;
+    private subagentPrompts;
+    /**
+     * Revive a disposed child through the host's cold resume and deliver the
+     * continuation to it. Falls back to the main-conversation hand-off when the
+     * host cannot resume (no persistence, no live parent, not a direct child).
+     */
+    private reviveChild;
+    /** Existing state of a session, without materializing one just to read it. */
+    private parentState;
+    /** Whether this session already has a continuation on the way. */
+    private hasPendingSend;
     /**
      * Ask the child's main conversation to take over a failure the plugin cannot
      * repair itself: the child handle is gone, so only the root can continue it.

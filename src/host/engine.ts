@@ -14,6 +14,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis';
+import { randomUUID } from 'node:crypto';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
@@ -157,6 +158,8 @@ const CHILD_SWEEP_LIMIT = 8;
 const CHILD_ROOT_MAX_DEPTH = 8;
 /** Do not hand the same child failure to its main conversation more often than this. */
 const HANDOFF_COOLDOWN_MS = 5 * 60 * 1000;
+/** Stay silent while the main conversation recovers itself: any message would cancel it. */
+const HANDOFF_PARENT_QUIET_MS = 2 * 60 * 1000;
 
 /** Copy for the live hand-off that replaces an impossible child resume, keyed by UI locale. */
 const HANDOFF_COPY = {
@@ -1594,6 +1597,85 @@ export class AutoContinueRunner {
     if (cancelled) this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
+  /** Host-service facade used to cold-resume a disposed direct child. */
+  private subagentPromptProvider: (() => unknown) | undefined;
+
+  /** Attach the loader-provided subagent service; it may load after this plugin. */
+  setSubagentPromptProvider(provider: (() => unknown) | undefined): void {
+    this.subagentPromptProvider = provider;
+  }
+
+  private subagentPrompts(): {
+    prompt?: (
+      request: {
+        parentSessionId: string;
+        childSessionId: string;
+        mode: 'continuable';
+        requestId: string;
+        content: readonly { type: 'text'; text: string }[];
+        delivery: 'queue' | 'steer';
+      },
+      signal: AbortSignal,
+    ) => Promise<{ messageId?: string }>
+  } | undefined {
+    const provided = this.subagentPromptProvider?.();
+    if (provided !== undefined && provided !== null) return provided as ReturnType<typeof this.subagentPrompts>;
+    try {
+      return this.ctx.get('subagents') as ReturnType<typeof this.subagentPrompts>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Revive a disposed child through the host's cold resume and deliver the
+   * continuation to it. Falls back to the main-conversation hand-off when the
+   * host cannot resume (no persistence, no live parent, not a direct child).
+   */
+  private async reviveChild(sessionId: SessionId, reason: string, text: string): Promise<void> {
+    if (this.disposed || this.getConfig().paused) return;
+    const parent = this.parentOf(sessionId);
+    if (parent === undefined || parent === '' || this.explicitMode(parent) === 'off') return;
+    const parentAgent = this.ctx.agents.get(parent);
+    const prompts = this.subagentPrompts();
+    this.log(`恢复尝试 ${sessionId}: parent=${parent} parentLive=${parentAgent !== undefined} prompt=${typeof prompts?.prompt}`);
+    if (parentAgent === undefined || typeof prompts?.prompt !== 'function') {
+      this.handOffToParent(sessionId, reason);
+      return;
+    }
+    try {
+      await prompts.prompt(
+        {
+          parentSessionId: parent,
+          childSessionId: sessionId,
+          mode: 'continuable',
+          requestId: randomUUID(),
+          content: [{ type: 'text', text }],
+          delivery: 'queue',
+        },
+        new AbortController().signal,
+      );
+      this.log(`已冷恢复子代理 ${sessionId}`);
+    } catch (error) {
+      this.log(`冷恢复 ${sessionId} 失败: ${error instanceof Error ? error.message : String(error)}`);
+      this.handOffToParent(sessionId, reason);
+    }
+  }
+
+  /** Existing state of a session, without materializing one just to read it. */
+  private parentState(sessionId: SessionId): SessionState | undefined {
+    return this.states.get(sessionId);
+  }
+
+  /** Whether this session already has a continuation on the way. */
+  private hasPendingSend(state: SessionState): boolean {
+    return state.pendingTimer !== undefined
+      || state.cooldownRetryTimer !== undefined
+      || state.loopRetryTimer !== undefined
+      || state.offlineWait !== undefined
+      || state.offlineTimer !== undefined;
+  }
+
   /**
    * Ask the child's main conversation to take over a failure the plugin cannot
    * repair itself: the child handle is gone, so only the root can continue it.
@@ -1611,6 +1693,14 @@ export class AutoContinueRunner {
     const state = this.state(sessionId);
     const now = Date.now();
     if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) return;
+    // Any user message into the main conversation cancels its queued continuation,
+    // and DSH already tells it which child failed. Stay silent while it recovers
+    // itself, or the hand-off would suppress that recovery.
+    const parentState = this.parentState(parent);
+    if (parentState !== undefined && (this.hasPendingSend(parentState) || now - parentState.lastFailureAt < HANDOFF_PARENT_QUIET_MS)) {
+      this.log(`移交跳过 ${sessionId}: 主会话 ${parent} 正在自行恢复`);
+      return;
+    }
     const code = state.lastFailure?.code ?? reason;
     const text = HANDOFF_COPY[this.sessionConfig(sessionId).locale](sessionId, code);
     try {
@@ -1661,12 +1751,13 @@ export class AutoContinueRunner {
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) {
       // A failed child is settled and disposed by the subagent runtime before the
-      // send window opens, so a direct resume cannot reach it. Hand the failure
-      // to its main conversation instead, which can continue or wrap it up.
+      // send window opens, so a direct resume cannot reach it. Ask the host to
+      // cold-resume it from persistence; when that is unavailable, hand the
+      // failure to its main conversation instead.
       if (!manualResume && this.isSubagentSession(sessionId) && this.subagentRecoveryEnabled(sessionId)) {
-        this.handOffToParent(sessionId, reason);
+        void this.reviveChild(sessionId, reason, text);
       }
-      this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
+      this.log(`跳过 ${sessionId}(${reason}): 无 live agent; subagent=${this.isSubagentSession(sessionId)} enabled=${this.subagentRecoveryEnabled(sessionId)} manual=${manualResume}`);
       return;
     }
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却

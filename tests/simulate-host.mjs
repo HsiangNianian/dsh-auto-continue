@@ -145,6 +145,7 @@ function makeHost() {
   const topLevelEffects = [];
   let engineEffects = [];
   let engineInject;
+  let subagentsService;
 
   const registerEffect = (effects, start) => {
     const cleanup = start();
@@ -264,6 +265,9 @@ function makeHost() {
       // inject 派生 context 的 effect 刻意留在另一组，避免测试把两种生命周期混为一谈。
       disposeEffects(topLevelEffects);
     },
+    setSubagents(service) {
+      subagentsService = service;
+    },
     reinjectEngine() {
       if (engineInject === undefined) throw new Error('engine inject callback 未注册');
       disposeEffects(engineEffects);
@@ -275,7 +279,7 @@ function makeHost() {
     const effects = [];
     engineEffects = effects;
     return {
-      get: () => undefined,
+      get: (name) => name === 'subagents' ? subagentsService : undefined,
       logger: console,
       on(event, handler) {
         if (event === 'agent/inbox/inserted') {
@@ -317,6 +321,12 @@ function makeHost() {
     effect: (cb) => registerEffect(topLevelEffects, cb),
     inject(deps, cb) {
       if (deps.includes('settings')) return () => {};
+      // The plugin asks for the subagent service separately; answer with a facade
+      // that leaves `subagents` undefined so the engine falls back to its own get.
+      if (deps.includes('subagents')) {
+        cb({ get: () => undefined });
+        return () => {};
+      }
       engineInject = cb;
       cb(makeEngineContext());
       return () => {};
@@ -629,6 +639,54 @@ const reasoningOnlyMsg = (seq, turn = 1) => ({
   check('Resume now 响应成功', response.ok === true);
   check('已启用的子代理收到手动续跑', child.followups.length === 1);
   await sleep(20);
+}
+
+// ---------- 测试 1a.4i: 无 live 子代理 → холодное восстановление через host ----------
+{
+  console.log('测试 1a.4i: 子代理已释放 → subagents.queuePrompt 冷恢复, 不打扰主会话');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('revive-child', { origin: 'subagent', parentSession: 'main' });
+  const calls = [];
+  host.setSubagents({ prompt: async (...args) => { calls.push(args); return { messageId: 'msg-1' }; } });
+  await sleep(20);
+  host.removeAgent('revive-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'network down' } }));
+  await sleep(80);
+  check('冷恢复被调用一次', calls.length === 1);
+  check('冷恢复的目标是失败的子代理', calls[0]?.[0]?.childSessionId === 'revive-child');
+  check('冷恢复没有退回移交主会话', main.followups.length === 0);
+}
+
+// ---------- 测试 1a.4j: 冷恢复失败 → 退回移交 ----------
+{
+  console.log('测试 1a.4j: queuePrompt 抛错 → 退回移交主会话');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('revive-fail-child', { origin: 'subagent', parentSession: 'main' });
+  host.setSubagents({ prompt: async () => { throw new Error('NOT_RESUMABLE'); } });
+  await sleep(20);
+  host.removeAgent('revive-fail-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(80);
+  check('冷恢复失败后移交给主会话', main.followups.length === 1);
+}
+
+// ---------- 测试 1a.4k: 主会话自己在恢复 → 不移交 ----------
+{
+  console.log('测试 1a.4k: 主会话正在自行恢复时不发移交, 免得掐掉它的续跑');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 400, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('quiet-child', { origin: 'subagent', parentSession: 'main' });
+  await sleep(20);
+  // Parent fails first: its own continuation is now pending inside the grace window.
+  host.emit(main.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(30);
+  host.removeAgent('quiet-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(120);
+  check('主会话恢复期间不发移交', main.followups.length === 0);
+  await sleep(450);
 }
 
 // ---------- 测试 1a.4h: 子代理已被释放 → 失败移交主会话 ----------
