@@ -28,7 +28,9 @@ export declare function pausedSessions(): PausedSessionView[];
 /** 当前桥状态里的今日统计(卡片面板用)。 */
 export declare function readTodayStats(): DayStatsView;
 export declare function readRecoveryAttempts(): RecoveryAttempt[];
+/** Last policy the host sent. It survives a bridge reconnect, so check {@link isBridgeConnected} before writing. */
 export declare function readSessionPolicy(): SessionPolicy | undefined;
+export declare function isBridgeConnected(): boolean;
 export declare function setSessionMode(sessionId: string, mode: SessionMode): Promise<void>;
 /** 清零今日统计(经动作端点交给 host 引擎执行)。 */
 export declare function resetTodayStats(): void;

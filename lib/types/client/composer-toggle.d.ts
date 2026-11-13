@@ -4,6 +4,8 @@ import { type SessionMode, type SessionPolicy } from '../shared/core.ts';
 export interface ComposerToggleState {
     visible: boolean;
     policy: SessionPolicy | undefined;
+    /** The bridge dropped; `policy` is the last known one and stays on screen, read-only. */
+    reconnecting: boolean;
     writable: boolean;
     saving: ReadonlySet<string>;
     failed: ReadonlySet<string>;

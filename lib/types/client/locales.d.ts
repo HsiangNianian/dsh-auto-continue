@@ -38,6 +38,7 @@ export declare const zh: {
     'composer.loop': string;
     'composer.paused': string;
     'composer.unavailable': string;
+    'composer.reconnecting': string;
     'composer.saving': string;
     'composer.saveFailed': string;
     'field.pausedHint': string;

@@ -23,6 +23,8 @@ import type {} from '@deepseek-ai/dsh-settings';
 
 /** Settings namespace of the auto-continue plugin (lowercase kebab-case). */
 export const AUTO_CONTINUE_NS = 'auto-continue';
+/** Interval for SSE comment frames on the status bridge, so idle connections are not dropped. */
+const BRIDGE_HEARTBEAT_MS = 20_000;
 
 /** Wire schema; blank localized text fields tell resolveConfig() to select the active locale's defaults. */
 const settingsFields = {
@@ -239,9 +241,15 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
           res.write(data);
         };
         sseClients.add(send);
-        const close = () => { res.end(); };
+        // Comment frames keep idle connections alive through proxies, sleep and security software (#86).
+        const heartbeat = setInterval(() => {
+          try { res.write(': ping\n\n'); } catch { /* the close handler cleans up */ }
+        }, BRIDGE_HEARTBEAT_MS);
+        heartbeat.unref?.();
+        const close = () => { clearInterval(heartbeat); res.end(); };
         closeClients.add(close);
         req.on('close', () => {
+          clearInterval(heartbeat);
           sseClients.delete(send);
           closeClients.delete(close);
         });

@@ -6,7 +6,7 @@
  */
 
 const css = `
-.dshAcComposer { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; min-height: 32px; max-width: 100%; font: inherit; }
+.dshAcComposer { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; min-height: 28px; max-width: 100%; font: inherit; }
 .dshAcComposerCore { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .dshAcComposerCore > span { min-width: 0; }
 .dshAcModeTrigger { display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 132px; height: 28px; margin-left: -1px; padding: 0 4px 0 7px; border: 0; border-radius: var(--dsw-radius-sm, 6px); background: none; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; font-weight: 500; line-height: 20px; cursor: pointer; }
@@ -29,13 +29,24 @@ const css = `
 .dshAcCard .dshAcMode:disabled { opacity: .5; }
 .dshAcCard .dshAcMode:focus-visible { outline: 2px solid var(--dsh-ac-text); outline-offset: 3px; }
 .dshAcComposerLabel { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--dsw-alias-label-secondary); font-size: 12px; white-space: nowrap; }
-.dshAcComposerText { display: inline; }
-.dshAcComposerIcon { display: inline-flex; flex: none; color: var(--dsw-alias-label-secondary); }
-.dshAcComposerIcon > svg { display: block; width: 14px; height: 14px; }
-.dshAcComposerIconFallback { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.dshAcIconBtn { position: relative; display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 999px; background-color: transparent; color: var(--dsw-alias-label-secondary, inherit); opacity: .9; cursor: pointer; transition: opacity .15s ease, background-color .15s ease, color .15s ease; }
+.dshAcIconBtn > svg { display: block; width: 14px; height: 14px; }
+.dshAcIconBtn[data-state="on"] { color: var(--dsw-alias-brand-primary, #4d8cff); opacity: 1; background-color: rgba(77, 140, 255, .14); background-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d8cff) 14%, transparent); }
+.dshAcIconBtn[data-state="on"]:hover:not(:disabled) { background-color: rgba(77, 140, 255, .22); background-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d8cff) 22%, transparent); }
+.dshAcIconBtn[data-state="off"] { opacity: .5; }
+.dshAcIconBtn[data-state="off"]:hover:not(:disabled) { opacity: .8; background: var(--dsw-alias-interactive-bg-hover); }
+.dshAcIconBtn:disabled { cursor: default; opacity: .4; }
+/* Reconnecting keeps the last known state visible, just dimmed. */
+.dshAcIconBtn[data-stale="true"]:disabled { opacity: .65; }
+.dshAcIconBtn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary)); }
+.dshAcGlyph { fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+.dshAcIconBtn[data-state="on"] > .dshAcGlyph { stroke-width: 1.6; }
+/* In the composer the mode name moves into the menu and tooltip; only the chevron stays. */
+.dshAcComposer .dshAcModeTriggerLabel { display: none; }
+.dshAcComposer .dshAcModeTrigger, .dshAcComposer .dshAcModeMenu { max-width: 28px; margin-left: -4px; padding: 0 2px; }
 .dshAcSwitchTarget { display: inline-flex; align-items: center; flex: none; min-height: 32px; }
 .dshAcSwitchTarget > button { position: relative; }
-.dshAcSwitchTarget > button::before { content: ''; position: absolute; inset: -6px -3px; }
+.dshAcSwitchTarget > button::before { content: ''; position: absolute; inset: -4px; }
 .dshAcComposerError { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-secondary)); font-size: 12px; max-width: 160px; }
 .dshAcComposerError:empty { display: none; }
 .dshAcToastIcon { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
@@ -148,23 +159,10 @@ const css = `
   .dshAcFooter { align-items: flex-start; flex-direction: column; gap: 10px; }
   .dshAcFooter > div { width: 100%; justify-content: flex-end; }
 }
-/* Match the native picker breakpoints when the composer provides a query container. */
-@container (width <= 640px) {
-  .dshAcComposerCore { gap: 5px; }
-  .dshAcModeTrigger, .dshAcModeMenu { max-width: 104px; padding: 0 3px 0 6px; }
-}
-@container (width <= 460px) {
-  .dshAcComposerText { display: none; }
-  .dshAcModeTrigger, .dshAcModeMenu { max-width: 28px; padding: 0 2px; }
-  .dshAcModeTriggerLabel { display: none; }
-}
 /* DS-Bot can remove the query container with display: contents. */
 @media (max-width: 640px) {
   .dshAcComposer { flex-direction: column; align-items: flex-start; width: min-content; }
   .dshAcComposer > .dshAcComposerLabel { white-space: normal; }
-  .dshAcComposerCore { gap: 5px; }
-  .dshAcComposerText, .dshAcModeTriggerLabel { display: none; }
-  .dshAcModeTrigger, .dshAcModeMenu { max-width: 28px; padding: 0 2px; }
 }
 
 `;
