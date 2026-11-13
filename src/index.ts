@@ -233,8 +233,6 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
           'cache-control': 'no-cache',
           connection: 'keep-alive',
         });
-        // `retry` tells EventSource-style clients to come back quickly after a drop.
-        res.write(`retry: 1000\n\n`);
         res.write(`data: ${statePayload()}\n\n`);
         const send = (data: string): void => {
           res.write(data);
