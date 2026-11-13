@@ -21,10 +21,12 @@ try {
   mkdirSync(join(fixtureRoot, 'node_modules', '@deepseek-ai'), { recursive: true });
 
   for (const packageName of ['cordis', 'schemastery']) {
+    // A Windows directory symlink needs SeCreateSymbolicLinkPrivilege; a junction
+    // gives the same resolution without it, and the type is ignored on POSIX.
     symlinkSync(
       join(projectRoot, 'node_modules', '@deepseek-ai', packageName),
       join(fixtureRoot, 'node_modules', '@deepseek-ai', packageName),
-      'dir',
+      'junction',
     );
   }
 

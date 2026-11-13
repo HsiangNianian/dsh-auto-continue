@@ -20,7 +20,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client';
 // Type-only: pulls the `settings.plugin.item` SlotMap merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client';
 import { resolveLocale, type AutoContinueSettings } from '../shared/core.ts';
-import { en, zh, type SettingsCardKey } from './locales.ts';
+import { en, ru, zh, type SettingsCardKey } from './locales.ts';
 import {
   AutoContinueSettingsCard,
   AutoContinueSettingsCardController,
@@ -80,7 +80,11 @@ export {
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
+  // The base package types `register()` dictionaries as the built-in `zh`/`en`
+  // pair only; further languages (here `ru`, added by a locale plugin at
+  // runtime) register one locale at a time, exactly as `addLanguage` allows.
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'auto-continue: dictionaries');
+  ctx.effect(() => ctx.locale.register(NS, 'ru', ru), 'auto-continue: russian dictionary');
   ctx.effect(() => startBridge(), 'auto-continue: host bridge');
 
   // Cordis waits for ALL top-level dependencies. Requiring settingsScope here

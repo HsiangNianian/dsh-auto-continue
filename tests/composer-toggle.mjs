@@ -116,7 +116,12 @@ function fixture(service, server, hasComposerSlot = true, primitives = {}) {
     on() {},
     locale: {
       getLocale: () => ({ active: 'en' }),
-      register(_namespace, value) { dictionaries = value; return () => {}; },
+      register(_namespace, value, dict) {
+        dictionaries ??= {};
+        if (typeof value === 'string') dictionaries[value] = dict;
+        else Object.assign(dictionaries, value);
+        return () => {};
+      },
     },
     slots: {
       inject(name, mount) {

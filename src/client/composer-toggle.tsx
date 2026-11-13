@@ -48,7 +48,13 @@ export function AutoContinueComposerToggle(props: PropsLocale<'auto-continue'> &
   const failed = state.failed.has(props.sessionId);
   const saving = state.saving.has(props.sessionId);
   const policy = state.policy;
-  const mode = sessionMode(policy?.modes ?? {}, props.sessionId);
+  // A child with no mode of its own shows what it actually inherits; the host
+  // resolves that alongside the explicit modes so the control never reports the
+  // profile default while recovery is disabled by the main conversation.
+  const ownMode = sessionMode(policy?.modes ?? {}, props.sessionId);
+  const mode: SessionMode = ownMode === 'default'
+    ? policy?.inheritedModes?.[props.sessionId] ?? 'default'
+    : ownMode;
   const disabled = !policy || !state.writable || saving;
   const title = props.t(!policy ? 'composer.unavailable' : state.reconnecting ? 'composer.reconnecting'
     : !state.writable ? 'chrome.readOnly' : saving ? 'composer.saving' : 'composer.scope');
@@ -65,6 +71,8 @@ export function AutoContinueComposerToggle(props: PropsLocale<'auto-continue'> &
     { id: 'loop', label: props.t('composer.loop') },
   ];
   const enabled = !!policy && mode !== 'off';
+  // Turning on writes `default`, unless that would just inherit Off again (a child of an Off main chat).
+  const onMode: SessionMode = policy?.inheritedModes?.[props.sessionId] === 'off' ? 'recover' : 'default';
   // One 28px icon switch plus a chevron-only mode menu: the mode name lives in the
   // menu, the tooltip and the accessible name instead of taking composer width (#86).
   return (
@@ -73,7 +81,7 @@ export function AutoContinueComposerToggle(props: PropsLocale<'auto-continue'> &
         <button type="button" role="switch" className="dshAcIconBtn" data-state={enabled ? 'on' : 'off'}
           data-stale={state.reconnecting || undefined} aria-checked={enabled}
           aria-label={`${props.t('composer.label')}: ${fullModeLabel}`} title={`${modeTitle}\n${title}`}
-          disabled={disabled} onClick={() => props.setMode(enabled ? 'off' : 'default')}>
+          disabled={disabled} onClick={() => props.setMode(enabled ? 'off' : onMode)}>
           <AutoContinueIcon />
         </button>
         <ModeMenu mode={mode} options={options} label={modeName}

@@ -89,6 +89,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
   continueText: CardFieldState;
   continueTextMaxTokens: CardFieldState;
   resumeSilentTurns: CardFieldState;
+  resumeSubagentSessions: CardFieldState;
   resumeCompletedTurns: CardFieldState;
   resumeInterruptedChildren: CardFieldState;
   resumeGoals: CardFieldState;
@@ -157,6 +158,7 @@ export class AutoContinueSettingsCardController {
       textField('continueText'),
       textField('continueTextMaxTokens'),
       booleanField('resumeSilentTurns'),
+      booleanField('resumeSubagentSessions'),
       booleanField('resumeCompletedTurns'),
       booleanField('resumeInterruptedChildren'),
       booleanField('resumeGoals'),
@@ -206,6 +208,7 @@ export class AutoContinueSettingsCardController {
       continueText: this.form.field('continueText'),
       continueTextMaxTokens: this.form.field('continueTextMaxTokens'),
       resumeSilentTurns: this.form.field('resumeSilentTurns'),
+      resumeSubagentSessions: this.form.field('resumeSubagentSessions'),
       resumeCompletedTurns: this.form.field('resumeCompletedTurns'),
       resumeInterruptedChildren: this.form.field('resumeInterruptedChildren'),
       resumeGoals: this.form.field('resumeGoals'),
@@ -325,7 +328,7 @@ export function AutoContinueSettingsPage(props: AutoContinueSettingsCardProps) {
 
 type FieldName = Exclude<keyof AutoContinueSettingsCardState, keyof CardShell | 'enabled' | 'notificationFeedback'>;
 const groups = [
-  { id: 'general', fields: ['paused', 'showComposerToggle', 'usePluginSource', 'resumeSilentTurns', 'resumeCompletedTurns', 'loopMaxIterations', 'notify'] },
+  { id: 'general', fields: ['paused', 'showComposerToggle', 'usePluginSource', 'resumeSilentTurns', 'resumeSubagentSessions', 'resumeCompletedTurns', 'loopMaxIterations', 'notify'] },
   { id: 'recovery', fields: ['graceMs', 'cooldownMs', 'maxConsecutive', 'classify', 'retryableErrorPatterns', 'backoffFactor', 'backoffMaxMs', 'pauseWhenOffline', 'offlineCheckMs', 'resumeGoals', 'resumePausedGoals'] },
   { id: 'startup', fields: ['scanOnBoot', 'resumeInterruptedChildren', 'scanLimit', 'freshMs'] },
   { id: 'prompts', fields: ['continueText', 'continueTextMaxTokens', 'continueTextSilent', 'continueTextInterrupted', 'continueTextLoop', 'guardPendingText', 'guardDoneText', 'loopText'] },

@@ -50,6 +50,8 @@ export declare const zh: {
     'default.continueTextMaxTokens': "继续";
     'field.resumeSilentTurns': string;
     'field.resumeSilentTurnsHint': string;
+    'field.resumeSubagentSessions': string;
+    'field.resumeSubagentSessionsHint': string;
     'field.resumeCompletedTurns': string;
     'field.resumeCompletedTurnsHint': string;
     'field.resumeInterruptedChildren': string;
@@ -168,3 +170,5 @@ export declare const zh: {
 export type SettingsCardKey = keyof typeof zh;
 /** English dictionary, checked complete against the zh key set. */
 export declare const en: Record<SettingsCardKey, string>;
+/** Russian dictionary, checked complete against the zh key set. */
+export declare const ru: Record<SettingsCardKey, string>;
