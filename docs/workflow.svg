@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1152" viewBox="0 0 1200 1152" role="img" lang="en" aria-labelledby="title description">
+  <title id="title">How auto-continue decides</title>
+  <desc id="description">Flow chart. Three triggers (a turn ends, the host restarts, a turn repeats itself) pass a session check, then the end reason decides: stop, recover, or continue the autonomous loop. Recovery checks the retry budget, waits the grace period, holds while offline, and sends the continue text. Child sessions are handed to their root session; Resume now sends at once.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrowhead" d="M0 0L10 5L0 10Z"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .bg { fill: #f6f8fa; }
+    .heading { fill: #1f2328; font-size: 24px; font-weight: 650; }
+    .sub, .legend, .foot { fill: #59636e; font-size: 14px; }
+    .card { fill: #ffffff; stroke: #d1d9e0; }
+    .title { fill: #1f2328; font-size: 16px; font-weight: 650; }
+    .body { fill: #424a53; font-size: 13.5px; }
+    .key { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 12px; }
+    .edge { fill: none; stroke: #8c959f; stroke-width: 1.6; }
+    .arrowhead { fill: #8c959f; }
+    .edge-label { fill: #59636e; font-size: 12px; }
+    .source .strip, .source .key { fill: #0969da; }
+    .gate .strip, .gate .key { fill: #9a6700; }
+    .stop .strip, .stop .key { fill: #cf222e; }
+    .loop .strip, .loop .key { fill: #8250df; }
+    .send .strip, .send .key { fill: #1a7f37; }
+    .send .card { stroke: #1a7f37; stroke-width: 1.5; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .heading, .title { fill: #e6edf3; }
+      .sub, .legend, .foot, .edge-label { fill: #9198a1; }
+      .card { fill: #161b22; stroke: #3d444d; }
+      .body { fill: #c9d1d9; }
+      .edge { stroke: #656c76; }
+      .arrowhead { fill: #656c76; }
+      .source .strip, .source .key { fill: #4493f8; }
+      .gate .strip, .gate .key { fill: #d29922; }
+      .stop .strip, .stop .key { fill: #f85149; }
+      .loop .strip, .loop .key { fill: #ab7df8; }
+      .send .strip, .send .key { fill: #3fb950; }
+      .send .card { stroke: #3fb950; }
+    }
+  </style>
+  <rect class="bg" width="1200" height="1152" rx="16"/>
+  <text class="heading" x="30" y="46">How auto-continue decides</text>
+  <text class="sub" x="30" y="72">Runs in the DSH host, one engine for all tabs</text>
+    <g class="node source"><rect class="strip" x="744" y="54" width="12" height="12" rx="3"/><text class="legend" x="762" y="65">Trigger</text></g>
+    <g class="node gate"><rect class="strip" x="840" y="54" width="12" height="12" rx="3"/><text class="legend" x="858" y="65">Check</text></g>
+    <g class="node stop"><rect class="strip" x="920" y="54" width="12" height="12" rx="3"/><text class="legend" x="938" y="65">Stop / wait</text></g>
+    <g class="node loop"><rect class="strip" x="1048" y="54" width="12" height="12" rx="3"/><text class="legend" x="1066" y="65">Loop</text></g>
+    <g class="node send"><rect class="strip" x="1120" y="54" width="12" height="12" rx="3"/><text class="legend" x="1138" y="65">Send</text></g>
+  <path class="edge" d="M175 216V234H1025V216"/>
+  <path class="edge" d="M600 216V250" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 356V390" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 496V530" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 636V670" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 776V810" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 916V950" marker-end="url(#arrow)"/>
+  <path class="edge" d="M390 304H322" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="296" text-anchor="middle">no</text>
+  <path class="edge" d="M390 444H322" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="436" text-anchor="middle">stop</text>
+  <path class="edge" d="M390 584H322" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="576" text-anchor="middle">cap hit</text>
+  <path class="edge" d="M810 444H878" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="845" y="436" text-anchor="middle">loop</text>
+  <path class="edge" d="M1025 496V530" marker-end="url(#arrow)"/>
+  <path class="edge" d="M1025 636V724H812" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="1035" y="658" text-anchor="start">under limit</text>
+  <path class="edge" d="M810 864H878" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="845" y="856" text-anchor="middle">offline</text>
+  <path class="edge" d="M1110 812V740H812" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="1118" y="798" text-anchor="start">online</text>
+  <path class="edge" d="M320 1004H388" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="996" text-anchor="middle">to root</text>
+  <path class="edge" d="M880 1004H812" marker-end="url(#arrow)"/>
+  <g class="node source">
+    <rect class="card" x="30" y="112" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="126" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="140">A turn ends</text>
+    <text class="body" x="50" y="163">turn/end in a live session:</text>
+    <text class="body" x="50" y="182">error, max-tokens, silent, completed</text>
+    <text class="key" x="50" y="202">resumeSilentTurns</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="390" y="112" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="126" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="140">The host restarts</text>
+    <text class="body" x="410" y="163">Startup scan reads open and stored sessions</text>
+    <text class="body" x="410" y="182">interrupted inside the scan window</text>
+    <text class="key" x="410" y="202">scanOnBoot · freshMs · scanLimit</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="880" y="112" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="126" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="140">A turn repeats itself</text>
+    <text class="body" x="900" y="163">Loop guard cancels the running</text>
+    <text class="body" x="900" y="182">turn and restarts it</text>
+    <text class="key" x="900" y="202">loopGuard · loopText</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="252" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="266" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="280">Allowed to continue?</text>
+    <text class="body" x="410" y="303">Not globally paused, mode is not Off,</text>
+    <text class="body" x="410" y="322">no 1-hour pause, not a subagent session</text>
+    <text class="key" x="410" y="342">paused · sessionModes</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="30" y="252" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="266" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="280">Skip</text>
+    <text class="body" x="50" y="303">Logged with [auto-continue];</text>
+    <text class="body" x="50" y="322">nothing is sent</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="392" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="406" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="420">Why did it end?</text>
+    <text class="body" x="410" y="443">Error, max-tokens, silent turn, restart or</text>
+    <text class="body" x="410" y="462">loop-guard cancel: recover</text>
+    <text class="key" x="410" y="482">classify · retryableErrorPatterns</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="30" y="392" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="406" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="420">Leave it alone</text>
+    <text class="body" x="50" y="443">You pressed Stop, a policy blocked</text>
+    <text class="body" x="50" y="462">it, or the error is permanent</text>
+  </g>
+  <g class="node loop">
+    <rect class="card" x="880" y="392" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="406" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="420">Autonomous loop</text>
+    <text class="body" x="900" y="443">Completed normally in Loop mode;</text>
+    <text class="body" x="900" y="462">no cooldown, no consecutive cap</text>
+    <text class="key" x="900" y="482">resumeCompletedTurns</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="532" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="546" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="560">Retry budget left?</text>
+    <text class="body" x="410" y="583">Below Max consecutive. Inside the cooldown</text>
+    <text class="body" x="410" y="602">the send waits (cooldown × factor, capped)</text>
+    <text class="key" x="410" y="622">maxConsecutive · cooldownMs · backoff*</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="30" y="532" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="546" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="560">Give up</text>
+    <text class="body" x="50" y="583">Notifies; resets when you write</text>
+    <text class="body" x="50" y="602">or a turn shows visible output</text>
+  </g>
+  <g class="node loop">
+    <rect class="card" x="880" y="532" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="546" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="560">Round limit</text>
+    <text class="body" x="900" y="583">Stops at the limit and tells</text>
+    <text class="body" x="900" y="602">you once; 0 means no limit</text>
+    <text class="key" x="900" y="622">loopMaxIterations</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="672" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="686" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="700">Grace period</text>
+    <text class="body" x="410" y="723">Wait 3 s by default. A new turn or a</text>
+    <text class="body" x="410" y="742">message from you cancels the send</text>
+    <text class="key" x="410" y="762">graceMs</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="812" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="826" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="840">Network up?</text>
+    <text class="body" x="410" y="863">Network errors only. While offline the send</text>
+    <text class="body" x="410" y="882">is held and does not use up retries</text>
+    <text class="key" x="410" y="902">pauseWhenOffline · offlineCheckMs</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="880" y="812" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="826" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="840">Hold</text>
+    <text class="body" x="900" y="863">Re-check every 15 s; once online,</text>
+    <text class="body" x="900" y="882">go through grace and cooldown again</text>
+  </g>
+  <g class="node send">
+    <rect class="card" x="390" y="952" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="966" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="980">Send</text>
+    <text class="body" x="410" y="1003">Pick the text for the reason, add the</text>
+    <text class="body" x="410" y="1022">tool-guard note, call agent.followup</text>
+    <text class="key" x="410" y="1042">continueText* · guardTools · resumeGoals</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="30" y="952" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="966" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="980">Child sessions</text>
+    <text class="body" x="50" y="1003">Never resumed directly; after a</text>
+    <text class="body" x="50" y="1022">restart the root gets one list</text>
+    <text class="key" x="50" y="1042">resumeInterruptedChildren</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="880" y="952" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="966" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="980">Resume now</text>
+    <text class="body" x="900" y="1003">Notification button: one send,</text>
+    <text class="body" x="900" y="1022">ignores pause, cooldown and cap</text>
+  </g>
+  <text class="foot" x="30" y="1102">After a send the new turn is watched like any other. A new turn or your own message cancels anything still waiting.</text>
+  <text class="foot" x="30" y="1124">Counters live in host memory. Session modes and the global pause are saved with your profile config.</text>
+</svg>

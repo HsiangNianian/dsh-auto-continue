@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1152" viewBox="0 0 1200 1152" role="img" lang="zh" aria-labelledby="title description">
+  <title id="title">自动继续如何判断</title>
+  <desc id="description">流程图。三个触发源(回合结束、宿主重启、回合陷入重复)先经过会话检查，再按结束原因分流：不处理、恢复或继续自主循环。恢复路径依次检查重试预算、等待宽限期、断网时挂起，最后发送继续文本。子会话交给根会话处理；“立即续跑”直接发送。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrowhead" d="M0 0L10 5L0 10Z"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .bg { fill: #f6f8fa; }
+    .heading { fill: #1f2328; font-size: 24px; font-weight: 650; }
+    .sub, .legend, .foot { fill: #59636e; font-size: 14px; }
+    .card { fill: #ffffff; stroke: #d1d9e0; }
+    .title { fill: #1f2328; font-size: 16px; font-weight: 650; }
+    .body { fill: #424a53; font-size: 13.5px; }
+    .key { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 12px; }
+    .edge { fill: none; stroke: #8c959f; stroke-width: 1.6; }
+    .arrowhead { fill: #8c959f; }
+    .edge-label { fill: #59636e; font-size: 12px; }
+    .source .strip, .source .key { fill: #0969da; }
+    .gate .strip, .gate .key { fill: #9a6700; }
+    .stop .strip, .stop .key { fill: #cf222e; }
+    .loop .strip, .loop .key { fill: #8250df; }
+    .send .strip, .send .key { fill: #1a7f37; }
+    .send .card { stroke: #1a7f37; stroke-width: 1.5; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .heading, .title { fill: #e6edf3; }
+      .sub, .legend, .foot, .edge-label { fill: #9198a1; }
+      .card { fill: #161b22; stroke: #3d444d; }
+      .body { fill: #c9d1d9; }
+      .edge { stroke: #656c76; }
+      .arrowhead { fill: #656c76; }
+      .source .strip, .source .key { fill: #4493f8; }
+      .gate .strip, .gate .key { fill: #d29922; }
+      .stop .strip, .stop .key { fill: #f85149; }
+      .loop .strip, .loop .key { fill: #ab7df8; }
+      .send .strip, .send .key { fill: #3fb950; }
+      .send .card { stroke: #3fb950; }
+    }
+  </style>
+  <rect class="bg" width="1200" height="1152" rx="16"/>
+  <text class="heading" x="30" y="46">自动继续如何判断</text>
+  <text class="sub" x="30" y="72">运行在 DSH 宿主进程中，所有标签页共用一个引擎</text>
+    <g class="node source"><rect class="strip" x="816" y="54" width="12" height="12" rx="3"/><text class="legend" x="834" y="65">触发</text></g>
+    <g class="node gate"><rect class="strip" x="884" y="54" width="12" height="12" rx="3"/><text class="legend" x="902" y="65">检查</text></g>
+    <g class="node stop"><rect class="strip" x="952" y="54" width="12" height="12" rx="3"/><text class="legend" x="970" y="65">停止/等待</text></g>
+    <g class="node loop"><rect class="strip" x="1056" y="54" width="12" height="12" rx="3"/><text class="legend" x="1074" y="65">循环</text></g>
+    <g class="node send"><rect class="strip" x="1124" y="54" width="12" height="12" rx="3"/><text class="legend" x="1142" y="65">发送</text></g>
+  <path class="edge" d="M175 216V234H1025V216"/>
+  <path class="edge" d="M600 216V250" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 356V390" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 496V530" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 636V670" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 776V810" marker-end="url(#arrow)"/>
+  <path class="edge" d="M600 916V950" marker-end="url(#arrow)"/>
+  <path class="edge" d="M390 304H322" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="296" text-anchor="middle">否</text>
+  <path class="edge" d="M390 444H322" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="436" text-anchor="middle">停止</text>
+  <path class="edge" d="M390 584H322" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="576" text-anchor="middle">达到上限</text>
+  <path class="edge" d="M810 444H878" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="845" y="436" text-anchor="middle">循环</text>
+  <path class="edge" d="M1025 496V530" marker-end="url(#arrow)"/>
+  <path class="edge" d="M1025 636V724H812" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="1035" y="658" text-anchor="start">未达上限</text>
+  <path class="edge" d="M810 864H878" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="845" y="856" text-anchor="middle">断网</text>
+  <path class="edge" d="M1110 812V740H812" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="1118" y="798" text-anchor="start">恢复联网</text>
+  <path class="edge" d="M320 1004H388" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="355" y="996" text-anchor="middle">根会话</text>
+  <path class="edge" d="M880 1004H812" marker-end="url(#arrow)"/>
+  <g class="node source">
+    <rect class="card" x="30" y="112" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="126" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="140">回合结束</text>
+    <text class="body" x="50" y="163">会话中的 turn/end：</text>
+    <text class="body" x="50" y="182">error、max-tokens、无输出、completed</text>
+    <text class="key" x="50" y="202">resumeSilentTurns</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="390" y="112" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="126" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="140">宿主重启</text>
+    <text class="body" x="410" y="163">启动扫描读取已打开和已存储的会话，</text>
+    <text class="body" x="410" y="182">只处理扫描时间窗内的中断</text>
+    <text class="key" x="410" y="202">scanOnBoot · freshMs · scanLimit</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="880" y="112" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="126" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="140">回合陷入重复</text>
+    <text class="body" x="900" y="163">循环守卫打断正在运行的回合，</text>
+    <text class="body" x="900" y="182">然后重新开始</text>
+    <text class="key" x="900" y="202">loopGuard · loopText</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="252" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="266" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="280">允许继续吗？</text>
+    <text class="body" x="410" y="303">未全局暂停、会话模式不是“关闭”、</text>
+    <text class="body" x="410" y="322">没有 1 小时暂停、不是子代理会话</text>
+    <text class="key" x="410" y="342">paused · sessionModes</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="30" y="252" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="266" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="280">跳过</text>
+    <text class="body" x="50" y="303">记录 [auto-continue] 日志，</text>
+    <text class="body" x="50" y="322">不发送任何内容</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="392" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="406" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="420">回合为什么结束？</text>
+    <text class="body" x="410" y="443">错误、max-tokens、无输出、宿主重启</text>
+    <text class="body" x="410" y="462">或循环守卫打断：进入恢复</text>
+    <text class="key" x="410" y="482">classify · retryableErrorPatterns</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="30" y="392" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="406" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="420">不处理</text>
+    <text class="body" x="50" y="443">你按了停止、被策略拦截，</text>
+    <text class="body" x="50" y="462">或是永久性错误</text>
+  </g>
+  <g class="node loop">
+    <rect class="card" x="880" y="392" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="406" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="420">自主循环</text>
+    <text class="body" x="900" y="443">“自主循环”模式下正常完成；</text>
+    <text class="body" x="900" y="462">不受冷却和连续上限约束</text>
+    <text class="key" x="900" y="482">resumeCompletedTurns</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="532" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="546" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="560">还有重试次数吗？</text>
+    <text class="body" x="410" y="583">低于最大连续次数。冷却期内会等待</text>
+    <text class="body" x="410" y="602">(冷却 × 退避系数，有上限)</text>
+    <text class="key" x="410" y="622">maxConsecutive · cooldownMs · backoff*</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="30" y="532" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="546" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="560">放弃</text>
+    <text class="body" x="50" y="583">发通知；你发消息或回合有</text>
+    <text class="body" x="50" y="602">可见输出后重新计数</text>
+  </g>
+  <g class="node loop">
+    <rect class="card" x="880" y="532" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="546" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="560">轮数上限</text>
+    <text class="body" x="900" y="583">到达上限后停止并提示一次；</text>
+    <text class="body" x="900" y="602">0 表示不限</text>
+    <text class="key" x="900" y="622">loopMaxIterations</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="672" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="686" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="700">宽限期</text>
+    <text class="body" x="410" y="723">默认等 3 秒。期间开始新回合或</text>
+    <text class="body" x="410" y="742">你发了消息，就取消这次发送</text>
+    <text class="key" x="410" y="762">graceMs</text>
+  </g>
+  <g class="node gate">
+    <rect class="card" x="390" y="812" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="826" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="840">网络通吗？</text>
+    <text class="body" x="410" y="863">只针对网络错误。断网时挂起，</text>
+    <text class="body" x="410" y="882">不消耗重试次数</text>
+    <text class="key" x="410" y="902">pauseWhenOffline · offlineCheckMs</text>
+  </g>
+  <g class="node stop">
+    <rect class="card" x="880" y="812" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="826" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="840">挂起</text>
+    <text class="body" x="900" y="863">每 15 秒复检；联网后</text>
+    <text class="body" x="900" y="882">重新经过宽限期和冷却</text>
+  </g>
+  <g class="node send">
+    <rect class="card" x="390" y="952" width="420" height="104" rx="12"/>
+    <rect class="strip" x="390" y="966" width="4" height="76" rx="2"/>
+    <text class="title" x="410" y="980">发送</text>
+    <text class="body" x="410" y="1003">按原因选择继续文本，附上工具护栏</text>
+    <text class="body" x="410" y="1022">提示，调用 agent.followup</text>
+    <text class="key" x="410" y="1042">continueText* · guardTools · resumeGoals</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="30" y="952" width="290" height="104" rx="12"/>
+    <rect class="strip" x="30" y="966" width="4" height="76" rx="2"/>
+    <text class="title" x="50" y="980">子会话</text>
+    <text class="body" x="50" y="1003">从不直接续跑；重启后</text>
+    <text class="body" x="50" y="1022">根会话收到一份清单</text>
+    <text class="key" x="50" y="1042">resumeInterruptedChildren</text>
+  </g>
+  <g class="node source">
+    <rect class="card" x="880" y="952" width="290" height="104" rx="12"/>
+    <rect class="strip" x="880" y="966" width="4" height="76" rx="2"/>
+    <text class="title" x="900" y="980">立即续跑</text>
+    <text class="body" x="900" y="1003">通知按钮：立即发送一次，</text>
+    <text class="body" x="900" y="1022">忽略暂停、冷却和上限</text>
+  </g>
+  <text class="foot" x="30" y="1102">发送后，新回合会像其他回合一样继续被监视。新回合开始或你自己发消息，都会取消还在等待的发送。</text>
+  <text class="foot" x="30" y="1124">计数器保存在宿主内存中；会话模式和全局暂停随 profile 配置保存。</text>
+</svg>
