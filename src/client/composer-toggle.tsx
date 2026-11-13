@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SnapshotStore } from './dsh-store-compat.ts';
 import { sessionMode, type SessionMode, type SessionPolicy } from '../shared/core.ts';
-import { NativeSwitch } from './native-switch.tsx';
 import { ModeMenu, type ModeMenuOption } from './mode-menu.tsx';
 import { AutoContinueIcon } from './auto-continue-icon.tsx';
 import { NativeToast, WarningIcon, hasNativeToast } from './native-toast.tsx';
@@ -10,6 +9,8 @@ import { NativeToast, WarningIcon, hasNativeToast } from './native-toast.tsx';
 export interface ComposerToggleState {
   visible: boolean;
   policy: SessionPolicy | undefined;
+  /** The bridge dropped; `policy` is the last known one and stays on screen, read-only. */
+  reconnecting: boolean;
   writable: boolean;
   saving: ReadonlySet<string>;
   failed: ReadonlySet<string>;
@@ -49,7 +50,8 @@ export function AutoContinueComposerToggle(props: PropsLocale<'auto-continue'> &
   const policy = state.policy;
   const mode = sessionMode(policy?.modes ?? {}, props.sessionId);
   const disabled = !policy || !state.writable || saving;
-  const title = props.t(!policy ? 'composer.unavailable' : !state.writable ? 'chrome.readOnly' : saving ? 'composer.saving' : 'composer.scope');
+  const title = props.t(!policy ? 'composer.unavailable' : state.reconnecting ? 'composer.reconnecting'
+    : !state.writable ? 'chrome.readOnly' : saving ? 'composer.saving' : 'composer.scope');
   const modeName = props.t(`composer.${mode}`);
   const defaultName = policy
     ? `${props.t('composer.default')} (${props.t(`composer.${policy.defaultMode}`)})`
@@ -62,17 +64,18 @@ export function AutoContinueComposerToggle(props: PropsLocale<'auto-continue'> &
     { id: 'recover', label: props.t('composer.recover') },
     { id: 'loop', label: props.t('composer.loop') },
   ];
+  const enabled = !!policy && mode !== 'off';
+  // One 28px icon switch plus a chevron-only mode menu: the mode name lives in the
+  // menu, the tooltip and the accessible name instead of taking composer width (#86).
   return (
     <div className="dshAcComposer" title={title} aria-busy={saving || undefined}>
       <span className="dshAcComposerCore">
-        <span className="dshAcComposerLabel">
-          <span className="dshAcComposerIcon" aria-hidden="true"><AutoContinueIcon /></span>
-          <span className="dshAcComposerText">{props.t('composer.label')}</span>
-        </span>
-        <span className="dshAcSwitchTarget">
-          <NativeSwitch checked={!!policy && mode !== 'off'} onChange={enabled => props.setMode(enabled ? 'default' : 'off')}
-            disabled={disabled} label={props.t('composer.label')} title={title} />
-        </span>
+        <button type="button" role="switch" className="dshAcIconBtn" data-state={enabled ? 'on' : 'off'}
+          data-stale={state.reconnecting || undefined} aria-checked={enabled}
+          aria-label={`${props.t('composer.label')}: ${fullModeLabel}`} title={`${modeTitle}\n${title}`}
+          disabled={disabled} onClick={() => props.setMode(enabled ? 'off' : 'default')}>
+          <AutoContinueIcon />
+        </button>
         <ModeMenu mode={mode} options={options} label={modeName}
           ariaLabel={modeTitle} selectLabel={props.t('composer.mode')} title={modeTitle}
           disabled={disabled} onChange={props.setMode} />

@@ -230,12 +230,16 @@ for (const service of ['configForms', 'settingsScope']) {
     await flush();
     assert.equal(test.state().visible, true);
 
+    const before = test.state().policy;
     server.disconnect();
     await flush();
+    // #86: a dropped bridge keeps the last known policy on screen instead of flipping to "off".
     assert.equal(test.state().writable, false);
-    assert.match(test.render(), /title="Waiting for host"/);
-    assert.match(test.render(), /role="switch"[^>]*aria-checked="false"[^>]*disabled=""/);
-    test.composer.face.setMode('off');
+    assert.equal(test.state().reconnecting, true);
+    assert.deepEqual(test.state().policy, before, 'the last known policy survives a disconnect');
+    assert.match(test.render(), /title="Reconnecting to the host/);
+    assert.match(test.render(), /role="switch"[^>]*data-stale="true"[^>]*aria-checked="false"[^>]*disabled=""/);
+    test.composer.face.setMode('loop');
     assert.equal(server.writes.length, count, 'disconnected controls do not save stale state');
   } finally {
     test.dispose(); tab.dispose();

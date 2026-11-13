@@ -19,6 +19,7 @@ import {
   readTodayStats,
   readRecoveryAttempts,
   readSessionPolicy,
+  isBridgeConnected,
   resetTodayStats,
   setSessionMode,
   subscribeBridge,
@@ -275,10 +276,12 @@ export class AutoContinueSettingsCardController {
   private composerProjection(): ComposerToggleState {
     const snapshot = this.scope.getSnapshot();
     const policy = readSessionPolicy();
+    const connected = isBridgeConnected();
     return {
       visible: snapshot.status === 'ready' && (snapshot.value?.showComposerToggle ?? DEFAULT_CONFIG.showComposerToggle),
       policy,
-      writable: canWriteSettings(snapshot) && policy?.writable === true,
+      reconnecting: policy !== undefined && !connected,
+      writable: connected && canWriteSettings(snapshot) && policy?.writable === true,
       saving: new Set(this.composerSaving),
       failed: new Set(this.composerFailed),
     };
