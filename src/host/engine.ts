@@ -325,6 +325,12 @@ function readCancelCause(value: unknown): string | undefined {
   return readReasonKind(reason.reason);
 }
 
+/** Whether the host closed an `aborted` turn (restart, reload, teardown) rather than the user. */
+function isHostCancel(value: unknown): boolean {
+  const cause = readCancelCause(value);
+  return cause !== undefined && RESTART_CANCEL_CAUSES.has(cause);
+}
+
 /**
  * Decide whether a child session's tail is a restart interruption worth waking
  * its root session for. Returns `undefined` when the child finished normally,
@@ -1843,7 +1849,9 @@ export class AutoContinueRunner {
           const event = events[i];
           if (event?.type === 'turn/end') { lastEnd = event; break; }
         }
-        const reasonKind = readReasonKind(lastEnd?.data.reason);
+        let reasonKind = readReasonKind(lastEnd?.data.reason);
+        // A host-closed tail (`disposed`/`legacy`) is a restart signature, not a user stop.
+        if (reasonKind === 'aborted' && isHostCancel(lastEnd?.data.reason)) reasonKind = 'interrupted';
         const lastStart = latestTurnStart(events);
         const maintenance = lastStart?.data.turn === lastEnd?.data.turn && isMaintenanceTurnStart(lastStart);
         const silent = reasonKind === 'no-visible-output' && config.resumeSilentTurns;
@@ -2031,6 +2039,7 @@ export class AutoContinueRunner {
           freshAt = events[events.length - 1]?.time ?? 0;
         } else {
           reasonKind = readReasonKind(lastEnd?.data.reason);
+          if (reasonKind === 'aborted' && isHostCancel(lastEnd?.data.reason)) reasonKind = 'interrupted';
           freshAt = lastEnd?.time ?? 0;
         }
         // 过期或被取代的永久错误与 live 扫描一致地静默跳过, 不再单独上报。
@@ -2265,10 +2274,7 @@ export class AutoContinueRunner {
     if (end === undefined) return false;
     const kind = readReasonKind(end.data.reason);
     if (kind === 'completed') return true;
-    if (kind === 'aborted') {
-      const cause = readCancelCause(end.data.reason);
-      return cause !== undefined && RESTART_CANCEL_CAUSES.has(cause);
-    }
+    if (kind === 'aborted') return isHostCancel(end.data.reason);
     return false;
   }
 
