@@ -14,7 +14,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
-import { type AutoContinueConfig, type DayStats, type RecoveryAttempt, type NotifyAction } from '../shared/core.ts';
+import { type AutoContinueConfig, type DayStats, type RecoveryAttempt, type SessionMode, type NotifyAction } from '../shared/core.ts';
 import { type ConnectivityProbe } from './connectivity.ts';
 /** 通知桥事件: host 引擎产生, browser 侧订阅展示(Notification / 动作按钮)。 */
 export interface HostNotice {
@@ -28,12 +28,15 @@ export interface HostNotice {
     /** 产生时间。 */
     at: number;
 }
-/** 插件主体: 一条 mux 流 + 一条 host 流 + 启动/重连扫描。 */
 export declare class AutoContinueRunner {
     private readonly ctx;
     private readonly getConfig;
     private readonly probe;
     private readonly states;
+    /** Cached subagent lineage: session id -> direct parent id (undefined when the header has none). */
+    private readonly parents;
+    /** Sessions already identified as subagents, including event views without header metadata. */
+    private readonly subagentSessions;
     private readonly pauseUntil;
     private dayStats;
     private readonly recoveryAttempts;
@@ -88,6 +91,12 @@ export declare class AutoContinueRunner {
     subscribeState(listener: () => void): () => void;
     private emitState;
     private sessionConfig;
+    /**
+     * The session's own mode, ignoring subagent inheritance. The stored-session
+     * sweep and the restart hand-off (`resumeInterruptedChildren`) use this, so
+     * turning live subagent recovery off never silently disables them.
+     */
+    private ownSessionConfig;
     configurationChanged(): void;
     /** 对外(状态桥): 消费待展示的通知。 */
     drainNotices(): HostNotice[];
@@ -95,10 +104,44 @@ export declare class AutoContinueRunner {
     handleNoticeAction(sessionId: SessionId | undefined, action: string): void;
     dispose(): void;
     private state;
-    /** Mark a child session and clear queued grace/cooldown sends. */
-    private markSubagent;
+    /** Record a subagent session's lineage and its parent id when the header carries one. */
+    private noteSubagent;
     /** Read durable origin from the live agent for direct action paths as well. */
     private isSubagent;
+    /** Header origin, cached set or state flag; for paths that only have the session id. */
+    private isSubagentSession;
+    /**
+     * Direct subagent parent id. DSH stores fork lineage in the same
+     * `header.parentSession` field, so only a session whose header origin is
+     * `subagent` may be followed upward: an ordinary ancestor (the visible main
+     * conversation, even a forked one) is the top of the recovery lineage.
+     */
+    private parentOf;
+    /** Explicit session mode stored for this exact id, if the user gave one. */
+    private explicitMode;
+    /**
+     * A subagent's effective mode, or `undefined` when the lineage cannot be
+     * verified. An intermediate parent that is no longer live (and was never seen
+     * here) used to stop the walk early, fall back to the profile default and
+     * resume a child whose main conversation is Off; refusing the send is safe.
+     */
+    private resolveSubagentMode;
+    /** Whether the setting and the inherited main-chat mode allow live recovery for this child. */
+    private subagentRecoveryEnabled;
+    /** Modes children inherit from their main conversation, for the composer's display. */
+    inheritedSubagentModes(): Record<string, SessionMode>;
+    /**
+     * Keep the lineage caches bounded on long-lived hosts. Once the cache grows,
+     * entries for sessions that are no longer loaded are dropped; they are re-read
+     * from the live header if the session comes back.
+     */
+    private pruneLineage;
+    /** Mark a child session; drop only queued sends that its effective policy no longer allows. */
+    private markSubagent;
+    /** Pause deadline, including the parents' "pause this session 1h" for subagents. */
+    private effectivePauseUntil;
+    /** Whether this session sits below `ancestorId` in the subagent lineage (never fork lineage). */
+    private isDescendantOf;
     /**
      * 事件入口(host 单实例): 预处理工具调用/结果/模型消息(护栏与循环信号),
      * 然后交给回合状态机。

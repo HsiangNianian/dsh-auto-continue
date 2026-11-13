@@ -15,16 +15,21 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 
 /** Supported UI/config locales; missing and unsupported values use English. */
-export type AutoContinueLocale = 'en' | 'zh';
+export type AutoContinueLocale = 'en' | 'zh' | 'ru';
 
 export function resolveLocale(locale: unknown): AutoContinueLocale {
-  return typeof locale === 'string' && /^zh(?:-|$)/i.test(locale) ? 'zh' : 'en';
+  if (typeof locale !== 'string') return 'en';
+  if (/^zh(?:-|$)/i.test(locale)) return 'zh';
+  if (/^ru(?:-|$)/i.test(locale)) return 'ru';
+  return 'en';
 }
 
 export type SessionMode = 'default' | 'off' | 'recover' | 'loop';
 
 export interface SessionPolicy {
   modes: Record<string, SessionMode>;
+  /** Modes a child inherits from its main conversation, keyed by child id. */
+  inheritedModes?: Record<string, SessionMode>;
   defaultMode: 'recover' | 'loop';
   paused: boolean;
   writable: boolean;
@@ -66,6 +71,21 @@ export const LOCALIZED_TEXT_DEFAULTS = {
     loopText:
       '(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)',
   },
+  ru: {
+    continueText: 'Продолжай',
+    continueTextMaxTokens: 'Продолжай',
+    continueTextSilent:
+      'Продолжай. Предыдущий ход закончился только внутренним рассуждением: ни ответа, ни вызова инструмента, поэтому пользователь ничего не увидел. Каждый ход должен заканчиваться вызовом инструмента или видимым ответом.',
+    continueTextLoop: 'Продолжай',
+    continueTextInterrupted:
+      'Продолжай. Хост перезапустился, пока предыдущий ход ещё выполнялся; вызовы инструментов, незавершённые на момент перезапуска, записаны с неизвестным результатом. Продолжай с места остановки, проверяя внешнее состояние перед повтором действий с возможными побочными эффектами.',
+    guardPendingText:
+      '(Предыдущий инструмент «{tool}», возможно, не завершился. Проверь его состояние перед продолжением и не запускай его повторно.)',
+    guardDoneText:
+      '(Предыдущий инструмент «{tool}» завершился успешно. Результат: {result}; не запускай его повторно, продолжай с этого места.)',
+    loopText:
+      '(Похоже, ты застрял в цикле. Перестань повторять последнее действие и продолжай другим способом.)',
+  },
 } as const satisfies Record<AutoContinueLocale, Record<string, string>>;
 
 /** The `auto-continue` settings section (all fields optional on the wire; the host schema carries defaults). */
@@ -80,6 +100,8 @@ export interface AutoContinueSettings {
   continueTextMaxTokens?: string;
   /** Resume observed model activity that completes without visible output. */
   resumeSilentTurns?: boolean;
+  /** Resume interrupted subagent sessions when their main conversation has auto-continue enabled. Subagents never enter the autonomous loop. */
+  resumeSubagentSessions?: boolean;
   /** Autonomous mode: hand the thread back to the agent after every completed turn, looping until the user stops it. The consecutive-failure cap only throttles failures, never successful completions. */
   resumeCompletedTurns?: boolean;
   /** Text sent to resume a silent turn (same placeholders as `continueText`). */
@@ -161,6 +183,7 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   ...LOCALIZED_TEXT_DEFAULTS.en,
   usePluginSource: false,
   resumeSilentTurns: true,
+  resumeSubagentSessions: false,
   resumeCompletedTurns: false,
   continueTextLoop: '',
   guardTools: true,
@@ -240,6 +263,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     continueText: text,
     continueTextMaxTokens: maxTokensText,
     resumeSilentTurns: booleanOr(value.resumeSilentTurns, DEFAULT_CONFIG.resumeSilentTurns),
+    resumeSubagentSessions: booleanOr(value.resumeSubagentSessions, DEFAULT_CONFIG.resumeSubagentSessions),
     resumeCompletedTurns: booleanOr(value.resumeCompletedTurns, DEFAULT_CONFIG.resumeCompletedTurns),
     continueTextSilent: silentText,
     continueTextLoop: loopText,

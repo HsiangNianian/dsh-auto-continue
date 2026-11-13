@@ -1,4 +1,4 @@
-import { en, zh, type SettingsCardKey } from './locales.ts';
+import { en, ru, zh, type SettingsCardKey } from './locales.ts';
 import { resolveLocale } from '../shared/core.ts';
 
 type Permission = NotificationPermission | 'unsupported' | 'failed';
@@ -31,7 +31,8 @@ export function showSettingsNotification(notice: SettingsNotice, locale: string,
       : permission === 'failed' ? 'notification.failed' : 'notification.blocked';
   }
   try {
-    const copy = resolveLocale(locale) === 'zh' ? zh : en;
+    const resolved = resolveLocale(locale);
+    const copy = resolved === 'zh' ? zh : resolved === 'ru' ? ru : en;
     const notification = new Notification(copy['notification.title'], { body: copy[message] });
     notification.onclick = () => {
       try { globalThis.focus?.(); } catch { /* Focusing is best effort. */ }

@@ -80,7 +80,12 @@ function fixture(t, { service = 'configForms', locale = 'en', notify = false, pe
     on() {},
     locale: {
       getLocale: () => ({ active: locale }),
-      register(_namespace, value) { dictionaries = value; return () => {}; },
+      register(_namespace, value, dict) {
+        dictionaries ??= {};
+        if (typeof value === 'string') dictionaries[value] = dict;
+        else Object.assign(dictionaries, value);
+        return () => {};
+      },
     },
     slots: {
       inject(name, mount) { if (name === settingsSlot) ctx.effect(mount); },
@@ -143,7 +148,12 @@ for (const service of ['configForms', 'settingsScope']) {
   });
 }
 
-for (const [locale, title] of [[undefined, 'Auto-continue settings'], ['ru', 'Auto-continue settings'], ['zh-TW', '自动继续设置']]) {
+for (const [locale, title] of [
+  [undefined, 'Auto-continue settings'],
+  ['ru', 'Настройки авто-продолжения'],
+  ['ru-RU', 'Настройки авто-продолжения'],
+  ['zh-TW', '自动继续设置'],
+]) {
   test(`save notification follows the locale fallback: ${locale}`, async t => {
     const f = fixture(t, { locale });
     f.face.edit('notify', 'true');
