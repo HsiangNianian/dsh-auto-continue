@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" lang="ru" aria-labelledby="title description">
+  <title id="title">Auto-continue: пример восстановления после сбоя</title>
+  <desc id="description">Иллюстрация: сетевая ошибка прерывает ассистента. После паузы в 3 секунды плагин отправляет «Продолжай», и ассистент продолжает работу. Переключатель авто-продолжения рядом с полем ввода остаётся включённым. При ограничении анимации показывается вся последовательность одним кадром.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .body { font-size: 24px; }
+    .compact { display: none; }
+    /* One 12-second cycle: work 0–2s, wait 2–5s, send 5–6.5s, resume 6.5–12s. */
+    .notice { animation: notice 12s linear infinite; }
+    .auto-message { animation: sent 12s ease-out infinite; }
+    .resumed-message { animation: resumed 12s ease-out infinite; }
+    .countdown, .step-active, .state-result { opacity: 0; animation: 12s linear infinite; }
+    .count-3 { animation-name: count3; }
+    .count-2 { animation-name: count2; }
+    .count-1 { animation-name: count1; }
+    .state-result { animation-name: result; }
+    .progress { stroke-dasharray: 100; stroke-dashoffset: 0; animation: progress 12s linear infinite; }
+    .step-1 { animation-name: step1; }
+    .step-2 { animation-name: step2; }
+    .step-3 { animation-name: step3; }
+    .step-4 { animation-name: step4; }
+    @keyframes notice { 0%, 16% { opacity: 0; } 17%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+    @keyframes sent { 0%, 41.66% { opacity: 0; transform: translateY(5px); } 44%, 96% { opacity: 1; transform: translateY(0); } 98%, 100% { opacity: 0; transform: translateY(0); } }
+    @keyframes resumed { 0%, 54.16% { opacity: 0; transform: translateY(5px); } 57%, 96% { opacity: 1; transform: translateY(0); } 98%, 100% { opacity: 0; transform: translateY(0); } }
+    @keyframes count3 { 0%, 16.66% { opacity: 0; } 16.67%, 24.99% { opacity: 1; } 25%, 100% { opacity: 0; } }
+    @keyframes count2 { 0%, 24.99% { opacity: 0; } 25%, 33.32% { opacity: 1; } 33.33%, 100% { opacity: 0; } }
+    @keyframes count1 { 0%, 33.32% { opacity: 0; } 33.33%, 41.66% { opacity: 1; } 41.67%, 100% { opacity: 0; } }
+    @keyframes result { 0%, 54.16% { opacity: 0; } 54.17%, 100% { opacity: 1; } }
+    @keyframes progress { 0%, 16.67% { stroke-dashoffset: 100; } 41.67%, 100% { stroke-dashoffset: 0; } }
+    @keyframes step1 { 0%, 16.66% { opacity: 1; } 16.67%, 100% { opacity: 0; } }
+    @keyframes step2 { 0%, 16.66% { opacity: 0; } 16.67%, 41.66% { opacity: 1; } 41.67%, 100% { opacity: 0; } }
+    @keyframes step3 { 0%, 41.66% { opacity: 0; } 41.67%, 54.16% { opacity: 1; } 54.17%, 100% { opacity: 0; } }
+    @keyframes step4 { 0%, 54.16% { opacity: 0; } 54.17%, 100% { opacity: 1; } }
+    @media (max-width: 520px) {
+      .full { display: none; }
+      .compact { display: inline; }
+      .body { font-size: 34px; }
+      .heading { font-size: 28px; }
+      .role, .annotation, .status, .toggle-label { font-size: 26px; }
+      .step-label { font-size: 29px; }
+      .step-number { display: none; }
+      .step-label { transform: translateX(-32px); }
+      .footnote { font-size: 24px; }
+      .composer-switch { transform: translate(276px, 532px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .notice, .auto-message, .resumed-message, .state-result { animation: none; opacity: 1; transform: none; }
+      .countdown { display: none; }
+      .progress { animation: none; stroke-dashoffset: 0; }
+      .step-active { animation: none; opacity: 0; }
+      .step-4 { opacity: 1; }
+    }
+  </style>
+  <rect width="960" height="660" rx="18" fill="#141414"/>
+  <path d="M18 0H942Q960 0 960 18V68H0V18Q0 0 18 0Z" fill="#23262c"/>
+  <g transform="translate(28 18) scale(.5)"><path d="M49 17A24 24 0 1 0 56 38" fill="none" stroke="#f4f4f5" stroke-width="5" stroke-linecap="round"/>
+    <path d="M49 6v12H37" fill="none" stroke="#f4f4f5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M27 22l16 10-16 10Z" fill="#f4f4f5" stroke="#f4f4f5" stroke-width="2" stroke-linejoin="round"/></g>
+  <text class="heading" x="74" y="42" fill="#f4f4f5" font-size="20" font-weight="600">Авто-продолжение</text>
+  <text class="annotation" x="920" y="42" fill="#b9bec8" font-size="14" text-anchor="end" letter-spacing=".7">ДЕМО ВОССТАНОВЛЕНИЯ</text>
+
+  <!-- A simplified conversation, not a recording of a live DSH session. -->
+  <rect x="402" y="96" width="518" height="56" rx="16" fill="#2b2b2b"/>
+  <text class="body full" x="426" y="132" fill="#f4f4f5">Отрефакторь эту функцию.</text>
+    <text class="body compact" x="426" y="132" fill="#f4f4f5">Отрефакторь эту функцию.</text>
+  <text class="role" x="40" y="196" fill="#f4f4f5" font-size="17" font-weight="600">DSH</text>
+  <text class="body full" x="40" y="231" fill="#c4c7ce">Отделю проверку от обновления.</text>
+    <text class="body compact" x="40" y="231" fill="#c4c7ce">Рефакторю функцию…</text>
+
+  <g class="notice">
+    <rect x="40" y="254" width="880" height="52" rx="9" fill="#23262c"/>
+    <g fill="none" stroke="#d0bd96" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="62" cy="280" r="8"/>
+      <path d="M62 275v5m0 4v.2"/>
+    </g>
+    <text class="status" x="83" y="287" fill="#d0bd96" font-size="21">Сеть прервалась</text>
+    <g fill="#d7d9de" font-size="20" text-anchor="end">
+      <text class="status countdown count-3" x="898" y="287">Повтор через 3 с</text>
+      <text class="status countdown count-2" x="898" y="287">Повтор через 2 с</text>
+      <text class="status countdown count-1" x="898" y="287">Повтор через 1 с</text>
+      <text class="status state-result" x="898" y="287">Продолжено</text>
+    </g>
+    <path class="progress" d="M84 305H904" pathLength="100" fill="none" stroke="#b9a987" stroke-width="2"/>
+  </g>
+
+  <g class="auto-message">
+    <text class="annotation" x="710" y="360" fill="#b9bec8" font-size="18" text-anchor="end">Отправлено автоматически</text>
+    <rect x="732" y="326" width="188" height="54" rx="16" fill="#2b2b2b"/>
+    <text class="body" x="756" y="361" fill="#f4f4f5">Продолжай</text>
+  </g>
+  <g class="resumed-message">
+    <text class="role" x="40" y="418" fill="#f4f4f5" font-size="17" font-weight="600">DSH</text>
+    <text class="body full" x="40" y="451" fill="#f4f4f5">Продолжаю с того же места.</text>
+    <text class="body compact" x="40" y="451" fill="#f4f4f5">Продолжаю с того же места.</text>
+  </g>
+
+  <rect x="40" y="482" width="880" height="86" rx="20" fill="#2b2b2b"/>
+  <text class="full" x="61" y="514" fill="#b5b5bd" font-size="21">Сообщение агенту…</text>
+  <text class="body compact" x="61" y="516" fill="#b5b5bd">Сообщение…</text>
+  <path d="M62 537v14m-7-7h14" fill="none" stroke="#c4c7ce" stroke-width="1.8" stroke-linecap="round"/>
+  <text class="toggle-label" x="92" y="551" fill="#d7d9de" font-size="18">Авто</text>
+  <g class="composer-switch" transform="translate(230 532)">
+    <rect width="44" height="24" rx="12" fill="#f4f4f5"/>
+    <circle cx="32" cy="12" r="9" fill="#141414"/>
+  </g>
+  <circle cx="888" cy="540" r="16" fill="#44464c"/>
+  <path d="M888 547v-14m-5 5 5-5 5 5" fill="none" stroke="#e4e4e7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g><g transform="translate(40 602)">
+      <text x="0" y="0" fill="#9a9da5" font-size="16" class="step-number">01</text>
+      <text x="32" y="0" fill="#9a9da5" font-size="20" class="step-label">Работа</text>
+      <g class="step-active step-1">
+        <text x="0" y="0" fill="#f4f4f5" font-size="16" class="step-number">01</text>
+        <text x="32" y="0" fill="#f4f4f5" font-size="20" class="step-label">Работа</text>
+        <path d="M0 12H142" stroke="#f4f4f5" stroke-width="2"/>
+      </g>
+    </g>
+    <g transform="translate(272 602)">
+      <text x="0" y="0" fill="#9a9da5" font-size="16" class="step-number">02</text>
+      <text x="32" y="0" fill="#9a9da5" font-size="20" class="step-label">Ожидание</text>
+      <g class="step-active step-2">
+        <text x="0" y="0" fill="#f4f4f5" font-size="16" class="step-number">02</text>
+        <text x="32" y="0" fill="#f4f4f5" font-size="20" class="step-label">Ожидание</text>
+        <path d="M0 12H142" stroke="#f4f4f5" stroke-width="2"/>
+      </g>
+    </g>
+    <g transform="translate(504 602)">
+      <text x="0" y="0" fill="#9a9da5" font-size="16" class="step-number">03</text>
+      <text x="32" y="0" fill="#9a9da5" font-size="20" class="step-label">Отправка</text>
+      <g class="step-active step-3">
+        <text x="0" y="0" fill="#f4f4f5" font-size="16" class="step-number">03</text>
+        <text x="32" y="0" fill="#f4f4f5" font-size="20" class="step-label">Отправка</text>
+        <path d="M0 12H142" stroke="#f4f4f5" stroke-width="2"/>
+      </g>
+    </g>
+    <g transform="translate(736 602)">
+      <text x="0" y="0" fill="#9a9da5" font-size="16" class="step-number">04</text>
+      <text x="32" y="0" fill="#9a9da5" font-size="20" class="step-label">Продолжено</text>
+      <g class="step-active step-4">
+        <text x="0" y="0" fill="#f4f4f5" font-size="16" class="step-number">04</text>
+        <text x="32" y="0" fill="#f4f4f5" font-size="20" class="step-label">Продолжено</text>
+        <path d="M0 12H142" stroke="#f4f4f5" stroke-width="2"/>
+      </g>
+    </g></g>
+  <text class="footnote full" x="40" y="642" fill="#a1a4ad" font-size="14">Иллюстрация · пауза по умолчанию 3 секунды</text>
+  <text class="footnote compact" x="40" y="642" fill="#a1a4ad" font-size="24">Пример · пауза 3 с</text>
+</svg>
