@@ -44,6 +44,10 @@ export declare class AutoContinueRunner {
     private readonly noticeListeners;
     private readonly stateListeners;
     private readonly prioritizedFollowups;
+    /** In-flight cold-resume calls, aborted when the plugin unloads. */
+    private readonly reviveControllers;
+    /** Hand-offs waiting for a live main conversation: parent -> child -> text. */
+    private readonly deferredHandoffs;
     private readonly disposeSessionEvents;
     private readonly disposeInboxEvents;
     private disposed;
@@ -196,10 +200,14 @@ export declare class AutoContinueRunner {
     /** Attach the loader-provided subagent service; it may load after this plugin. */
     setSubagentPromptProvider(provider: (() => unknown) | undefined): void;
     private subagentPrompts;
+    /** Copy for one child hand-off, built once so a deferred delivery matches. */
+    private handoffText;
     /**
      * Revive a disposed child through the host's cold resume and deliver the
      * continuation to it. Falls back to the main-conversation hand-off when the
      * host cannot resume (no persistence, no live parent, not a direct child).
+     * The child's own recovery mode decides; the parent only has to be alive to
+     * authorize the call.
      */
     private reviveChild;
     /** Existing state of a session, without materializing one just to read it. */
@@ -209,8 +217,14 @@ export declare class AutoContinueRunner {
     /**
      * Ask the child's main conversation to take over a failure the plugin cannot
      * repair itself: the child handle is gone, so only the root can continue it.
+     * The main conversation's Off is respected because this writes a user message
+     * into it; a child's own mode is never overridden by that Off for cold resume.
      */
     private handOffToParent;
+    /** Keep one hand-off until its main conversation has a live agent again. */
+    private deferHandoff;
+    /** Deliver queued hand-offs once their main conversation is live again. */
+    private flushDeferredHandoffs;
     private fire;
     private resetLoopIterations;
     /** 自主循环轮数上限: 触顶后静默停下, 每次触顶只提示一次。 */
