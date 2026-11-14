@@ -145,6 +145,7 @@ function makeHost() {
   const topLevelEffects = [];
   let engineEffects = [];
   let engineInject;
+  let subagentsService;
 
   const registerEffect = (effects, start) => {
     const cleanup = start();
@@ -264,6 +265,9 @@ function makeHost() {
       // inject 派生 context 的 effect 刻意留在另一组，避免测试把两种生命周期混为一谈。
       disposeEffects(topLevelEffects);
     },
+    setSubagents(service) {
+      subagentsService = service;
+    },
     reinjectEngine() {
       if (engineInject === undefined) throw new Error('engine inject callback 未注册');
       disposeEffects(engineEffects);
@@ -317,6 +321,14 @@ function makeHost() {
     effect: (cb) => registerEffect(topLevelEffects, cb),
     inject(deps, cb) {
       if (deps.includes('settings')) return () => {};
+      // The plugin asks for the subagent service separately; answer with a facade
+      // that leaves `subagents` undefined so the engine falls back to its own get.
+      if (deps.includes('subagents')) {
+        // Serve the service through the injected context, like the real loader
+        // does; the engine context's own `get` must stay blind to it.
+        cb({ get: () => undefined, get subagents() { return subagentsService; } });
+        return () => {};
+      }
       engineInject = cb;
       cb(makeEngineContext());
       return () => {};
@@ -629,6 +641,142 @@ const reasoningOnlyMsg = (seq, turn = 1) => ({
   check('Resume now 响应成功', response.ok === true);
   check('已启用的子代理收到手动续跑', child.followups.length === 1);
   await sleep(20);
+}
+
+// ---------- 测试 1a.4i: 无 live 子代理 → 冷恢复, 请求契约完整 ----------
+{
+  console.log('测试 1a.4i: 子代理已释放 → 完整 prompt 请求, 不打扰主会话');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('revive-child', { origin: 'subagent', parentSession: 'main' });
+  const calls = [];
+  host.setSubagents({ prompt: async (...args) => { calls.push(args); return { messageId: 'msg-1' }; } });
+  await sleep(20);
+  host.removeAgent('revive-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'network down' } }));
+  await sleep(80);
+  const request = calls[0]?.[0];
+  check('冷恢复被调用一次', calls.length === 1);
+  check('请求带父会话', request?.parentSessionId === 'main');
+  check('请求带失败的子代理', request?.childSessionId === 'revive-child');
+  check('请求 mode=continuable', request?.mode === 'continuable');
+  check('请求 delivery=queue', request?.delivery === 'queue');
+  check('请求带 requestId', typeof request?.requestId === 'string' && request.requestId.length > 0);
+  check('请求带续跑文本', Array.isArray(request?.content) && request.content.length === 1
+    && request.content[0]?.type === 'text' && request.content[0].text.length > 0);
+  check('冷恢复没有退回移交主会话', main.followups.length === 0);
+}
+
+// ---------- 测试 1a.4j: 冷恢复失败 → 退回移交 ----------
+{
+  console.log('测试 1a.4j: prompt 抛错 → 确认尝试过并退回移交主会话');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('revive-fail-child', { origin: 'subagent', parentSession: 'main' });
+  const calls = [];
+  host.setSubagents({ prompt: async (...args) => { calls.push(args); throw new Error('NOT_RESUMABLE'); } });
+  await sleep(20);
+  host.removeAgent('revive-fail-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(80);
+  check('冷恢复被尝试一次', calls.length === 1);
+  check('冷恢复失败后移交给主会话', main.followups.length === 1);
+}
+
+// ---------- 测试 1a.4k: 主会话自己在恢复 → 不移交 ----------
+{
+  console.log('测试 1a.4k: 主会话正在自行恢复时不发移交, 免得掐掉它的续跑');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 400, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('quiet-child', { origin: 'subagent', parentSession: 'main' });
+  await sleep(20);
+  // Parent fails first: its continuation is queued inside the grace window.
+  host.emit(main.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(20);
+  host.removeAgent('quiet-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  // Wait past both grace windows: the parent must send its own continuation,
+  // while the child's hand-off stays silent during that recovery.
+  await sleep(900);
+  check('主会话只收到自己的续跑', main.followups.length === 1);
+  check('其中没有子代理移交', main.followups.every((message) => !String(message.content?.[0]?.text).includes('quiet-child')));
+}
+
+// ---------- 测试 1a.4l: 冷恢复在途 → 不重复请求 ----------
+{
+  console.log('测试 1a.4l: 冷恢复在途时不重复请求, 不突破重试预算');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('inflight-child', { origin: 'subagent', parentSession: 'main' });
+  const calls = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  host.setSubagents({ prompt: async (...args) => { calls.push(args); await gate; return { messageId: 'm' }; } });
+  await sleep(20);
+  host.removeAgent('inflight-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(60);
+  host.emit(child.session, turnEnd(2, { kind: 'error', error: { code: 'TRANSPORT', message: 'down again' } }));
+  await sleep(60);
+  check('在途时只发起一次冷恢复', calls.length === 1);
+  release();
+  await sleep(20);
+}
+
+// ---------- 测试 1a.4m: Resume now 对已释放子代理有效 ----------
+{
+  console.log('测试 1a.4m: Resume now 对已释放的子代理执行冷恢复');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 60000, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('manual-disposed-child', { origin: 'subagent', parentSession: 'main' });
+  const calls = [];
+  host.setSubagents({ prompt: async (...args) => { calls.push(args); return { messageId: 'm' }; } });
+  await sleep(20);
+  // Let the engine learn the lineage before the runtime disposes the child.
+  host.emit(child.session, turnStart(1));
+  await sleep(20);
+  host.removeAgent('manual-disposed-child');
+  const response = await postAction(host, { action: 'resume', sessionId: 'manual-disposed-child' });
+  await sleep(40);
+  check('Resume now 响应成功', response.ok === true);
+  check('Resume now 冷恢复已释放子代理', calls.length === 1 && calls[0]?.[0]?.childSessionId === 'manual-disposed-child');
+}
+
+// ---------- 测试 1a.4n: 无 live 父代理 → 暂存移交, 父代理回来后补交 ----------
+{
+  console.log('测试 1a.4n: 无 live 父代理时暂存移交, 父代理恢复后补交');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('defer-child', { origin: 'subagent', parentSession: 'main' });
+  await sleep(20);
+  host.removeAgent('main');
+  host.removeAgent('defer-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(60);
+  check('父代理不在线时暂不投递', main.followups.length === 0);
+  host.restoreAgent(main);
+  host.emit(main.session, turnStart(1));
+  await sleep(30);
+  check('父代理回来后补交', main.followups.length === 1);
+  check('补交内容提到失败的子代理', String(main.followups[0]?.content?.[0]?.text).includes('defer-child'));
+}
+
+// ---------- 测试 1a.4h: 子代理已被释放 → 失败移交主会话 ----------
+{
+  console.log('测试 1a.4h: 无 live 子代理 → 失败移交给主会话, 且不重复');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('handoff-child', { origin: 'subagent', parentSession: 'main' });
+  await sleep(20);
+  // The subagent runtime disposes a failed child before the grace window closes.
+  host.removeAgent('handoff-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'network down' } }));
+  await sleep(60);
+  check('子代理没有收到续跑', child.followups.length === 0);
+  check('主会话收到一次移交', main.followups.length === 1);
+  host.emit(child.session, turnEnd(2, { kind: 'error', error: { code: 'TRANSPORT', message: 'network down again' } }));
+  await sleep(60);
+  check('冷却期内不重复移交', main.followups.length === 1);
 }
 
 // ---------- 测试 1a.4b: Off 的主会话 → 子代理连手动续跑也不发 ----------
