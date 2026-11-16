@@ -362,6 +362,12 @@ export interface SessionState {
     lastFailure: FailureFacts | undefined;
     /** 最近一次失败的发生时间(模板 {elapsed} 与恢复统计用)。 */
     lastFailureAt: number;
+    /** 最近一次把子代理失败移交主会话的时间戳(去重)。 */
+    handedOffAt?: number;
+    /** 冷恢复请求正在途中(去重, 防止重复 prompt)。 */
+    reviveInFlight?: boolean;
+    /** 主会话正在自行恢复: 由插件自己的调度/发送显式维护, 不用时间戳猜测。 */
+    recovering?: boolean;
     /** callId 精确配对的工具调用、幂等护栏与 loop 重复态。 */
     tools: ToolInvocationTracker;
     /** 失败回合的编号(模板 {turn})。 */
