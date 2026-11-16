@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.20.0) — 2026-11-16
+
+### Added
+
+- **Cold resume for failed subagents** (with `resumeSubagentSessions` on): DSH disposes a background subagent as soon as a turn fails, so a live resend never reached it. The engine now asks the host's subagent service to resume the child from its persisted session and delivers the continuation to the child itself, under the child's own cooldown and retry cap. The main conversation is not woken ([#90](https://github.com/HsiangNianian/dsh-auto-continue/pull/90), thanks @kesha4)
+- When the host cannot resume the child (no persistence, no live parent, or an older host without the service), the failure is handed to the main conversation as one message, at most once every five minutes. It waits if the main conversation is not loaded, and stays silent while the main conversation is recovering itself so its own continuation is not cancelled ([#90](https://github.com/HsiangNianian/dsh-auto-continue/pull/90))
+
+### Fixed
+
+- Child hand-offs are sent like any other continuation (configured message source, tracked as the plugin's own echo), so the main conversation does not treat them as the user stepping in and reset its retry and loop counters
+
+[Upgrade instructions and validation](docs/releases/v0.20.0.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.19.0...v0.20.0)
+
 ## [0.19.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.19.0) — 2026-11-13
 
 ### Added
