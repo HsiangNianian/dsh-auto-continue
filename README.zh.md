@@ -323,6 +323,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 
 **无法读取的会话。** 启动扫描时如果某个会话的历史读不出来，会跳过它并记录错误，其他会话照常恢复([#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58))。修复后在扫描时间窗内重启 DSH 即可重试。
 
+**冷读配额。** 已存储的会话要按整份日志裁决，所以扫描为每个会话解码一次完整历史。为了不让会话很多的环境把宿主堆打满，一个宿主实例最多冷读 32 个会话日志，最近活动过的优先。顺序取自投影检查点缓存(`timeContext.lastMessageTime`，其次 `sessionListMetadata.lastPromptAt`)，没有检查点时按会话创建时间。超出配额的会话不标记为已裁决，下次启动宿主时继续读。检查点只会落后于日志、不会超前，因此只用来排序：是否新鲜仍然由日志尾部的事件决定。
 ## 常见问题
 
 | 现象 | 排查 |

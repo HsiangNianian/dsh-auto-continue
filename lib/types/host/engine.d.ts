@@ -65,6 +65,9 @@ export declare class AutoContinueRunner {
     /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
     private readonly storedSweepFailures;
     private storedSweepAnnounced;
+    /** 本次启动已花掉的存储会话冷读配额(跨轮累计, 启动扫描窗口内不再重置)。 */
+    private storedReads;
+    private storedBudgetLogged;
     private bootScanTimer;
     private wakeBootScan;
     private storedSweep;
@@ -223,6 +226,13 @@ export declare class AutoContinueRunner {
      * 则启动扫描永远看不到它们; 谓词与上方扫描一致, 仅失败类原因。
      */
     private sweepStoredSessions;
+    /** The optional projection checkpoint cache; absent on hosts that do not ship it. */
+    private projectionCache;
+    /**
+     * 冷读排序提示: 投影检查点里的最近活动时间, 没有检查点时回退到会话创建时间。
+     * 检查点只会落后于日志、不会超前, 所以这个数只用来排序, 不用来跳过会话。
+     */
+    private storedRecency;
     /**
      * 子会话裁决。子会话本身永不直接续跑(父代理权威, 见 README), 但启动扫描要
      * 知道它是否在重启时被打断, 才能在自己的 root 会话上补一次带清单的唤醒。
