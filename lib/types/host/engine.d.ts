@@ -221,6 +221,13 @@ export declare class AutoContinueRunner {
      * into it; a child's own mode is never overridden by that Off for cold resume.
      */
     private handOffToParent;
+    /**
+     * Post a hand-off into the main conversation the same way a continuation is
+     * sent: with the configured message source, and registered as our own echo so
+     * the parent does not read it as the user stepping in (which would reset its
+     * retry and loop counters and cancel whatever it had queued).
+     */
+    private sendHandoff;
     /** Keep one hand-off until its main conversation has a live agent again. */
     private deferHandoff;
     /** Deliver queued hand-offs once their main conversation is live again. */

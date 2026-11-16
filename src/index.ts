@@ -183,10 +183,13 @@ export function apply(ctx: Context, config?: AutoContinueEntryConfig): void {
     // The subagent service may load after this plugin, and the engine context does
     // not see it through `get`; inject the facade lazily so a later load is picked
     // up and a disposed child can be cold-resumed instead of only handed off.
-    ctx.inject(['subagents'], (subagentCtx) => {
+    // Scoped to this engine, so a rebuilt engine does not stack another inject,
+    // and the provider is cleared again when the service unloads.
+    engineCtx.inject(['subagents'], (subagentCtx) => {
       runner.setSubagentPromptProvider(
         () => (subagentCtx as unknown as { subagents?: unknown }).subagents,
       );
+      subagentCtx.effect(() => () => runner.setSubagentPromptProvider(undefined));
     });
     const writableSettings = () => {
       const settings = engineCtx.get('settings');

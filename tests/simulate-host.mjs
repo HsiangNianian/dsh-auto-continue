@@ -301,6 +301,14 @@ function makeHost() {
         });
       },
       effect: (cb) => registerEffect(effects, cb),
+      // The engine asks for the subagent service through its own context, so a
+      // rebuilt engine never stacks injects; serve the same facade as the loader.
+      inject(deps, cb) {
+        if (deps.includes('subagents')) {
+          cb({ get: () => undefined, get subagents() { return subagentsService; }, effect: (fn) => registerEffect(effects, fn) });
+        }
+        return () => {};
+      },
       agents: { get: (id) => registry.get(id), list: () => [...registry.values()] },
       webServer: {
         register(route) {
@@ -681,6 +689,20 @@ const reasoningOnlyMsg = (seq, turn = 1) => ({
   await sleep(80);
   check('冷恢复被尝试一次', calls.length === 1);
   check('冷恢复失败后移交给主会话', main.followups.length === 1);
+}
+
+// ---------- 测试 1a.4j2: 移交按插件自己的发送方式进入主会话 ----------
+{
+  console.log('测试 1a.4j2: 移交使用配置的消息来源, 并登记为自身回显');
+  const host = startPlugin({ scanOnBoot: false, graceMs: 10, cooldownMs: 0, resumeSubagentSessions: true, usePluginSource: true });
+  const main = host.makeAgent('main');
+  const child = host.makeAgent('source-child', { origin: 'subagent', parentSession: 'main' });
+  await sleep(20);
+  host.removeAgent('source-child');
+  host.emit(child.session, turnEnd(1, { kind: 'error', error: { code: 'TRANSPORT', message: 'down' } }));
+  await sleep(80);
+  check('移交已送达主会话', main.followups.length === 1);
+  check('移交使用插件来源, 不冒充用户', main.followups[0]?.source?.kind === 'plugin:dsh-client-auto-continue');
 }
 
 // ---------- 测试 1a.4k: 主会话自己在恢复 → 不移交 ----------

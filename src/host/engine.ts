@@ -1778,10 +1778,7 @@ export class AutoContinueRunner {
       return;
     }
     try {
-      parentAgent.followup(createUserMessage({
-        content: [{ type: 'text', text: handoff }],
-        source: { kind: 'user' },
-      }));
+      this.sendHandoff(parent, parentAgent, handoff);
       state.handedOffAt = now;
       this.log(`已将子代理 ${sessionId} 的失败移交主会话 ${parent}`);
     } catch (error) {
@@ -1789,8 +1786,31 @@ export class AutoContinueRunner {
     }
   }
 
+  /**
+   * Post a hand-off into the main conversation the same way a continuation is
+   * sent: with the configured message source, and registered as our own echo so
+   * the parent does not read it as the user stepping in (which would reset its
+   * retry and loop counters and cancel whatever it had queued).
+   */
+  private sendHandoff(parent: SessionId, parentAgent: Agent, text: string): void {
+    const parentState = this.state(parent);
+    const message = createUserMessage({
+      content: [{ type: 'text', text }],
+      source: { kind: this.getConfig().usePluginSource ? AUTO_CONTINUE_SOURCE_KIND : 'user' },
+    });
+    trackPendingEcho(parentState, message.id);
+    try {
+      parentAgent.followup(message);
+    } catch (error) {
+      forgetPendingEcho(parentState, message.id);
+      throw error;
+    }
+  }
+
   /** Keep one hand-off until its main conversation has a live agent again. */
   private deferHandoff(parent: SessionId, sessionId: SessionId, text: string): void {
+    // Only live subagent recovery hands failures off; with it off nothing is kept.
+    if (!this.getConfig().resumeSubagentSessions) return;
     const state = this.state(sessionId);
     const now = Date.now();
     if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) return;
@@ -1821,7 +1841,7 @@ export class AutoContinueRunner {
       const state = this.state(child);
       if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) continue;
       try {
-        parentAgent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));
+        this.sendHandoff(parent, parentAgent, text);
         state.handedOffAt = now;
         this.log(`已移交暂存子代理 ${child} 给主会话 ${parent}`);
       } catch (error) {
