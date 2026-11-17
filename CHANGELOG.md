@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.20.1) — 2026-11-16
+
+### Fixed
+
+- The startup sweep of stored sessions could run the host out of memory on a large profile: it decoded the full log of every stored session before checking whether the last turn was recent, and the host then restarted and did the same again. One host start now reads at most 32 stored logs, most recently active first (from the projection checkpoint cache, falling back to creation time). The checkpoint only orders the reads, so freshness is still decided by the tail of the log. Each session counts once even when its read is retried ([#91](https://github.com/HsiangNianian/dsh-auto-continue/pull/91), thanks @anthonyhann)
+
+[Upgrade instructions and validation](docs/releases/v0.20.1.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.20.0...v0.20.1)
+
 ## [0.20.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.20.0) — 2026-11-16
 
 ### Added
