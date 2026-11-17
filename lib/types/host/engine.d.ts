@@ -70,7 +70,7 @@ export declare class AutoContinueRunner {
     private readonly storedSweepFailures;
     private storedSweepAnnounced;
     /** 本次启动已花掉的存储会话冷读配额(跨轮累计, 启动扫描窗口内不再重置)。 */
-    private storedReads;
+    private readonly storedReadIds;
     private storedBudgetLogged;
     private bootScanTimer;
     private wakeBootScan;

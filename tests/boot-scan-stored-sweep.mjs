@@ -429,6 +429,30 @@ test('stored sweep stops at its cold-read budget, most recently active sessions 
   assert.equal(observed.length, 32);
 });
 
+test('retried cold reads count once against the stored sweep budget', async (t) => {
+  const { host, tick } = scenario(t);
+  // 4 个坏日志排在最前, 每轮都会重试; 若每次重试都扣配额, 后面的 s31 就读不到。
+  const records = Array.from({ length: 32 }, (_, i) => ({ header: { id: `s${i}`, createdAt: Date.now() - i * 1000 }, live: false }));
+  const observed = [];
+  host.provide('sessionQuery', {
+    listSessions: async () => records,
+    observeSession: async id => {
+      observed.push(id);
+      if (Number(id.slice(1)) < 4) throw new Error('broken log');
+      return { events: [turnEnd(1, id === 's31' ? 'interrupted' : 'completed')], header: { id }, [Symbol.dispose]() {} };
+    },
+  });
+  host.onResume('s31', [turnEnd(1, 'interrupted')]);
+  host.start();
+  await tick();
+  await tick(3000);
+  await tick(3000);
+  await tick(10);
+  assert.equal(observed.filter(id => id === 's0').length > 1, true);
+  assert.equal(observed.includes('s31'), true);
+  assert.equal(host.resumes().length, 1);
+});
+
 test('damaged stored histories do not hide healthy sessions or erase stop events', async t => {
   const { host, tick } = scenario(t);
   host.provide('sessionQuery', {

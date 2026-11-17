@@ -132,7 +132,8 @@ const SWEEP_MAX_FAILURES = 3;
 /**
  * 一次启动最多冷读多少个存储会话。冷读要整份解码日志(zstd → 逐行 JSON.parse),
  * 几百个会话连着读完足以把宿主堆(默认约 3.4GB)打满; 配额把启动期的内存和耗时
- * 都封住, 未读到的会话不记账, 下次启动按同样的顺序重新排。
+ * 都封住。每个会话只计一次(失败重试、暂停后重读不再扣配额)。排序每次启动都一样,
+ * 配额之外的会话等于被跳过——它们最近活动最早, 在 freshMs 窗口内几乎不可能还新鲜。
  */
 const STORED_SWEEP_READ_LIMIT = 32;
 
@@ -516,7 +517,7 @@ export class AutoContinueRunner {
   private readonly storedSweepFailures = new Map<SessionId, number>();
   private storedSweepAnnounced = false;
   /** 本次启动已花掉的存储会话冷读配额(跨轮累计, 启动扫描窗口内不再重置)。 */
-  private storedReads = 0;
+  private readonly storedReadIds = new Set<SessionId>();
   private storedBudgetLogged = false;
   private bootScanTimer: ReturnType<typeof setTimeout> | undefined;
   private wakeBootScan: (() => void) | undefined;
@@ -2368,15 +2369,15 @@ export class AutoContinueRunner {
     }
     for (const root of roots) {
       if (this.disposed || Date.now() >= deadline || this.getConfig().paused || !this.getConfig().scanOnBoot) return;
-      if (this.storedReads >= STORED_SWEEP_READ_LIMIT) {
+      if (!this.storedReadIds.has(root.sessionId) && this.storedReadIds.size >= STORED_SWEEP_READ_LIMIT) {
         if (!this.storedBudgetLogged) {
           this.storedBudgetLogged = true;
-          this.log(`存储扫描冷读已达上限 ${STORED_SWEEP_READ_LIMIT} 个会话, 其余会话留待下次启动`);
+          this.log(`存储扫描冷读已达上限 ${STORED_SWEEP_READ_LIMIT} 个会话, 其余会话本次启动跳过`);
         }
         return;
       }
       const sessionId = root.sessionId;
-      this.storedReads += 1;
+      this.storedReadIds.add(sessionId);
       this.storedSwept.add(sessionId);
       observed += 1;
       let observation: StoredObservation | undefined;
