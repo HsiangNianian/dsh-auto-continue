@@ -385,6 +385,11 @@ test('storage batches reach a recent interruption in an older-created session wi
   const now = Date.now();
   const records = Array.from({ length: 33 }, (_, i) => ({ header: { id: `s${i}`, createdAt: now - i * 1000 }, live: false }));
   const interrupted = [turnEnd(1, 'interrupted')];
+  // 冷读有配额, 顺序由投影检查点里的最近活动时间决定: s32 创建最早, 但最近才活动过,
+  // 因此它必须在配额用尽之前被读到。
+  host.provide('sessionProjectionCache', {
+    cachedSnapshot: meta => ({ values: { timeContext: { lastMessageTime: meta.id === 's32' ? now : now - 60_000 } } }),
+  });
   host.provide('sessionQuery', {
     listSessions: async () => records,
     observeSession: async id => ({ events: id === 's32' ? interrupted : [turnEnd(1, 'completed')], header: { id }, [Symbol.dispose]() {} }),
@@ -395,6 +400,56 @@ test('storage batches reach a recent interruption in an older-created session wi
   await tick(10);
   assert.equal(host.agents.get('s32')?.followups.length, 1);
   await tick(6000);
+  assert.equal(host.resumes().length, 1);
+});
+
+test('stored sweep stops at its cold-read budget, most recently active sessions first', async (t) => {
+  const { host, tick } = scenario(t);
+  const records = Array.from({ length: 40 }, (_, i) => ({ header: { id: `s${i}`, createdAt: Date.now() - i * 1000 }, live: false }));
+  const observed = [];
+  // 检查点只给每轮的顺序提示, 排序后超出预算的会话不读, 也不记 storedSwept: 留待下次启动。
+  host.provide('sessionProjectionCache', {
+    cachedSnapshot: meta => ({ values: { timeContext: { lastMessageTime: Number(meta.id.slice(1)) } } }),
+  });
+  host.provide('sessionQuery', {
+    listSessions: async () => records,
+    observeSession: async id => {
+      observed.push(id);
+      return { events: [turnEnd(1, 'interrupted')], header: { id }, [Symbol.dispose]() {} };
+    },
+  });
+  for (const record of records) host.onResume(record.header.id, [turnEnd(1, 'interrupted')]);
+  host.start();
+  await tick();
+  assert.equal(observed.length, 32);
+  assert.equal(observed.every(id => Number(id.slice(1)) >= 8), true);
+  assert.equal(host.resumes().length, 32);
+  await tick(3000);
+  await tick(10);
+  assert.equal(observed.length, 32);
+});
+
+test('retried cold reads count once against the stored sweep budget', async (t) => {
+  const { host, tick } = scenario(t);
+  // 4 个坏日志排在最前, 每轮都会重试; 若每次重试都扣配额, 后面的 s31 就读不到。
+  const records = Array.from({ length: 32 }, (_, i) => ({ header: { id: `s${i}`, createdAt: Date.now() - i * 1000 }, live: false }));
+  const observed = [];
+  host.provide('sessionQuery', {
+    listSessions: async () => records,
+    observeSession: async id => {
+      observed.push(id);
+      if (Number(id.slice(1)) < 4) throw new Error('broken log');
+      return { events: [turnEnd(1, id === 's31' ? 'interrupted' : 'completed')], header: { id }, [Symbol.dispose]() {} };
+    },
+  });
+  host.onResume('s31', [turnEnd(1, 'interrupted')]);
+  host.start();
+  await tick();
+  await tick(3000);
+  await tick(3000);
+  await tick(10);
+  assert.equal(observed.filter(id => id === 's0').length > 1, true);
+  assert.equal(observed.includes('s31'), true);
   assert.equal(host.resumes().length, 1);
 });
 

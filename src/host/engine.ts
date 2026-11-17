@@ -129,6 +129,13 @@ const SWEEP_OBSERVE_BATCH = 16;
 const STORED_READ_TIMEOUT_MS = 5000;
 /** 单个存储会话连续观察/物化失败达此数后放弃, 避免坏日志反复占满每轮观察配额。 */
 const SWEEP_MAX_FAILURES = 3;
+/**
+ * 一次启动最多冷读多少个存储会话。冷读要整份解码日志(zstd → 逐行 JSON.parse),
+ * 几百个会话连着读完足以把宿主堆(默认约 3.4GB)打满; 配额把启动期的内存和耗时
+ * 都封住。每个会话只计一次(失败重试、暂停后重读不再扣配额)。排序每次启动都一样,
+ * 配额之外的会话等于被跳过——它们最近活动最早, 在 freshMs 窗口内几乎不可能还新鲜。
+ */
+const STORED_SWEEP_READ_LIMIT = 32;
 
 /** Why a child session needs its root session woken after a restart. */
 type ChildInterruptCause = 'open-turn' | 'disposed' | 'interrupted' | 'max-tokens' | 'error';
@@ -146,6 +153,14 @@ interface ChildInterrupt {
 interface SessionHeaderLike {
   readonly id: SessionId;
   readonly parentSession?: SessionId;
+}
+
+/** The projection cache's zero-I/O listing read, as far as this module uses it. */
+interface ProjectionCacheLike {
+  cachedSnapshot(
+    meta: SessionHeaderLike,
+    keys?: readonly string[],
+  ): { readonly values: Record<string, unknown> } | undefined;
 }
 
 /** Cancel causes a host shutdown or a restart produces; only these justify a wake-up. */
@@ -173,6 +188,8 @@ const HANDOFF_COPY = {
 
 /** Host service key for goals (0.2.x); older hosts simply do not register it. */
 const GOALS_SERVICE_KEY = 'goals';
+/** Host service key for the projection checkpoint cache; older hosts do not register it. */
+const PROJECTION_CACHE_SERVICE_KEY = 'sessionProjectionCache';
 
 /** Copy for each child interruption cause, keyed by UI locale. */
 const CHILD_CAUSE_COPY = {
@@ -499,6 +516,9 @@ export class AutoContinueRunner {
   /** 存储会话的连续观察/物化失败次数, 触达 SWEEP_MAX_FAILURES 后不再重试。 */
   private readonly storedSweepFailures = new Map<SessionId, number>();
   private storedSweepAnnounced = false;
+  /** 本次启动已花掉的存储会话冷读配额(跨轮累计, 启动扫描窗口内不再重置)。 */
+  private readonly storedReadIds = new Set<SessionId>();
+  private storedBudgetLogged = false;
   private bootScanTimer: ReturnType<typeof setTimeout> | undefined;
   private wakeBootScan: (() => void) | undefined;
   private storedSweep: Promise<void> | undefined;
@@ -2315,6 +2335,13 @@ export class AutoContinueRunner {
       }
     }
     let observed = 0;
+    // 先只做零成本的筛除, 把要花冷读的根会话收进候选集, 再统一排序、按配额读。
+    const roots: {
+      sessionId: SessionId;
+      header: SessionHeaderLike & { createdAt?: number };
+      recency: number;
+      index: number;
+    }[] = [];
     for (const record of records) {
       if (this.disposed || Date.now() >= deadline || this.getConfig().paused || !this.getConfig().scanOnBoot) return;
       if (typeof record?.header?.id !== 'string' || record.header.id === '') {
@@ -2333,6 +2360,24 @@ export class AutoContinueRunner {
         continue;
       }
       if (record.live || this.storedSwept.has(sessionId)) continue;
+      roots.push({ sessionId, header: record.header, recency: 0, index: roots.length });
+    }
+    if (roots.length > 0) {
+      const cache = this.projectionCache();
+      for (const root of roots) root.recency = this.storedRecency(cache, root.header);
+      roots.sort((left, right) => right.recency - left.recency || left.index - right.index);
+    }
+    for (const root of roots) {
+      if (this.disposed || Date.now() >= deadline || this.getConfig().paused || !this.getConfig().scanOnBoot) return;
+      if (!this.storedReadIds.has(root.sessionId) && this.storedReadIds.size >= STORED_SWEEP_READ_LIMIT) {
+        if (!this.storedBudgetLogged) {
+          this.storedBudgetLogged = true;
+          this.log(`存储扫描冷读已达上限 ${STORED_SWEEP_READ_LIMIT} 个会话, 其余会话本次启动跳过`);
+        }
+        return;
+      }
+      const sessionId = root.sessionId;
+      this.storedReadIds.add(sessionId);
       this.storedSwept.add(sessionId);
       observed += 1;
       let observation: StoredObservation | undefined;
@@ -2427,6 +2472,40 @@ export class AutoContinueRunner {
           await new Promise<void>(resolve => setTimeout(resolve, 0));
         }
       }
+    }
+  }
+
+  /** The optional projection checkpoint cache; absent on hosts that do not ship it. */
+  private projectionCache(): ProjectionCacheLike | undefined {
+    try {
+      return this.ctx.get(PROJECTION_CACHE_SERVICE_KEY) as ProjectionCacheLike | undefined;
+    } catch {
+      // 排序提示拿不到时回退到创建时间, 不能影响裁决。
+      return undefined;
+    }
+  }
+
+  /**
+   * 冷读排序提示: 投影检查点里的最近活动时间, 没有检查点时回退到会话创建时间。
+   * 检查点只会落后于日志、不会超前, 所以这个数只用来排序, 不用来跳过会话。
+   */
+  private storedRecency(
+    cache: ProjectionCacheLike | undefined,
+    header: SessionHeaderLike & { createdAt?: number },
+  ): number {
+    const created = typeof header.createdAt === 'number' ? header.createdAt : 0;
+    if (cache === undefined) return created;
+    try {
+      const block = cache.cachedSnapshot(header, ['timeContext', 'sessionListMetadata']);
+      const values = block?.values as {
+        timeContext?: { lastMessageTime?: number };
+        sessionListMetadata?: { lastPromptAt?: number };
+      } | undefined;
+      const at = values?.timeContext?.lastMessageTime ?? values?.sessionListMetadata?.lastPromptAt;
+      return typeof at === 'number' && Number.isFinite(at) ? at : created;
+    } catch {
+      // 缓存读失败只影响排序, 不影响裁决。
+      return created;
     }
   }
 

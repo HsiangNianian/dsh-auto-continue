@@ -323,6 +323,8 @@ Patterns are plain substrings, not regular expressions. Cooldown and **Max conse
 
 **Unreadable sessions.** If a session's history cannot be read during the startup scan, that session is skipped and an error is logged; other sessions still recover ([#58](https://github.com/HsiangNianian/dsh-auto-continue/issues/58)). Repair it and restart DSH within the scan window to try again.
 
+**Cold-read budget.** A stored session is judged by its whole log, so the sweep decodes one full history per session. To keep a large profile from exhausting the host heap, one host instance reads at most 32 stored logs, most recently active first. The order comes from the projection checkpoint cache (`timeContext.lastMessageTime`, then `sessionListMetadata.lastPromptAt`), falling back to the session creation time. Each session counts once, even if its read is retried. The order is the same on every start, so sessions past the budget are skipped rather than queued; they are the least recently active ones, and the freshness window (15 minutes by default) has almost always passed for them. A checkpoint can lag behind a log but never lead it, so it only orders the reads: freshness is still decided by the events at the tail of the log.
+
 ## Troubleshooting
 
 | Symptom | What to check |
