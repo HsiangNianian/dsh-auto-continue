@@ -14,6 +14,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis';
+import { randomUUID } from 'node:crypto';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
@@ -169,6 +170,20 @@ const DECISION_CANCEL_CAUSES: ReadonlySet<string> = new Set(['user', 'parent', '
 const CHILD_SWEEP_LIMIT = 8;
 /** Bound how many ancestor hops a dirty parent chain may cost before giving up. */
 const CHILD_ROOT_MAX_DEPTH = 8;
+/** Do not hand the same child failure to its main conversation more often than this. */
+const HANDOFF_COOLDOWN_MS = 5 * 60 * 1000;
+/** Bound the host cold-resume call: a stalled service must not block recovery forever. */
+const REVIVE_TIMEOUT_MS = 15_000;
+
+/** Copy for the live hand-off that replaces an impossible child resume, keyed by UI locale. */
+const HANDOFF_COPY = {
+  zh: (child: string, code: string) =>
+    `子代理会话 ${child} 因 ${code} 中断, 已无法直接续跑。请检查它的状态, 然后继续或收尾。`,
+  en: (child: string, code: string) =>
+    `Child session ${child} was interrupted by ${code} and can no longer be resumed directly. Check its state, then continue it or wrap it up.`,
+  ru: (child: string, code: string) =>
+    `Дочерняя сессия ${child} прервалась из-за ${code} и больше не может быть продолжена напрямую. Проверь её состояние и продолжи или заверши.`,
+} as const satisfies Record<AutoContinueLocale, (child: string, code: string) => string>;
 
 /** Host service key for goals (0.2.x); older hosts simply do not register it. */
 const GOALS_SERVICE_KEY = 'goals';
@@ -475,6 +490,10 @@ export class AutoContinueRunner {
   private readonly noticeListeners = new Set<() => void>();
   private readonly stateListeners = new Set<() => void>();
   private readonly prioritizedFollowups = new Set<string>();
+  /** In-flight cold-resume calls, aborted when the plugin unloads. */
+  private readonly reviveControllers = new Set<AbortController>();
+  /** Hand-offs waiting for a live main conversation: parent -> child -> text. */
+  private readonly deferredHandoffs = new Map<SessionId, Map<SessionId, string>>();
   private readonly disposeSessionEvents: () => void;
   private readonly disposeInboxEvents: () => void;
   private disposed = false;
@@ -690,6 +709,10 @@ export class AutoContinueRunner {
     this.wakeBootScan = undefined;
     this.disposeSessionEvents();
     this.disposeInboxEvents();
+    // Unload is an opt-out: never deliver a continuation after disposal.
+    for (const controller of this.reviveControllers) controller.abort();
+    this.reviveControllers.clear();
+    this.deferredHandoffs.clear();
     this.prioritizedFollowups.clear();
     for (const state of this.states.values()) {
       if (state.pendingTimer !== undefined) clearTimeout(state.pendingTimer);
@@ -896,6 +919,9 @@ export class AutoContinueRunner {
    */
   private onHostEvent(session: Session, event: SessionEvent): void {
     const sessionId = session.id;
+    // A main conversation that just came live again receives the hand-offs that
+    // were deferred while it had no agent.
+    this.flushDeferredHandoffs(sessionId);
     const sessionState = this.states.get(sessionId);
     if (session.header?.origin === 'subagent') {
       this.markSubagent(sessionId, sessionState ?? this.state(sessionId), session.header.parentSession);
@@ -1251,12 +1277,14 @@ export class AutoContinueRunner {
           if (this.sessionConfig(sessionId).resumeCompletedTurns) {
             if (turnOutput === 'visible') {
               state.consecutive = 0;
+              state.recovering = false;
               state.lastFailure = undefined;
               this.noteRecovery(sessionId, 'completed');
             }
             this.schedule(sessionId, LOOP_COMPLETED_REASON, true);
           } else if (turnOutput === 'visible') {
             state.consecutive = 0;
+            state.recovering = false;
             state.lastFailure = undefined;
             this.noteRecovery(sessionId, 'completed');
           }
@@ -1296,6 +1324,7 @@ export class AutoContinueRunner {
           } else {
             // 用户主动停止: 不自动继续, 视为用户介入
             state.consecutive = 0;
+            state.recovering = false;
             state.pendingRecoveryAt = 0;
           }
         } else if (reasonKind === 'blocked') {
@@ -1330,6 +1359,7 @@ export class AutoContinueRunner {
         if (event.data.source.kind === 'user') {
           // 用户手动介入: 清零上限与跨标签页发送计数
           state.consecutive = 0;
+          state.recovering = false;
           this.resetLoopIterations(state);
           this.cancelPending(sessionId, '用户手动发送消息');
         }
@@ -1348,7 +1378,15 @@ export class AutoContinueRunner {
       // Off parent or the disabled setting means no live recovery at all. The
       // global pause is not checked here, so diagnostics for permanent errors
       // match ordinary sessions while paused.
-      if (!this.subagentRecoveryEnabled(sessionId)) return;
+      if (!this.subagentRecoveryEnabled(sessionId)) {
+        const parent = this.parentOf(sessionId);
+        if (parent !== undefined && parent !== '' && this.ctx.agents.get(parent) === undefined) {
+          // Lineage is known but the parent is offline: keep the failure so the
+          // hand-off is delivered once the main conversation is live again.
+          this.deferHandoff(parent, sessionId, this.handoffText(sessionId, reason));
+        }
+        return;
+      }
     } else if (sessionMode(config.sessionModes, sessionId) === 'off') return;
     if (config.classify && !isTransientFailure(failure, config.retryableErrorPatterns)) {
       const copy = NOTICE_COPY[config.locale];
@@ -1534,6 +1572,7 @@ export class AutoContinueRunner {
     }, config.graceMs);
     state.pendingTimer = timer;
     state.pendingReason = reason;
+    state.recovering = true;
     const template = this.templateFor(config, reason);
     this.log(
       `检测到非人为中断 ${sessionId}(${reason}), ${config.graceMs}ms 后自动发送「${template}」`,
@@ -1548,6 +1587,7 @@ export class AutoContinueRunner {
     const state = this.state(sessionId);
     if (state.cooldownRetryTimer !== undefined) clearTimeout(state.cooldownRetryTimer);
     state.pendingReason = reason;
+    state.recovering = true;
     state.cooldownRetryTimer = setTimeout(() => {
       state.cooldownRetryTimer = undefined;
       state.pendingReason = undefined;
@@ -1601,6 +1641,234 @@ export class AutoContinueRunner {
     if (cancelled) this.log(`取消 ${sessionId} 的自动继续(${why})`);
   }
 
+  /** Host-service facade used to cold-resume a disposed direct child. */
+  private subagentPromptProvider: (() => unknown) | undefined;
+
+  /** Attach the loader-provided subagent service; it may load after this plugin. */
+  setSubagentPromptProvider(provider: (() => unknown) | undefined): void {
+    this.subagentPromptProvider = provider;
+  }
+
+  private subagentPrompts(): {
+    prompt?: (
+      request: {
+        parentSessionId: string;
+        childSessionId: string;
+        mode: 'continuable';
+        requestId: string;
+        content: readonly { type: 'text'; text: string }[];
+        delivery: 'queue' | 'steer';
+      },
+      signal: AbortSignal,
+    ) => Promise<{ messageId?: string }>
+  } | undefined {
+    const provided = this.subagentPromptProvider?.();
+    if (provided !== undefined && provided !== null) return provided as ReturnType<typeof this.subagentPrompts>;
+    try {
+      return this.ctx.get('subagents') as ReturnType<typeof this.subagentPrompts>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Copy for one child hand-off, built once so a deferred delivery matches. */
+  private handoffText(sessionId: SessionId, reason: string): string {
+    const code = this.state(sessionId).lastFailure?.code ?? reason;
+    return HANDOFF_COPY[this.sessionConfig(sessionId).locale](sessionId, code);
+  }
+
+  /**
+   * Revive a disposed child through the host's cold resume and deliver the
+   * continuation to it. Falls back to the main-conversation hand-off when the
+   * host cannot resume (no persistence, no live parent, not a direct child).
+   * The child's own recovery mode decides; the parent only has to be alive to
+   * authorize the call.
+   */
+  private async reviveChild(sessionId: SessionId, reason: string, text: string, force: boolean): Promise<void> {
+    if (this.disposed || this.getConfig().paused) return;
+    if (!this.subagentRecoveryEnabled(sessionId)) return;
+    const state = this.state(sessionId);
+    if (state.reviveInFlight === true) {
+      this.log(`冷恢复跳过 ${sessionId}: 已有请求在途中`);
+      return;
+    }
+    const config = this.sessionConfig(sessionId);
+    if (!force) {
+      // Cold resume spends the same retry budget as a live send: record the
+      // attempt before awaiting, otherwise repeated failures bypass cooldown and
+      // the consecutive cap.
+      if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) {
+        this.log(`冷恢复跳过 ${sessionId}: 处于冷却期`);
+        return;
+      }
+      if (state.consecutive >= config.maxConsecutive) {
+        this.log(`冷恢复跳过 ${sessionId}: 已连续自动继续 ${state.consecutive} 次`);
+        return;
+      }
+    }
+    const parent = this.parentOf(sessionId);
+    if (parent === undefined || parent === '') return;
+    const handoff = this.handoffText(sessionId, reason);
+    const parentAgent = this.ctx.agents.get(parent);
+    if (parentAgent === undefined) {
+      this.deferHandoff(parent, sessionId, handoff);
+      return;
+    }
+    const prompts = this.subagentPrompts();
+    if (typeof prompts?.prompt !== 'function') {
+      this.handOffToParent(sessionId, reason, handoff);
+      return;
+    }
+    state.lastAttemptAt = Date.now();
+    state.consecutive += 1;
+    state.reviveInFlight = true;
+    const controller = new AbortController();
+    this.reviveControllers.add(controller);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REVIVE_TIMEOUT_MS);
+    try {
+      await prompts.prompt(
+        {
+          parentSessionId: parent,
+          childSessionId: sessionId,
+          mode: 'continuable',
+          requestId: randomUUID(),
+          content: [{ type: 'text', text }],
+          delivery: 'queue',
+        },
+        controller.signal,
+      );
+      this.log(`已冷恢复子代理 ${sessionId}`);
+    } catch (error) {
+      // An unload aborts the call on purpose; deliver nothing after opting out.
+      if (this.disposed) return;
+      this.log(`冷恢复 ${sessionId} 失败${timedOut ? '(超时)' : ''}: ${error instanceof Error ? error.message : String(error)}`);
+      this.handOffToParent(sessionId, reason, handoff);
+    } finally {
+      clearTimeout(timeout);
+      this.reviveControllers.delete(controller);
+      state.reviveInFlight = false;
+    }
+  }
+
+  /** Existing state of a session, without materializing one just to read it. */
+  private parentState(sessionId: SessionId): SessionState | undefined {
+    return this.states.get(sessionId);
+  }
+
+  /** Whether this session already has a continuation on the way. */
+  private hasPendingSend(state: SessionState): boolean {
+    return state.pendingTimer !== undefined
+      || state.cooldownRetryTimer !== undefined
+      || state.loopRetryTimer !== undefined
+      || state.offlineWait !== undefined
+      || state.offlineTimer !== undefined;
+  }
+
+  /**
+   * Ask the child's main conversation to take over a failure the plugin cannot
+   * repair itself: the child handle is gone, so only the root can continue it.
+   * The main conversation's Off is respected because this writes a user message
+   * into it; a child's own mode is never overridden by that Off for cold resume.
+   */
+  private handOffToParent(sessionId: SessionId, reason: string, text?: string): void {
+    if (this.disposed || this.getConfig().paused) return;
+    if (!this.subagentRecoveryEnabled(sessionId)) return;
+    const parent = this.parentOf(sessionId);
+    if (parent === undefined || parent === '') return;
+    if (this.explicitMode(parent) === 'off') return;
+    const state = this.state(sessionId);
+    const now = Date.now();
+    if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) return;
+    const handoff = text ?? this.handoffText(sessionId, reason);
+    const parentAgent = this.ctx.agents.get(parent);
+    if (parentAgent === undefined) {
+      this.deferHandoff(parent, sessionId, handoff);
+      return;
+    }
+    // Any user message into the main conversation cancels its queued continuation,
+    // and DSH already tells it which child failed. Stay silent while it recovers.
+    const parentState = this.parentState(parent);
+    if (parentState !== undefined && (parentState.recovering === true || this.hasPendingSend(parentState))) {
+      this.log(`移交跳过 ${sessionId}: 主会话 ${parent} 正在自行恢复`);
+      return;
+    }
+    try {
+      this.sendHandoff(parent, parentAgent, handoff);
+      state.handedOffAt = now;
+      this.log(`已将子代理 ${sessionId} 的失败移交主会话 ${parent}`);
+    } catch (error) {
+      this.log(`移交 ${sessionId} 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Post a hand-off into the main conversation the same way a continuation is
+   * sent: with the configured message source, and registered as our own echo so
+   * the parent does not read it as the user stepping in (which would reset its
+   * retry and loop counters and cancel whatever it had queued).
+   */
+  private sendHandoff(parent: SessionId, parentAgent: Agent, text: string): void {
+    const parentState = this.state(parent);
+    const message = createUserMessage({
+      content: [{ type: 'text', text }],
+      source: { kind: this.getConfig().usePluginSource ? AUTO_CONTINUE_SOURCE_KIND : 'user' },
+    });
+    trackPendingEcho(parentState, message.id);
+    try {
+      parentAgent.followup(message);
+    } catch (error) {
+      forgetPendingEcho(parentState, message.id);
+      throw error;
+    }
+  }
+
+  /** Keep one hand-off until its main conversation has a live agent again. */
+  private deferHandoff(parent: SessionId, sessionId: SessionId, text: string): void {
+    // Only live subagent recovery hands failures off; with it off nothing is kept.
+    if (!this.getConfig().resumeSubagentSessions) return;
+    const state = this.state(sessionId);
+    const now = Date.now();
+    if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) return;
+    let pending = this.deferredHandoffs.get(parent);
+    if (pending === undefined) {
+      pending = new Map();
+      this.deferredHandoffs.set(parent, pending);
+    }
+    pending.set(sessionId, text);
+    this.log(`移交暂存 ${sessionId}: 主会话 ${parent} 无 live agent`);
+  }
+
+  /** Deliver queued hand-offs once their main conversation is live again. */
+  private flushDeferredHandoffs(parent: SessionId): void {
+    const pending = this.deferredHandoffs.get(parent);
+    if (pending === undefined || pending.size === 0) return;
+    if (this.explicitMode(parent) === 'off') {
+      this.deferredHandoffs.delete(parent);
+      return;
+    }
+    const parentAgent = this.ctx.agents.get(parent);
+    if (parentAgent === undefined) return;
+    this.deferredHandoffs.delete(parent);
+    const now = Date.now();
+    for (const [child, text] of pending) {
+      // The parent may have turned the child's recovery off meanwhile.
+      if (!this.subagentRecoveryEnabled(child)) continue;
+      const state = this.state(child);
+      if (state.handedOffAt !== undefined && now - state.handedOffAt < HANDOFF_COOLDOWN_MS) continue;
+      try {
+        this.sendHandoff(parent, parentAgent, text);
+        state.handedOffAt = now;
+        this.log(`已移交暂存子代理 ${child} 给主会话 ${parent}`);
+      } catch (error) {
+        this.log(`暂存移交 ${child} 失败: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
   private fire(sessionId: SessionId, reason: string, force = false): void {
     if (this.disposed) return;
     const state = this.state(sessionId);
@@ -1612,7 +1880,15 @@ export class AutoContinueRunner {
     if (isLoopReason(reason) && !config.resumeCompletedTurns) return;
     // Direct sends (notifications) must respect the setting and the inherited
     // mode even though they bypass the paused flag below.
-    if (this.isSubagentSession(sessionId) && !this.subagentRecoveryEnabled(sessionId)) return;
+    if (this.isSubagentSession(sessionId) && !this.subagentRecoveryEnabled(sessionId)) {
+      const parent = this.parentOf(sessionId);
+      if (parent !== undefined && parent !== '' && this.ctx.agents.get(parent) === undefined) {
+        // Lineage is known but the parent is offline: keep the failure so the
+        // hand-off can be delivered once the main conversation is live again.
+        this.deferHandoff(parent, sessionId, this.handoffText(sessionId, reason));
+      }
+      return;
+    }
     if (config.paused && !manualResume) {
       this.log(`跳过 ${sessionId}(${reason}): 自动继续已暂停`);
       return;
@@ -1636,6 +1912,14 @@ export class AutoContinueRunner {
     // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) {
+      // A failed child is settled and disposed by the subagent runtime before the
+      // send window opens, so a direct resume cannot reach it. Ask the host to
+      // cold-resume it from persistence; when that is unavailable, hand the
+      // failure to its main conversation instead. A manual "Resume now" must
+      // revive a disposed child too: its force flag only relaxes the cooldown.
+      if (this.isSubagentSession(sessionId) && this.subagentRecoveryEnabled(sessionId)) {
+        void this.reviveChild(sessionId, reason, text, manualResume);
+      }
       this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
       return;
     }
@@ -1657,6 +1941,9 @@ export class AutoContinueRunner {
         this.prioritizedFollowups.delete(message.id);
       }
       const now = Date.now();
+      // The continuation is on the wire: the session is recovering itself until a
+      // successful turn ends or the user intervenes. Child hand-offs read this.
+      state.recovering = true;
       // 续跑已发出: 被重启失活的 goal 需要在这里重新武装, 否则续跑消息会跑但
       // goal 的自动继续轮不会转起来(disarm 是宿主卸载驱动的正常动作)。
       this.rearmGoal(sessionId, config);
@@ -1761,6 +2048,7 @@ export class AutoContinueRunner {
     const token = {};
     state.offlineWait = token;
     state.pendingReason = reason;
+    state.recovering = true;
     void this.checkConnectivity().then((online) => {
       if (this.disposed || state.offlineWait !== token) return; // 已被取消或被新的检测取代
       if (online) {
