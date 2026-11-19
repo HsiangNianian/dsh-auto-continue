@@ -1,6 +1,7 @@
 /** Verify scan containment with released Cordis, Session and HTTP services, without an LLM request. */
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { linkOrCopy } from './link-or-copy.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -18,7 +19,7 @@ const fixture = mkdtempSync(join(tmpdir(), 'auto-continue-boot-scan-'));
 mkdirSync(join(fixture, 'lib'));
 copyFileSync(join(pluginRoot, 'lib/index.js'), join(fixture, 'lib/index.js'));
 copyFileSync(join(pluginRoot, 'package.json'), join(fixture, 'package.json'));
-symlinkSync(modules, join(fixture, 'node_modules'), 'dir');
+linkOrCopy(modules, join(fixture, 'node_modules'), 'dir');
 const plugin = await import(pathToFileURL(join(fixture, 'lib/index.js')).href);
 const createSession = (id, seed) => Session.create ? Session.create(id, seed) : new Session(id, seed);
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

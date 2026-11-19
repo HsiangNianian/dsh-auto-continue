@@ -1,6 +1,7 @@
 /** Exercise a published DSH cohort's Settings, Loader and HTTP services together. */
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { linkOrCopy } from './link-or-copy.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -18,7 +19,7 @@ const fixture = mkdtempSync(join(tmpdir(), 'auto-continue-live-settings-'));
 mkdirSync(join(fixture, 'lib'));
 copyFileSync(join(project, 'lib/index.js'), join(fixture, 'lib/index.js'));
 copyFileSync(join(project, 'package.json'), join(fixture, 'package.json'));
-symlinkSync(modules, join(fixture, 'node_modules'), 'dir');
+linkOrCopy(modules, join(fixture, 'node_modules'), 'dir');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ctx = new Context();
 const base = { scanOnBoot: false, verbose: false, graceMs: 40, cooldownMs: 0 };

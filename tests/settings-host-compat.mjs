@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict';
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { linkOrCopy } from './link-or-copy.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,8 +13,8 @@ try {
   mkdirSync(join(fixtureRoot, 'pkg'), { recursive: true });
   mkdirSync(join(fixtureRoot, 'node_modules', '@deepseek-ai'), { recursive: true });
 
-  for (const packageName of ['cordis', 'schemastery']) {
-    symlinkSync(
+  for (const packageName of ['cordis', 'schemastery', 'cosmokit']) {
+    linkOrCopy(
       join(projectRoot, 'node_modules', '@deepseek-ai', packageName),
       join(fixtureRoot, 'node_modules', '@deepseek-ai', packageName),
       'dir',

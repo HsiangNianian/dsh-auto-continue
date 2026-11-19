@@ -95,7 +95,8 @@
  *   25. 未知 turn/end reason kind → 安静忽略
  * 运行: node tests/simulate-host.mjs
  */
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { linkOrCopy } from './link-or-copy.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -107,8 +108,8 @@ const bundle = readFileSync(join(root, '../lib/index.js'), 'utf8');
 const tmp = mkdtempSync(join(tmpdir(), 'ac-host-test-'));
 mkdirSync(join(tmp, 'pkg'), { recursive: true });
 mkdirSync(join(tmp, 'node_modules', '@deepseek-ai'), { recursive: true });
-for (const pkg of ['cordis', 'schemastery', 'dsh-settings']) {
-  symlinkSync(
+for (const pkg of ['cordis', 'schemastery', 'dsh-settings', 'cosmokit']) {
+  linkOrCopy(
     join(root, '../node_modules/@deepseek-ai', pkg),
     join(tmp, 'node_modules/@deepseek-ai', pkg),
   );
