@@ -1,7 +1,7 @@
 {
   "name": "dsh-client-auto-continue",
   "description": "Automatically resume interrupted DSH conversations, with an optional autonomous loop.",
-  "version": "0.20.1",
+  "version": "0.20.2",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

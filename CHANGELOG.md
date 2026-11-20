@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.2](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.20.2) — 2026-11-19
+
+### Fixed
+
+- The loop guard missed a model stuck cycling short lines inside one streamed message (`Then: fill domain, go.` / `Writing.` for 92k characters). The stream check only counted adjacent near-duplicate paragraphs of 40+ characters, so short lines and alternating lines never added up. It now also keeps the last 40 paragraphs (or lines, when a block runs on without a blank line) and cancels the turn when 8 or fewer of them are distinct. Rules, code fences and other segments with no letters or digits are ignored ([#93](https://github.com/HsiangNianian/dsh-auto-continue/issues/93), thanks @Baka999)
+
+[Upgrade instructions and validation](docs/releases/v0.20.2.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.20.1...v0.20.2)
+
 ## [0.20.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.20.1) — 2026-11-16
 
 ### Fixed
