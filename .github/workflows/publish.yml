@@ -8,6 +8,8 @@ on:
 permissions:
   contents: write
   packages: write
+  # npm trusted publishing (OIDC): no long-lived NPM_TOKEN to expire
+  id-token: write
 
 jobs:
   plugin-check:
@@ -71,10 +73,14 @@ jobs:
           rm -rf "${dir}"
           echo "archive=${dir}.zip" >> "$GITHUB_ENV"
 
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      # Authenticates through the trusted publisher configured on npmjs.com
+      # (HsiangNianian/dsh-auto-continue, publish.yml); provenance is attached automatically.
       - name: Publish to npm
         run: npm publish --access public --tag "$RELEASE_DIST_TAG"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Set up Node.js for GitHub Packages
         uses: actions/setup-node@v4
