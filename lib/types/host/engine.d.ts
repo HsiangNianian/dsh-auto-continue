@@ -164,6 +164,12 @@ export declare class AutoContinueRunner {
     private isNearDuplicateSegment;
     private withinEditDistance;
     private noteStreamSegment;
+    /**
+     * 滚动窗口唯一率: 不看段长, 也不要求相邻, 所以短行交替复读(A/B/A/B)和短行
+     * 连续复读都能命中。没有字母数字的段(分隔线、代码围栏、括号)不进窗口。
+     * 返回 true 表示已打断。
+     */
+    private noteStreamWindow;
     private onAssistantChunk;
     private onAssistantMessage;
     /** 两个循环信号的公共检查; 命中且本回合未打断过则打断。 */

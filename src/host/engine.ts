@@ -256,6 +256,15 @@ const isLoopReason = (reason: string): boolean =>
 const STREAM_NEAR_DUPLICATE_MAX_CHARS = 2_048;
 /** Bound unfinished text copied between token chunks when a provider emits no paragraph break. */
 const STREAM_TAIL_MAX_CHARS = 4_096;
+/**
+ * Rolling window of recent stream segments (paragraphs, or lines of an overlong
+ * paragraph). A degenerate stream cycles through a handful of short lines
+ * (`Writing.` / `Then: fill domain, go.`), which neither the long-segment gate nor
+ * the adjacent near-duplicate check sees; a nearly unique-free window does.
+ */
+const STREAM_WINDOW_SEGMENTS = 40;
+/** At most this many distinct segments in a full window counts as a loop (20%). */
+const STREAM_WINDOW_MAX_UNIQUE = 8;
 
 /** Ignore invisible formatting only for detection, never rewrite the stored message. */
 const visibleText = (text: string): string => text.replace(/\p{Cf}/gu, '').trim();
@@ -1071,6 +1080,7 @@ export class AutoContinueRunner {
     const normalized = this.normalizedSegment(segment);
     const config = this.getConfig();
     if (normalized === '') return;
+    if (this.noteStreamWindow(sessionId, state, normalized)) return;
     if (normalized.length < config.loopShortChars) {
       state.streamLastSegment = '';
       state.streamRepeatRun = 0;
@@ -1094,6 +1104,26 @@ export class AutoContinueRunner {
     }
   }
 
+  /**
+   * 滚动窗口唯一率: 不看段长, 也不要求相邻, 所以短行交替复读(A/B/A/B)和短行
+   * 连续复读都能命中。没有字母数字的段(分隔线、代码围栏、括号)不进窗口。
+   * 返回 true 表示已打断。
+   */
+  private noteStreamWindow(sessionId: SessionId, state: SessionState, normalized: string): boolean {
+    if (!/[\p{L}\p{N}]/u.test(normalized)) return false;
+    const window = state.streamWindow;
+    window.push(normalized);
+    if (window.length > STREAM_WINDOW_SEGMENTS) window.shift();
+    if (window.length < STREAM_WINDOW_SEGMENTS) return false;
+    const unique = new Set(window).size;
+    if (unique > STREAM_WINDOW_MAX_UNIQUE) return false;
+    this.log(
+      `检测到流式消息内复读 ${sessionId}: 最近 ${STREAM_WINDOW_SEGMENTS} 段只有 ${unique} 种不同文本`,
+    );
+    this.interruptLoop(sessionId, state);
+    return state.loopFired;
+  }
+
   private onAssistantChunk(
     sessionId: SessionId,
     state: SessionState,
@@ -1110,7 +1140,17 @@ export class AutoContinueRunner {
       state.streamTail = tail;
       return;
     }
-    state.streamTail = tail.slice(-STREAM_TAIL_MAX_CHARS);
+    // 超长且一直没有空行: 把完整的行送进滚动窗口, 单换行分隔的刷屏也能被看到。
+    const lines = tail.split('\n');
+    const rest = lines.pop() ?? '';
+    for (const line of lines) {
+      const normalized = this.normalizedSegment(line);
+      if (normalized !== '' && this.noteStreamWindow(sessionId, state, normalized)) {
+        state.streamTail = '';
+        return;
+      }
+    }
+    state.streamTail = rest.slice(-STREAM_TAIL_MAX_CHARS);
     if (/\S/u.test(tail)) {
       state.streamLastSegment = '';
       state.streamRepeatRun = 0;
@@ -1150,6 +1190,7 @@ export class AutoContinueRunner {
     if (streamTail !== '') this.noteStreamSegment(sessionId, state, streamTail);
     state.streamLastSegment = '';
     state.streamRepeatRun = 0;
+    state.streamWindow = [];
     this.checkLoop(sessionId, state);
   }
 
@@ -1222,6 +1263,7 @@ export class AutoContinueRunner {
         state.streamTail = '';
         state.streamLastSegment = '';
         state.streamRepeatRun = 0;
+        state.streamWindow = [];
         state.loopFired = false;
         state.turnOutput = 'empty';
         state.outputTurn = event.data.turn;
@@ -1304,6 +1346,7 @@ export class AutoContinueRunner {
             state.streamTail = '';
             state.streamLastSegment = '';
             state.streamRepeatRun = 0;
+            state.streamWindow = [];
             state.tools.resetRepeat();
             // 重启受冷却约束(防紧密打断循环): 等剩余冷却结束后再调度
             const cooldown = this.cooldownFor(state);
