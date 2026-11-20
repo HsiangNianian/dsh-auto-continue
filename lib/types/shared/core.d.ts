@@ -394,6 +394,8 @@ export interface SessionState {
     streamLastSegment: string;
     /** 流式消息内连续近似重复长段计数。 */
     streamRepeatRun: number;
+    /** 流式消息最近若干段(或超长段的行)的归一化文本, 用于唯一率检测。 */
+    streamWindow: string[];
     /** 本回合已触发过 loop guard(防重复打断)。 */
     loopFired: boolean;
     /** loop 重启的延迟定时器(冷却结束后再 schedule)。 */

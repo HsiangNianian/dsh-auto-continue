@@ -2242,6 +2242,60 @@ for (const usePluginSource of [false, true]) {
   await sleep(20);
 }
 
+// ---------- 测试 12k2: 短行交替刷屏(#93) ----------
+{
+  console.log('测试 12k2: 短行 A/B 交替刷屏 → 滚动窗口唯一率打断(#93)');
+  const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike'];
+  const preamble = Array.from({ length: 61 }, (_, i) => `${words[i % 13]} ${words[(i * 5) % 13]} step ${i}`);
+  const loop = Array.from({ length: 400 }, (_, i) => (i % 2 ? 'Writing.' : 'Then: fill domain, go.'));
+  const slices = (body) => {
+    const out = [];
+    for (let i = 0; i < body.length; i += 200) out.push(body.slice(i, i + 200));
+    return out;
+  };
+  for (const [label, sep] of [['空行分隔', '\n\n'], ['单换行分隔', '\n']]) {
+    const host = startPlugin({ scanOnBoot: false, cooldownMs: 300 });
+    const agent = host.makeAgent('s1');
+    await sleep(30);
+    host.emit(agent.session, turnStart(1));
+    let seq = 40;
+    for (const piece of slices([...preamble, ...loop].join(sep))) host.emit(agent.session, assistantChunk(piece, seq++));
+    await sleep(80);
+    check(`默认配置下短行交替(${label})已触发 cancel`, agent.cancels.length === 1);
+    await sleep(20);
+  }
+  {
+    const host = startPlugin({ scanOnBoot: false, cooldownMs: 300 });
+    const agent = host.makeAgent('s1');
+    await sleep(30);
+    host.emit(agent.session, turnStart(1));
+    let seq = 40;
+    for (let i = 0; i < 60; i += 1) host.emit(agent.session, assistantChunk('Writing.\n\n', seq++));
+    await sleep(80);
+    check('默认配置下同一短行连续复读已触发 cancel', agent.cancels.length === 1);
+    await sleep(20);
+  }
+  {
+    // 正常长报告: 分隔线、代码围栏、括号行反复出现, 但正文段落各不相同 → 不打断
+    const host = startPlugin({ scanOnBoot: false, cooldownMs: 300 });
+    const agent = host.makeAgent('s1');
+    await sleep(30);
+    host.emit(agent.session, turnStart(1));
+    const parts = [];
+    for (let i = 0; i < 50; i += 1) {
+      parts.push(`## Section ${i}`, `Finding ${i}: the ${words[i % 13]} handler returns early when input ${i} is empty.`, '---', '```ts\n}\n```', 'Done.');
+    }
+    const body = `${parts.join('\n\n')}\n\n`;
+    let seq = 40;
+    for (let i = 0; i < body.length; i += 200) host.emit(agent.session, assistantChunk(body.slice(i, i + 200), seq++));
+    const lines = Array.from({ length: 300 }, (_, i) => `row ${i}: ${words[i % 13]} = ${i * 7}`).join('\n');
+    for (let i = 0; i < lines.length; i += 200) host.emit(agent.session, assistantChunk(lines.slice(i, i + 200), seq++));
+    await sleep(80);
+    check('正常长报告与长表格未触发 cancel', agent.cancels.length === 0);
+    await sleep(20);
+  }
+}
+
 // ---------- 测试 12l: assistant/message 冲洗流式尾段 ----------
 {
   console.log('测试 12l: assistant/message 冲洗无换行尾段 → 命中阈值');

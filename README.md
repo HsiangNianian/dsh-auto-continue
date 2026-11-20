@@ -281,7 +281,7 @@ Built-in texts exist in English, Chinese and Russian. They follow the DSH langua
 | Short-sentence max (chars) | `loopShortChars` | `40` | Messages shorter than this count as short sentences |
 | Short-sentence window (ms) | `loopWindowMs` | `30000` | Window for counting short sentences. Minimum 1000 |
 | Short-sentence threshold | `loopShortCount` | `12` | Short sentences in the window, with no tool call, that trip the guard |
-| Identical message count | `loopRepeatText` | `4` | Identical messages in a row (or repeated paragraphs within one streamed message) that trip the guard |
+| Identical message count | `loopRepeatText` | `4` | Identical messages in a row (or repeated paragraphs within one streamed message) that trip the guard. Separately, a streamed message whose last 40 paragraphs or lines hold 8 or fewer distinct texts is always cut off, so short lines cycling `A / B / A / B` are caught too |
 | Same-tool repeat count | `loopToolRepeat` | `5` | Calls of the same tool with identical arguments and results that trip the guard |
 
 ### Status and logs
