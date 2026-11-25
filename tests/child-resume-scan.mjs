@@ -328,7 +328,7 @@ test('⑩-a an active goal disarmed by the restart is re-armed once', async (t) 
 
 test('⑩-b a paused goal stays paused unless resumePausedGoals is on', async (t) => {
   const goals = goalService(() => ({ id: 'goal-2', revision: 1, phase: 'paused', activation: 'disarmed' }));
-  const { tick } = childSweep(t, {
+  const { tick, parent } = childSweep(t, {
     rootEvents: cleanRoot(),
     children: [{ id: CHILD, events: [turnStart(1)] }],
     config: { resumeInterruptedChildren: true, resumeGoals: true },
@@ -336,9 +336,10 @@ test('⑩-b a paused goal stays paused unless resumePausedGoals is on', async (t
   });
   await tick();
   eq(goals.calls.resume.length, 0, '⑩-b a hand-paused goal is not resumed by default');
+  eq(parent.followups.length, 0, '⑩-b and its root is not woken: the wake would read as the user resuming it');
 });
 
-test('⑩-c with resumeGoals off the goals service is never touched', async (t) => {
+test('⑩-c with resumeGoals off nothing is re-armed', async (t) => {
   const goals = goalService(activeDisarmedGoal());
   const { tick } = childSweep(t, {
     rootEvents: cleanRoot(),
@@ -347,8 +348,8 @@ test('⑩-c with resumeGoals off the goals service is never touched', async (t) 
     services: { goals },
   });
   await tick();
-  eq(goals.calls.get, 0, '⑩-c goals.get is never called when re-arming is off');
-  eq(goals.calls.resume.length, 0, '⑩-c and nothing is re-armed');
+  // The phase is still read: a paused or blocked goal blocks the wake even with re-arming off.
+  eq(goals.calls.resume.length, 0, '⑩-c nothing is re-armed when re-arming is off');
 });
 
 /**

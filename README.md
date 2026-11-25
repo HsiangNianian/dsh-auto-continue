@@ -230,7 +230,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | Pause while offline | `pauseWhenOffline` | `true` | Hold network-error retries while the host is offline, without using up attempts |
 | Offline re-check interval (ms) | `offlineCheckMs` | `15000` | How often a held retry checks the network. Minimum 1000 |
 | Re-arm goals disarmed by a restart | `resumeGoals` | `false` | After a continue message, re-arm an `active` goal the restart disarmed. This acts on your behalf, hence off |
-| Resume paused goals | `resumePausedGoals` | `false` | Also resume goals you paused by hand. Needs `resumeGoals` |
+| Resume paused goals | `resumePausedGoals` | `false` | Also resume goals you paused by hand. Needs `resumeGoals`. Without it, a session whose goal is paused is not resumed after a restart or an error |
 
 ### Startup recovery
 
@@ -312,7 +312,7 @@ Patterns are plain substrings, not regular expressions. Cooldown and **Max conse
 [![Auto-continue decision flow](docs/auto-continue-workflow.en.svg)](docs/auto-continue-workflow.en.html)
 
 1. **Triggers.** The engine listens to session events in the host. A `turn/end` with `error`, `max-tokens`, a silent ending, or `completed` (loop mode only) starts the flow. After a host restart, the startup scan checks open and stored sessions every 3 seconds until the scan window ends. The loop guard watches running turns and cancels one that repeats itself.
-2. **Session check.** Nothing is sent while auto-continue is paused globally, the session is Off or paused for an hour, or the session is a subagent and **Resume subagent sessions** is off. A subagent follows its main conversation's mode unless it has its own, and never runs the autonomous loop or the loop guard.
+2. **Session check.** Nothing is sent while auto-continue is paused globally, the session is Off or paused for an hour, or the session is a subagent and **Resume subagent sessions** is off. A turn cut off by a restart or a retryable error is not resumed while the session's goal is paused or blocked (a paused one is, with `resumeGoals` and `resumePausedGoals` on): resuming it would read as you lifting the pause. Finishing an answer cut off by `max-tokens` or a silent turn, and the autonomous loop, are not affected. A subagent follows its main conversation's mode unless it has its own, and never runs the autonomous loop or the loop guard.
 3. **End reason.** Manual Stop and policy blocks (`blocked`) are left alone, and so are permanent errors. Everything else recoverable goes to recovery. A normal completion only continues in Autonomous loop mode, which skips the cooldown and the consecutive limit but respects `loopMaxIterations`.
 4. **Retry budget.** Recovery stops at **Max consecutive**. Inside the cooldown, the send is deferred rather than dropped. The cooldown is multiplied by the backoff factor after each failure, up to the maximum.
 5. **Grace period.** The engine waits `graceMs`. A new turn or a message from you cancels the send.

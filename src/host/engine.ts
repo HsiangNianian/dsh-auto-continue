@@ -1967,6 +1967,16 @@ export class AutoContinueRunner {
       this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
       return;
     }
+    // Resuming an interrupted turn (restart, retryable error) speaks for the user; finishing a
+    // cut-off answer (max-tokens, silent), loop rounds and the manual button do not.
+    const resumesInterruption = !manualResume && !isLoopReason(reason) && !reason.startsWith('loop:') &&
+      !reason.endsWith(':silent') && !reason.includes('max-tokens');
+    const heldGoal = resumesInterruption ? this.heldGoalPhase(agent, config) : undefined;
+    if (heldGoal !== undefined) {
+      state.recovering = false;
+      this.log(`跳过 ${sessionId}(${reason}): goal 处于 ${heldGoal}, 不替用户续跑`);
+      return;
+    }
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
     try {
       const message = createUserMessage({
@@ -2679,6 +2689,11 @@ export class AutoContinueRunner {
     if (!(await this.rootAcceptsWake(rootId, deadline))) return true; // 明确裁决: 不该唤醒
     const agent = await this.ensureLiveAgent(rootId, deadline);
     if (agent === undefined || this.disposed) return false;
+    const heldGoal = this.heldGoalPhase(agent, config);
+    if (heldGoal !== undefined) {
+      this.log(`跳过唤醒 ${rootId}: goal 处于 ${heldGoal}, 不替用户续跑`);
+      return true;
+    }
     const text = this.buildChildResumeText(config, children);
     const message = createUserMessage({
       content: [{ type: 'text', text }],
@@ -2784,9 +2799,7 @@ export class AutoContinueRunner {
    */
   private rearmGoal(sessionId: SessionId, config: AutoContinueConfig): void {
     if (!config.resumeGoals) return;
-    const goals = (this.ctx as unknown as { get(key: string): unknown }).get(GOALS_SERVICE_KEY) as
-      | GoalServiceLike
-      | undefined;
+    const goals = this.goals();
     if (goals === undefined) return;
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) return;
@@ -2816,6 +2829,27 @@ export class AutoContinueRunner {
         `goal 恢复失败 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  private goals(): GoalServiceLike | undefined {
+    return (this.ctx as unknown as { get(key: string): unknown }).get(GOALS_SERVICE_KEY) as GoalServiceLike | undefined;
+  }
+
+  /**
+   * A paused or blocked goal is a decision to stop and wait; a continue sent anyway reads as the
+   * user resuming it. `resumePausedGoals` is the user's standing permission to resume paused
+   * goals, so it lets those through.
+   */
+  private heldGoalPhase(agent: Agent, config: AutoContinueConfig): string | undefined {
+    let phase: string | undefined;
+    try {
+      phase = this.goals()?.get(agent)?.phase;
+    } catch {
+      return undefined; // no readable goal: same as a host without goals
+    }
+    if (phase === 'blocked') return phase;
+    if (phase === 'paused' && !(config.resumeGoals && config.resumePausedGoals)) return phase;
+    return undefined;
   }
 
   /**

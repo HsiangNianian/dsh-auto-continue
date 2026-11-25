@@ -305,6 +305,13 @@ export declare class AutoContinueRunner {
      * resume 能重新 arm; paused 则是人类的显式决定。两者都默认关闭。
      */
     private rearmGoal;
+    private goals;
+    /**
+     * A paused or blocked goal is a decision to stop and wait; a continue sent anyway reads as the
+     * user resuming it. `resumePausedGoals` is the user's standing permission to resume paused
+     * goals, so it lets those through.
+     */
+    private heldGoalPhase;
     /**
      * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
      * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。模型选择

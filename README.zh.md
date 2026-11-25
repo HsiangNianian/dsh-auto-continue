@@ -230,7 +230,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | 断网时暂停续跑 | `pauseWhenOffline` | `true` | 宿主断网时挂起网络类错误的重试，不消耗次数 |
 | 断网复检间隔 (ms) | `offlineCheckMs` | `15000` | 挂起期间多久检测一次网络，最小 1000 |
 | 重新武装被重启失活的 goal | `resumeGoals` | `false` | 发出继续消息后，把重启时被 disarm 的 `active` goal 重新 arm。这相当于替你授权，所以默认关闭 |
-| 恢复被暂停的 goal | `resumePausedGoals` | `false` | 连你手动暂停的 goal 也恢复；需同时开启 `resumeGoals` |
+| 恢复被暂停的 goal | `resumePausedGoals` | `false` | 连你手动暂停的 goal 也恢复；需同时开启 `resumeGoals`。不开时，goal 已暂停的会话在重启或出错后不续跑 |
 
 ### 启动恢复
 
@@ -312,7 +312,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 [![自动继续的决策流程](docs/auto-continue-workflow.svg)](docs/auto-continue-workflow.html)
 
 1. **触发。** 引擎在宿主中监听会话事件。`turn/end` 的原因是 `error`、`max-tokens`、无可见输出，或 `completed`(仅自主循环)时进入流程。宿主重启后，启动扫描每 3 秒检查一次已打开和已存储的会话，直到扫描时间窗结束。循环守卫监视正在运行的回合，发现原地打转就打断。
-2. **会话检查。** 全局暂停、会话设为“关闭”或暂停了 1 小时、会话是子代理且 **续跑子代理会话** 关闭时，不发送任何内容。子代理沿用主会话的模式(除非它有自己的模式)，从不进入自主循环，也不受循环守卫影响。
+2. **会话检查。** 全局暂停、会话设为“关闭”或暂停了 1 小时、会话是子代理且 **续跑子代理会话** 关闭时，不发送任何内容。会话的 goal 处于暂停(paused)或受阻(blocked)时，不续跑被重启或可重试错误打断的回合(同时开启 `resumeGoals` 和 `resumePausedGoals` 时，暂停的 goal 照常续跑)：这时续跑会被当成你解除了暂停。`max-tokens` 截断和无输出回合的续写、自主循环不受影响。子代理沿用主会话的模式(除非它有自己的模式)，从不进入自主循环，也不受循环守卫影响。
 3. **结束原因。** 手动停止和策略拦截(`blocked`)不处理，永久性错误也不处理。其余可恢复的情况进入恢复流程。正常完成只在自主循环模式下继续：不受冷却和连续上限约束，但受 `loopMaxIterations` 限制。
 4. **重试预算。** 达到 **最大连续次数** 就停止。冷却期内的发送会延后，而不是丢弃；每次失败后冷却时间乘以退避系数，直到上限。
 5. **宽限期。** 等待 `graceMs`。期间有新回合或你发了消息，就取消这次发送。
