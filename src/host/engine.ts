@@ -446,6 +446,33 @@ function isLoopGuardCancelReason(value: unknown): boolean {
   return cause.kind === LOOP_GUARD_CANCEL_CAUSE.kind && cause.reason === LOOP_GUARD_CANCEL_CAUSE.reason;
 }
 
+const TEMPLATE_PLACEHOLDER = /\{(?:code|message|status|tool|turn|errorCount|sessionTitle|elapsed|result)\}/;
+
+/** Regex source matching what `fillTemplate` can make of a template; `undefined` when it has no literal text. */
+function templateSource(template: string): string | undefined {
+  const parts = template.split(TEMPLATE_PLACEHOLDER);
+  if (parts.join('').trim() === '') return undefined; // would match every message
+  return parts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s\\S]*');
+}
+
+/** Whole-message match for a continuation built from the current texts, guard note included. */
+function continueTextPattern(config: AutoContinueConfig): RegExp {
+  const alternatives = (templates: string[]) =>
+    templates.map(templateSource).filter(source => source !== undefined).join('|');
+  const texts = alternatives([
+    config.continueText, config.continueTextMaxTokens, config.continueTextSilent, config.continueTextLoop,
+    config.continueTextInterrupted, config.continueTextQuestion, config.loopText,
+  ]);
+  const guards = alternatives([config.guardPendingText, config.guardDoneText]);
+  return new RegExp(`^(?:${texts})${guards === '' ? '' : `(?: (?:${guards}))?`}$`);
+}
+
+function messageText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content.map((block: { type?: unknown; text?: unknown } | null) =>
+    block?.type === 'text' && typeof block.text === 'string' ? block.text : '').join('');
+}
+
 /**
  * 事件流泵: 带指数退避的 SSE 重连循环。
  * - 从未收到任何帧(宿主未就绪): 退避重试, 不触发扫描
@@ -2284,6 +2311,14 @@ export class AutoContinueRunner {
             continue;
           }
         }
+        // The in-memory count died with the old host; a continue -> crash -> restart cycle must
+        // still run into the cap.
+        state.consecutive = Math.max(state.consecutive, this.continuationsInLog(events, config));
+        if (state.consecutive >= config.maxConsecutive) {
+          this.bootScannedSessions.add(session);
+          this.log(`跳过 ${sessionId}(启动扫描): 重启前已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`);
+          continue;
+        }
         candidates.push({
           session, sessionId, events, lastEnd, reasonKind, failure,
           lastActivityAt: events.reduce((latest, event) => Math.max(latest, event.time), 0),
@@ -2854,6 +2889,48 @@ export class AutoContinueRunner {
     if (phase === 'blocked') return phase;
     if (phase === 'paused' && !(config.resumeGoals && config.resumePausedGoals)) return phase;
     return undefined;
+  }
+
+  /**
+   * Continuations this plugin sent since the last message from the user, manual stop or turn
+   * with visible output, read from the log so the consecutive cap survives a host restart.
+   * Mirrors the in-memory count: a continuation right after a visible completion is a loop
+   * round and does not count. With `usePluginSource` off a continuation is a `user` message
+   * matching one of the configured continue texts, so a user message identical to one of them
+   * is counted too; that can only stop recovery earlier, never later.
+   */
+  private continuationsInLog(events: readonly SessionEvent[], config: AutoContinueConfig): number {
+    const ours = continueTextPattern(config);
+    let count = 0;
+    let visible = false;
+    let maintenance = false;
+    let afterSuccess = false;
+    for (const event of events) {
+      if (event.type === 'turn/start') {
+        visible = false;
+        maintenance = isMaintenanceTurnStart(event);
+      } else if (event.type === 'tool/call') {
+        visible = true;
+      } else if (event.type === 'assistant/message') {
+        if (this.hasVisibleContent(event.data.message?.content)) visible = true;
+      } else if (event.type === 'turn/end') {
+        if (maintenance) continue;
+        const reason = event.data.reason;
+        const kind = readReasonKind(reason);
+        afterSuccess = kind === 'completed' && visible;
+        const userStop = kind === 'aborted' && !isHostCancel(reason) &&
+          !isLoopGuardCancelReason((reason as { reason?: unknown }).reason);
+        if (afterSuccess || userStop) count = 0;
+      } else if (event.type === 'user/message') {
+        const source = event.data.source?.kind;
+        if (source === AUTO_CONTINUE_SOURCE_KIND || (source === 'user' && ours.test(messageText(event.data.content)))) {
+          if (!afterSuccess) count += 1;
+        } else if (source === 'user') {
+          count = 0;
+        }
+      }
+    }
+    return count;
   }
 
   /**

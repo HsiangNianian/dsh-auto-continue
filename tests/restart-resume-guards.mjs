@@ -153,6 +153,77 @@ test('continueTextQuestion can be customized', async (t) => {
   assert.deepEqual(textOf(agent), ['Ask again (turn 1).']);
 });
 
+// ---------- consecutive cap across restarts ----------
+
+const RESTART_TEXT = `${INTERRUPTED} while your previous turn was still running; tool calls pending at the restart are recorded with unknown outcomes. Resume where you left off, verifying external state before retrying anything that may have side effects.`;
+
+/** The user's request, then `count` rounds of: our continuation -> turn cut off by a restart. */
+const crashLoop = (count, text = RESTART_TEXT, kind = 'user') => {
+  const events = [said('Build the thing'), start(1), end(1, 'interrupted')];
+  for (let turn = 2; turn <= count + 1; turn += 1) events.push(said(text, kind), start(turn), end(turn, 'interrupted'));
+  return events;
+};
+/** One more continuation and restart after `events`. */
+const another = (turn) => [said(RESTART_TEXT), start(turn), end(turn, 'interrupted')];
+
+test('continuations sent before the restart count toward maxConsecutive', async (t) => {
+  const { host, settle, logs } = scenario(t);
+  const capped = host.agent('capped', log(...crashLoop(3)));
+  const below = host.agent('below', log(...crashLoop(2)));
+  host.start();
+  await settle();
+  assert.equal(capped.followups.length, 0, 'three continuations already: the cap holds across the restart');
+  assert(logs.some((line) => line.includes('重启前已连续自动继续 3 次')));
+  assert.equal(below.followups.length, 1, 'two before the restart leave room for one more');
+});
+
+test('plugin-source continuations are counted exactly, including texts changed since', async (t) => {
+  const { host, settle } = scenario(t);
+  const agent = host.agent('plugin', log(...crashLoop(3, 'an older custom text', 'plugin:dsh-client-auto-continue')));
+  host.start();
+  await settle();
+  assert.equal(agent.followups.length, 0);
+});
+
+test('a guard note or filled placeholders still identify our continuation', async (t) => {
+  const { host, settle } = scenario(t, { continueTextInterrupted: 'Restarted in turn {turn}' });
+  const agent = host.agent('guarded', log(
+    said('Build the thing'), start(1), end(1, 'interrupted'),
+    said('Restarted in turn 1 (The previous tool "bash" may not have completed. Check its state before continuing and do not run it again.)'),
+    start(2), end(2, 'interrupted'),
+    said('Restarted in turn 2'), start(3), end(3, 'interrupted'),
+    said('Restarted in turn 3'), start(4), end(4, 'interrupted'),
+  ));
+  host.start();
+  await settle();
+  assert.equal(agent.followups.length, 0);
+});
+
+test('a real user message, a user stop or a visible completion resets the count', async (t) => {
+  const { host, settle } = scenario(t);
+  const human = host.agent('human', log(...crashLoop(3), said('Continue, but skip the tests'), start(9), end(9, 'interrupted')));
+  const stopped = host.agent('stopped', log(...crashLoop(3), start(9), end(9, 'aborted', { reason: { kind: 'user' } }), ...another(10)));
+  const succeeded = host.agent('succeeded', log(...crashLoop(3), start(9), reply(9, 'Done.'), end(9, 'completed'), ...another(10)));
+  const silent = host.agent('silent', log(...crashLoop(2), start(9), end(9, 'completed'), ...another(10)));
+  host.start();
+  await settle();
+  assert.equal(human.followups.length, 1, 'a message that is not a continue text is the user stepping in');
+  assert.equal(stopped.followups.length, 1);
+  assert.equal(succeeded.followups.length, 1);
+  assert.equal(silent.followups.length, 0, 'a completion without visible output is not a success');
+});
+
+test('loop rounds after a visible completion do not count, as in memory', async (t) => {
+  const { host, settle } = scenario(t, { resumeCompletedTurns: true });
+  const events = [said('Build the thing')];
+  for (let turn = 1; turn <= 4; turn += 1) events.push(start(turn), reply(turn, `step ${turn}`), end(turn, 'completed'), said('Continue'));
+  events.push(start(5), end(5, 'interrupted'));
+  const agent = host.agent('loop', log(...events));
+  host.start();
+  await settle();
+  assert.equal(agent.followups.length, 1);
+});
+
 const LOCALIZED_QUESTION = {
   en: "This message was sent automatically by the plugin after a harness restart; it is not the user's reply. The question you asked the user was cut off by the restart and has not been answered. Ask the same question again and wait for the answer; do not decide for the user.",
   zh: '这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。',
