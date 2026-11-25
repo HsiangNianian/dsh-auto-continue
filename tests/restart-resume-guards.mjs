@@ -56,6 +56,7 @@ const goals = (phase) => ({
 const textOf = (agent) => agent.followups.map((message) => message.content[0].text);
 
 const INTERRUPTED = 'Continue. The harness was restarted';
+const QUESTION = "This message was sent automatically by the plugin after a harness restart; it is not the user's reply.";
 
 // ---------- goal phase ----------
 
@@ -111,3 +112,49 @@ test('a held goal does not stop the autonomous loop the user turned on', async (
   await settle();
   assert.deepEqual(textOf(agent), ['Continue']);
 });
+
+// ---------- unanswered question ----------
+
+test('an interrupted ask_user_question gets the question text, without the guard note', async (t) => {
+  const { host, settle } = scenario(t);
+  const agent = host.agent('asked', log(start(1), call(1, 'ask_user_question', 'q1'), end(1, 'interrupted')));
+  host.start();
+  await settle();
+  assert.deepEqual(textOf(agent), [LOCALIZED_QUESTION.en]);
+});
+
+test('the host closer result (unknown outcome) still counts as unanswered', async (t) => {
+  const { host, settle } = scenario(t, { locale: 'zh' });
+  const agent = host.agent('closed', log(
+    start(1), call(1, 'ask_user_question', 'q1'), result(1, 'q1', 'TOOL_OUTCOME_UNKNOWN', true), end(1, 'interrupted'),
+  ));
+  host.start();
+  await settle();
+  assert.deepEqual(textOf(agent), [LOCALIZED_QUESTION.zh]);
+});
+
+test('an answered question, or another pending tool, keeps the usual text and guard', async (t) => {
+  const { host, settle } = scenario(t);
+  const answered = host.agent('answered', log(
+    start(1), call(1, 'ask_user_question', 'q1'), result(1, 'q1', '{"answers":[]}'), end(1, 'interrupted'),
+  ));
+  const other = host.agent('other', log(start(1), call(1, 'bash', 'b1'), end(1, 'interrupted')));
+  host.start();
+  await settle();
+  assert.match(textOf(answered)[0], /^Continue\. The harness was restarted.* \(The previous tool "ask_user_question" completed successfully/);
+  assert.match(textOf(other)[0], /^Continue\. The harness was restarted.* \(The previous tool "bash" may not have completed/);
+});
+
+test('continueTextQuestion can be customized', async (t) => {
+  const { host, settle } = scenario(t, { continueTextQuestion: 'Ask again (turn {turn}).' });
+  const agent = host.agent('custom', log(start(1), call(1, 'ask_user_question', 'q1'), end(1, 'interrupted')));
+  host.start();
+  await settle();
+  assert.deepEqual(textOf(agent), ['Ask again (turn 1).']);
+});
+
+const LOCALIZED_QUESTION = {
+  en: "This message was sent automatically by the plugin after a harness restart; it is not the user's reply. The question you asked the user was cut off by the restart and has not been answered. Ask the same question again and wait for the answer; do not decide for the user.",
+  zh: '这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。',
+};
+assert(LOCALIZED_QUESTION.en.startsWith(QUESTION));

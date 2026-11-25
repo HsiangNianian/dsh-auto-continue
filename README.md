@@ -249,6 +249,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | Continue text (max tokens) | `continueTextMaxTokens` | The output token limit was reached |
 | Continue text (silent turn) | `continueTextSilent` | A turn ended with reasoning only |
 | Continue text (after harness restart) | `continueTextInterrupted` | The startup scan resumes a turn a restart cut off |
+| Continue text (unanswered question) | `continueTextQuestion` | The cut-off step was a question to you (`ask_user_question`) you have not answered. Sent instead of the continue text, without a guard note |
 | Continue text (autonomous loop) | `continueTextLoop` | Each autonomous-loop round |
 | Guard text (unconfirmed result) | `guardPendingText` | Appended when the last tool call may not have finished |
 | Guard text (tool succeeded) | `guardDoneText` | Appended when the last tool call succeeded |
@@ -266,6 +267,7 @@ Built-in texts exist in English, Chinese and Russian. They follow the DSH langua
 | `continueText`, `continueTextMaxTokens`, `continueTextLoop` | `Continue` |
 | `continueTextSilent` | `Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.` |
 | `continueTextInterrupted` | `Continue. The harness was restarted while your previous turn was still running; tool calls pending at the restart are recorded with unknown outcomes. Resume where you left off, verifying external state before retrying anything that may have side effects.` |
+| `continueTextQuestion` | `This message was sent automatically by the plugin after a harness restart; it is not the user's reply. The question you asked the user was cut off by the restart and has not been answered. Ask the same question again and wait for the answer; do not decide for the user.` |
 | `guardPendingText` | `(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)` |
 | `guardDoneText` | `(The previous tool "{tool}" completed successfully. Result: {result}; do not run it again. Continue from there.)` |
 | `loopText` | `(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)` |

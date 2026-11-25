@@ -123,6 +123,8 @@ const LOOP_GUARD_CANCEL_CAUSE = {
 const LOOP_COMPLETED_REASON = 'turn/end:completed';
 const LOOP_SILENT_REASON = 'turn/end:loop-silent';
 const MANUAL_NOTIFICATION_REASON = 'manual:notification';
+/** The host's question tool; a plain continue while it is unanswered reads as the user's reply. */
+const ASK_USER_QUESTION_TOOL = 'ask_user_question';
 
 /** Yield between storage batches without spending a live-scan polling interval. */
 const SWEEP_OBSERVE_BATCH = 16;
@@ -2145,15 +2147,17 @@ export class AutoContinueRunner {
     state: SessionState,
     template: string,
   ): string {
-    let text = fillTemplate(template, {
+    const guard = this.currentGuard(state);
+    // An unanswered question gets its own text, without the guard note: "continue" would answer it.
+    const unanswered = (guard.kind === 'pending' || guard.kind === 'failed') && guard.tool === ASK_USER_QUESTION_TOOL;
+    let text = fillTemplate(unanswered ? config.continueTextQuestion : template, {
       facts: state.lastFailure,
       tool: state.tools.lastTool(),
       turn: state.lastTurn,
       errorCount: state.consecutive + 1,
       elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
     });
-    if (!config.guardTools) return text;
-    const guard = this.currentGuard(state);
+    if (unanswered || !config.guardTools) return text;
     if (guard.kind === 'pending') {
       text += ` ${fillTemplate(config.guardPendingText, { tool: guard.tool, result: guard.result })}`;
     } else if (guard.kind === 'done') {

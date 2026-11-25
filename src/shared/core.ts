@@ -52,6 +52,8 @@ export const LOCALIZED_TEXT_DEFAULTS = {
     continueTextLoop: '继续',
     continueTextInterrupted:
       '继续。宿主在你上一轮运行期间重启了; 重启时未完成的工具调用已按「结果未知」收尾。从中断处继续, 重试可能有副作用的操作前先核实外部状态。',
+    continueTextQuestion:
+      '这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。',
     guardPendingText: '(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)',
     guardDoneText: '(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)',
     loopText: '(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)',
@@ -64,6 +66,8 @@ export const LOCALIZED_TEXT_DEFAULTS = {
     continueTextLoop: 'Continue',
     continueTextInterrupted:
       'Continue. The harness was restarted while your previous turn was still running; tool calls pending at the restart are recorded with unknown outcomes. Resume where you left off, verifying external state before retrying anything that may have side effects.',
+    continueTextQuestion:
+      "This message was sent automatically by the plugin after a harness restart; it is not the user's reply. The question you asked the user was cut off by the restart and has not been answered. Ask the same question again and wait for the answer; do not decide for the user.",
     guardPendingText:
       '(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)',
     guardDoneText:
@@ -79,6 +83,8 @@ export const LOCALIZED_TEXT_DEFAULTS = {
     continueTextLoop: 'Продолжай',
     continueTextInterrupted:
       'Продолжай. Хост перезапустился, пока предыдущий ход ещё выполнялся; вызовы инструментов, незавершённые на момент перезапуска, записаны с неизвестным результатом. Продолжай с места остановки, проверяя внешнее состояние перед повтором действий с возможными побочными эффектами.',
+    continueTextQuestion:
+      'Это сообщение плагин отправил автоматически после перезапуска хоста, это не ответ пользователя. Вопрос, который ты задал пользователю, прервался из-за перезапуска, и ответа на него ещё нет. Задай тот же вопрос снова и дождись ответа, не принимай решение за пользователя.',
     guardPendingText:
       '(Предыдущий инструмент «{tool}», возможно, не завершился. Проверь его состояние перед продолжением и не запускай его повторно.)',
     guardDoneText:
@@ -110,6 +116,8 @@ export interface AutoContinueSettings {
   continueTextLoop?: string;
   /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
   continueTextInterrupted?: string;
+  /** Text sent instead of a continue text (and its guard note) while the user has not answered the last `ask_user_question`. */
+  continueTextQuestion?: string;
   /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
   guardTools?: boolean;
   /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */
@@ -249,6 +257,10 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     typeof value.continueTextInterrupted === 'string' && value.continueTextInterrupted.trim() !== ''
       ? value.continueTextInterrupted
       : localized.continueTextInterrupted;
+  const questionText =
+    typeof value.continueTextQuestion === 'string' && value.continueTextQuestion.trim() !== ''
+      ? value.continueTextQuestion
+      : localized.continueTextQuestion;
   const guardPendingText =
     typeof value.guardPendingText === 'string' && value.guardPendingText.trim() !== ''
       ? value.guardPendingText
@@ -268,6 +280,7 @@ export function resolveConfig(section: AutoContinueSettings | undefined): AutoCo
     continueTextSilent: silentText,
     continueTextLoop: loopText,
     continueTextInterrupted: interruptedText,
+    continueTextQuestion: questionText,
     guardTools: booleanOr(value.guardTools, DEFAULT_CONFIG.guardTools),
     guardPendingText,
     guardDoneText,

@@ -249,6 +249,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | 超限时的继续文本 | `continueTextMaxTokens` | 触到输出 token 上限 |
 | 无输出回合的继续文本 | `continueTextSilent` | 回合只输出了推理 |
 | 宿主重启后恢复的继续文本 | `continueTextInterrupted` | 启动扫描恢复被重启打断的回合 |
+| 提问未获回答时的继续文本 | `continueTextQuestion` | 被打断的那一步是向你提问(`ask_user_question`)且你还没回答。替代继续文本发送，不附护栏提示 |
 | 自主循环的继续文本 | `continueTextLoop` | 自主循环的每一轮 |
 | 结果未确认时的护栏文本 | `guardPendingText` | 上一步工具调用可能没完成时附加 |
 | 工具已成功时的护栏文本 | `guardDoneText` | 上一步工具调用已成功时附加 |
@@ -266,6 +267,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | `continueText`、`continueTextMaxTokens`、`continueTextLoop` | `继续` |
 | `continueTextSilent` | `继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。` |
 | `continueTextInterrupted` | `继续。宿主在你上一轮运行期间重启了; 重启时未完成的工具调用已按「结果未知」收尾。从中断处继续, 重试可能有副作用的操作前先核实外部状态。` |
+| `continueTextQuestion` | `这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。` |
 | `guardPendingText` | `(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)` |
 | `guardDoneText` | `(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)` |
 | `loopText` | `(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)` |
