@@ -377,6 +377,24 @@ function isHostCancel(value: unknown): boolean {
 }
 
 /**
+ * Whether the user switched the goal off. A restart and a user stop of a turn that was not a goal
+ * round both leave an active goal disarmed; only the stop is a decision to wait. The newer of the
+ * last user stop and the last goal resume/create decides, so the user's own resume lifts the hold.
+ */
+function goalStoppedByUser(events: readonly SessionEvent[]): boolean {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index] as { type: string; data?: { operation?: unknown; reason?: unknown } };
+    if (event.type === 'goal/change') {
+      if (event.data?.operation === 'resume' || event.data?.operation === 'create') return false;
+    } else if (event.type === 'turn/end' && readCancelCause(event.data?.reason) === 'user') {
+      // Only the user's stop: a restart, parent, hook (loop guard) or unknown cause is not a decision to wait.
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Decide whether a child session's tail is a restart interruption worth waking
  * its root session for. Returns `undefined` when the child finished normally,
  * was stopped by a human or by its parent, or was superseded by a later user
@@ -2924,6 +2942,10 @@ export class AutoContinueRunner {
       }
       const ref: GoalRefLike = view.ref ?? { id: view.id, revision };
       if (view.phase === 'active' && view.activation === 'disarmed') {
+        if (goalStoppedByUser(snapshotSessionEvents(agent.session))) {
+          this.log(`会话 ${sessionId}: goal 是用户停下的, 不重新武装(等用户自己恢复)`);
+          return;
+        }
         goals.resume(agent, ref);
         this.log(`会话 ${sessionId}: goal 被重启失活, 已重新武装`);
         return;
