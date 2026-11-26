@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.21.0) — 2026-11-25
+
+### Added
+
+- **Continue text (unanswered question)** (`continueTextQuestion`): when the step a restart or error cut off was an `ask_user_question` the user has not answered, the plugin sends this instead of the usual continue text, without a guard note. It says the message is automatic and asks the model to ask again and wait. Before, "continue" plus the guard note read as the user's answer, and the model went on without one. Built-in en / zh / ru defaults ([#96](https://github.com/HsiangNianian/dsh-auto-continue/pull/96), thanks @xiaobaifly7)
+
+### Fixed
+
+- Restart and retryable-error recovery no longer resume a session whose goal is `blocked`, or `paused` unless **Resume goals** and **Resume paused goals** are both on. A goal that can't be read is treated as held. This covers live sessions, closed subagents and the restart wake of a main conversation. `max-tokens` and silent-turn continuations, the autonomous loop and **Resume now** are unchanged ([#96](https://github.com/HsiangNianian/dsh-auto-continue/pull/96))
+- `maxConsecutive` now holds across host restarts. The startup scan rebuilds the count from the continuations already in the session log (since the last user message, user stop or visible answer), so continue → crash → restart no longer loops forever. Nothing new is stored ([#96](https://github.com/HsiangNianian/dsh-auto-continue/pull/96))
+
+[Upgrade instructions and validation](docs/releases/v0.21.0.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.20.2...v0.21.0)
+
 ## [0.20.2](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.20.2) — 2026-11-19
 
 ### Fixed
