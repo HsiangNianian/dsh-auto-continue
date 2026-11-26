@@ -386,10 +386,9 @@ function goalStoppedByUser(events: readonly SessionEvent[]): boolean {
     const event = events[index] as { type: string; data?: { operation?: unknown; reason?: unknown } };
     if (event.type === 'goal/change') {
       if (event.data?.operation === 'resume' || event.data?.operation === 'create') return false;
-    } else if (event.type === 'turn/end') {
-      const reason = event.data?.reason;
-      if (readReasonKind(reason) === 'aborted' && !isHostCancel(reason) &&
-          !isLoopGuardCancelReason((reason as { reason?: unknown }).reason)) return true;
+    } else if (event.type === 'turn/end' && readCancelCause(event.data?.reason) === 'user') {
+      // Only the user's stop: a restart, parent, hook (loop guard) or unknown cause is not a decision to wait.
+      return true;
     }
   }
   return false;

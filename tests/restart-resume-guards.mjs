@@ -104,6 +104,8 @@ test('a goal the user stopped stays disarmed when a later failed turn is retried
     stopped: log(start(1), userStop, said('stop touching the network'), start(2)),
     'resumed-by-user': log(start(1), userStop, { type: 'goal/change', data: { operation: 'resume' } }, start(2)),
     restarted: log(start(1), end(1, 'aborted', { reason: { kind: 'disposed' } }), start(2)),
+    'parent-cancelled': log(start(1), end(1, 'aborted', { reason: { kind: 'parent' } }), start(2)),
+    'cause-missing': log(start(1), end(1, 'aborted'), start(2)),
   };
   const agents = Object.entries(histories).map(([id, events]) => [host.agent(id, events), events]);
   host.start();
@@ -113,8 +115,8 @@ test('a goal the user stopped stays disarmed when a later failed turn is retried
     host.emit(agent, failure);
   }
   await settle();
-  assert.deepEqual(agents.map(([agent]) => agent.followups.length), [1, 1, 1], 'the failed turn is still retried');
-  assert.deepEqual(rearmed, ['resumed-by-user', 'restarted']);
+  assert.deepEqual(agents.map(([agent]) => agent.followups.length), [1, 1, 1, 1, 1], 'the failed turn is still retried');
+  assert.deepEqual(rearmed, ['resumed-by-user', 'restarted', 'parent-cancelled', 'cause-missing'], 'only a user stop holds the goal');
   assert(logs.some((line) => line.includes('stopped: goal 是用户停下的')));
 });
 
