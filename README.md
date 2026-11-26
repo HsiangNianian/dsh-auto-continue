@@ -73,7 +73,7 @@ To update, let running work finish, stop DSH, run the same command again, then r
 
 | DSH runtime | Plugin version | Settings location |
 | --- | --- | --- |
-| 0.2.2-rc.1, 0.2.1-rc.2, 0.2.1-alpha.1 | 0.21.0 verified | **Plugins → dsh-client-auto-continue** |
+| 0.2.2-rc.1, 0.2.1-rc.2, 0.2.1-alpha.1 | 0.21.1 verified | **Plugins → dsh-client-auto-continue** |
 | 0.2.0-rc.1 | 0.12.1 or newer | **Plugins → dsh-client-auto-continue** |
 | 0.1.7-rc.2 | 0.11.9 or newer | **Plugins → dsh-client-auto-continue** |
 | Older hosts with the legacy settings API | legacy UI | **Settings → Plugins → Plugin configuration** |
@@ -229,7 +229,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | Max backoff (ms) | `backoffMaxMs` | `300000` | Upper bound for the cooldown |
 | Pause while offline | `pauseWhenOffline` | `true` | Hold network-error retries while the host is offline, without using up attempts |
 | Offline re-check interval (ms) | `offlineCheckMs` | `15000` | How often a held retry checks the network. Minimum 1000 |
-| Re-arm goals disarmed by a restart | `resumeGoals` | `false` | After a continue message, re-arm an `active` goal the restart disarmed. This acts on your behalf, hence off |
+| Re-arm goals disarmed by a restart | `resumeGoals` | `false` | After a continue message, re-arm an `active` goal the restart disarmed. A goal you disarmed by stopping a turn stays off until you resume it. This acts on your behalf, hence off |
 | Resume paused goals | `resumePausedGoals` | `false` | Also resume goals you paused by hand. Needs `resumeGoals`. Without it, a session whose goal is paused is not resumed after a restart or an error |
 
 ### Startup recovery

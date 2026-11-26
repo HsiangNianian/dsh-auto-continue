@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.1](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.21.1) — 2026-11-26
+
+### Fixed
+
+- With **Resume goals** (`resumeGoals`) on, a continuation re-armed any `active` goal that was disarmed, including one the user disarmed by stopping a turn. After a stop followed by a retryable error, goal rounds started again on their own. The plugin now reads the session log and leaves the goal disarmed when the user's last stop is newer than the last goal `resume` or `create`. The failed turn is still retried. Restarts, loop-guard cancels and other host cancels still re-arm as before ([#97](https://github.com/HsiangNianian/dsh-auto-continue/pull/97), thanks @xiaobaifly7)
+
+[Upgrade instructions and validation](docs/releases/v0.21.1.md) · [Full changes](https://github.com/HsiangNianian/dsh-auto-continue/compare/v0.21.0...v0.21.1)
+
 ## [0.21.0](https://github.com/HsiangNianian/dsh-auto-continue/releases/tag/v0.21.0) — 2026-11-25
 
 ### Added

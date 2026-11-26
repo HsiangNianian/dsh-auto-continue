@@ -73,7 +73,7 @@ dsh web
 
 | DSH 内核 | 插件版本 | 设置入口 |
 | --- | --- | --- |
-| 0.2.2-rc.1、0.2.1-rc.2、0.2.1-alpha.1 | 0.21.0 已验证 | **插件 → dsh-client-auto-continue** |
+| 0.2.2-rc.1、0.2.1-rc.2、0.2.1-alpha.1 | 0.21.1 已验证 | **插件 → dsh-client-auto-continue** |
 | 0.2.0-rc.1 | 0.12.1 及以上 | **插件 → dsh-client-auto-continue** |
 | 0.1.7-rc.2 | 0.11.9 及以上 | **插件 → dsh-client-auto-continue** |
 | 仅有旧版设置 API 的宿主 | 旧版界面 | **设置 → 插件 → 插件配置** |
@@ -229,7 +229,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | 最大退避间隔 (ms) | `backoffMaxMs` | `300000` | 冷却时间的上限 |
 | 断网时暂停续跑 | `pauseWhenOffline` | `true` | 宿主断网时挂起网络类错误的重试，不消耗次数 |
 | 断网复检间隔 (ms) | `offlineCheckMs` | `15000` | 挂起期间多久检测一次网络，最小 1000 |
-| 重新武装被重启失活的 goal | `resumeGoals` | `false` | 发出继续消息后，把重启时被 disarm 的 `active` goal 重新 arm。这相当于替你授权，所以默认关闭 |
+| 重新武装被重启失活的 goal | `resumeGoals` | `false` | 发出继续消息后，把重启时被 disarm 的 `active` goal 重新 arm。你手动停止回合而失活的 goal 不会被重新 arm，等你自己恢复。这相当于替你授权，所以默认关闭 |
 | 恢复被暂停的 goal | `resumePausedGoals` | `false` | 连你手动暂停的 goal 也恢复；需同时开启 `resumeGoals`。不开时，goal 已暂停的会话在重启或出错后不续跑 |
 
 ### 启动恢复
