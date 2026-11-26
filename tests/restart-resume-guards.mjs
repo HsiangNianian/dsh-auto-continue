@@ -92,6 +92,32 @@ test('resumePausedGoals keeps permitting paused goals, but never blocked ones', 
   assert.equal(blocked.followups.length, 0);
 });
 
+test('a goal the user stopped stays disarmed when a later failed turn is retried', async (t) => {
+  const { host, settle, logs } = scenario(t, { scanOnBoot: false, resumeGoals: true });
+  const rearmed = [];
+  host.provide('goals', {
+    get: () => ({ id: 'g', revision: 3, phase: 'active', activation: 'disarmed' }),
+    resume: (agent) => { rearmed.push(agent.session.id); },
+  });
+  const userStop = end(1, 'aborted', { reason: { kind: 'user' } });
+  const histories = {
+    stopped: log(start(1), userStop, said('stop touching the network'), start(2)),
+    'resumed-by-user': log(start(1), userStop, { type: 'goal/change', data: { operation: 'resume' } }, start(2)),
+    restarted: log(start(1), end(1, 'aborted', { reason: { kind: 'disposed' } }), start(2)),
+  };
+  const agents = Object.entries(histories).map(([id, events]) => [host.agent(id, events), events]);
+  host.start();
+  for (const [agent, events] of agents) {
+    const failure = { ...end(2, 'error', { error: { message: 'network down' } }), seq: events.length + 1, time: Date.now() };
+    events.push(failure);
+    host.emit(agent, failure);
+  }
+  await settle();
+  assert.deepEqual(agents.map(([agent]) => agent.followups.length), [1, 1, 1], 'the failed turn is still retried');
+  assert.deepEqual(rearmed, ['resumed-by-user', 'restarted']);
+  assert(logs.some((line) => line.includes('stopped: goal 是用户停下的')));
+});
+
 test('a goal that cannot be read holds recovery as well', async (t) => {
   const { host, settle, logs } = scenario(t);
   host.provide('goals', { get() { throw new Error('goal replay failed'); }, resume() {} });
