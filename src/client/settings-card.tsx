@@ -100,6 +100,7 @@ export interface AutoContinueSettingsCardState extends CardShell {
   continueTextLoop: CardFieldState;
   continueTextSilent: CardFieldState;
   continueTextInterrupted: CardFieldState;
+  continueTextQuestion: CardFieldState;
   guardTools: CardFieldState;
   guardPendingText: CardFieldState;
   guardDoneText: CardFieldState;
@@ -169,6 +170,7 @@ export class AutoContinueSettingsCardController {
       textField('continueTextLoop'),
       textField('continueTextSilent'),
       textField('continueTextInterrupted'),
+      textField('continueTextQuestion'),
       booleanField('guardTools'),
       textField('guardPendingText'),
       textField('guardDoneText'),
@@ -219,6 +221,7 @@ export class AutoContinueSettingsCardController {
       continueTextLoop: this.form.field('continueTextLoop'),
       continueTextSilent: this.form.field('continueTextSilent'),
       continueTextInterrupted: this.form.field('continueTextInterrupted'),
+      continueTextQuestion: this.form.field('continueTextQuestion'),
       guardTools: this.form.field('guardTools'),
       guardPendingText: this.form.field('guardPendingText'),
       guardDoneText: this.form.field('guardDoneText'),
@@ -331,7 +334,7 @@ const groups = [
   { id: 'general', fields: ['paused', 'showComposerToggle', 'usePluginSource', 'resumeSilentTurns', 'resumeSubagentSessions', 'resumeCompletedTurns', 'loopMaxIterations', 'notify'] },
   { id: 'recovery', fields: ['graceMs', 'cooldownMs', 'maxConsecutive', 'classify', 'retryableErrorPatterns', 'backoffFactor', 'backoffMaxMs', 'pauseWhenOffline', 'offlineCheckMs', 'resumeGoals', 'resumePausedGoals'] },
   { id: 'startup', fields: ['scanOnBoot', 'resumeInterruptedChildren', 'scanLimit', 'freshMs'] },
-  { id: 'prompts', fields: ['continueText', 'continueTextMaxTokens', 'continueTextSilent', 'continueTextInterrupted', 'continueTextLoop', 'guardPendingText', 'guardDoneText', 'loopText'] },
+  { id: 'prompts', fields: ['continueText', 'continueTextMaxTokens', 'continueTextSilent', 'continueTextInterrupted', 'continueTextQuestion', 'continueTextLoop', 'guardPendingText', 'guardDoneText', 'loopText'] },
   { id: 'safety', fields: ['guardTools', 'loopGuard', 'loopShortChars', 'loopWindowMs', 'loopShortCount', 'loopRepeatText', 'loopToolRepeat'] },
   { id: 'status', fields: ['verbose'] },
 ] as const satisfies ReadonlyArray<{ id: string; fields: readonly FieldName[] }>;
@@ -339,7 +342,7 @@ type Category = typeof groups[number]['id'];
 const textDefaults: Partial<Record<FieldName, SettingsCardKey>> = {
   continueText: 'default.continueText', continueTextMaxTokens: 'default.continueTextMaxTokens',
   continueTextSilent: 'default.continueTextSilent', continueTextLoop: 'default.continueTextLoop',
-  continueTextInterrupted: 'default.continueTextInterrupted',
+  continueTextInterrupted: 'default.continueTextInterrupted', continueTextQuestion: 'default.continueTextQuestion',
   guardPendingText: 'default.guardPendingText', guardDoneText: 'default.guardDoneText', loopText: 'default.loopText',
 };
 

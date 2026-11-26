@@ -48,6 +48,8 @@ const settingsFields = {
   continueTextLoop: z.string().default(''),
   /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
   continueTextInterrupted: z.string().default(''),
+  /** Text sent instead of a continue text (and its guard note) while the user has not answered the last `ask_user_question`. */
+  continueTextQuestion: z.string().default(''),
   /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
   guardTools: z.boolean().default(true),
   /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

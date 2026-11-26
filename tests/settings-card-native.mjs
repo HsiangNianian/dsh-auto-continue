@@ -147,6 +147,6 @@ assert.match(retry, /role="switch"[^>]*aria-label="Classify errors"/);
 assert.match(retry, /Broad fragments can also retry normally skipped authentication or balance errors/);
 
 const prompts = render('prompts');
-assert.equal((prompts.match(/<textarea/g) ?? []).length, 8, 'prompt fields stay editable textareas');
+assert.equal((prompts.match(/<textarea/g) ?? []).length, 9, 'prompt fields stay editable textareas');
 
 console.log('native settings form: primitives, segmented mode, native fields, textareas and invite ✅');

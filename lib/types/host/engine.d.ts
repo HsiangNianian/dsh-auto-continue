@@ -155,6 +155,7 @@ export declare class AutoContinueRunner {
      */
     private onHostEvent;
     private tracksOutput;
+    private chunkVisible;
     /** Treat unknown block kinds conservatively: only reasoning and blank text are silent. */
     private hasVisibleContent;
     /** 从 assistant/message 事件提取纯文本。 */
@@ -305,6 +306,25 @@ export declare class AutoContinueRunner {
      * resume 能重新 arm; paused 则是人类的显式决定。两者都默认关闭。
      */
     private rearmGoal;
+    private goals;
+    /**
+     * A paused or blocked goal is a decision to stop and wait; a continue sent anyway reads as the
+     * user resuming it. `resumePausedGoals` is the user's standing permission to resume paused
+     * goals, so it lets those through.
+     */
+    private heldGoalPhase;
+    private goalHold;
+    /** `heldGoalPhase` for a session without a live agent, read from its stored goal projection. */
+    private storedGoalHold;
+    /**
+     * Continuations this plugin sent since the last message from the user, manual stop or turn
+     * with visible output, read from the log so the consecutive cap survives a host restart.
+     * Mirrors the in-memory count: a continuation right after a visible completion is a loop
+     * round and does not count. With `usePluginSource` off a continuation is a `user` message
+     * matching one of the configured continue texts, so a user message identical to one of them
+     * is counted too; that can only stop recovery earlier, never later.
+     */
+    private continuationsInLog;
     /**
      * 按会话记录的 preset 组合把存储会话恢复为 live agent(镜像会话控制
      * 器的 adopt 路径: preset 挂载 + 会话已记录的模型选择回装)。模型选择

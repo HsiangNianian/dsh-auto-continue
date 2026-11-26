@@ -85,9 +85,11 @@ function childSweep(t, {
   const { host, tick, textOf } = scenario(t, config);
   for (const [name, service] of Object.entries(services)) host.provide(name, service);
   const eventsById = new Map([[rootId, rootEvents]]);
+  const valuesById = new Map();
   const records = [{ header: { id: rootId, origin: 'main' }, live: rootLive, persisted: true }];
   for (const child of children) {
     eventsById.set(child.id, child.events);
+    if (child.goal !== undefined) valuesById.set(child.id, { goal: child.goal });
     records.push({
       header: {
         id: child.id,
@@ -111,7 +113,7 @@ function childSweep(t, {
       return {
         events: [...events],
         header: { ...(records.find((record) => record.header.id === id)?.header ?? { id }) },
-        projections: { values: {} },
+        projections: { values: valuesById.get(id) ?? {} },
         [Symbol.dispose]: () => {},
       };
     },
@@ -328,7 +330,7 @@ test('⑩-a an active goal disarmed by the restart is re-armed once', async (t) 
 
 test('⑩-b a paused goal stays paused unless resumePausedGoals is on', async (t) => {
   const goals = goalService(() => ({ id: 'goal-2', revision: 1, phase: 'paused', activation: 'disarmed' }));
-  const { tick } = childSweep(t, {
+  const { tick, parent } = childSweep(t, {
     rootEvents: cleanRoot(),
     children: [{ id: CHILD, events: [turnStart(1)] }],
     config: { resumeInterruptedChildren: true, resumeGoals: true },
@@ -336,9 +338,10 @@ test('⑩-b a paused goal stays paused unless resumePausedGoals is on', async (t
   });
   await tick();
   eq(goals.calls.resume.length, 0, '⑩-b a hand-paused goal is not resumed by default');
+  eq(parent.followups.length, 0, '⑩-b and its root is not woken: the wake would read as the user resuming it');
 });
 
-test('⑩-c with resumeGoals off the goals service is never touched', async (t) => {
+test('⑩-c with resumeGoals off nothing is re-armed', async (t) => {
   const goals = goalService(activeDisarmedGoal());
   const { tick } = childSweep(t, {
     rootEvents: cleanRoot(),
@@ -347,8 +350,8 @@ test('⑩-c with resumeGoals off the goals service is never touched', async (t) 
     services: { goals },
   });
   await tick();
-  eq(goals.calls.get, 0, '⑩-c goals.get is never called when re-arming is off');
-  eq(goals.calls.resume.length, 0, '⑩-c and nothing is re-armed');
+  // The phase is still read: a paused or blocked goal blocks the wake even with re-arming off.
+  eq(goals.calls.resume.length, 0, '⑩-c nothing is re-armed when re-arming is off');
 });
 
 /**
@@ -416,6 +419,22 @@ test('⑩-e a goal view without revision never ends up as a successful re-arm', 
   isTrue(true, '⑩-e the missing revision did not crash the scan');
 });
 
+test('⑩-f a child whose own stored goal is held is left out of the wake', async (t) => {
+  const { tick, textOf, parent } = childSweep(t, {
+    rootEvents: cleanRoot(),
+    children: [
+      { id: CHILD, events: [turnStart(1)], goal: { goal: { phase: 'blocked' } } },
+      { id: NESTED_MID, events: [turnStart(1)] },
+    ],
+    config: { resumeInterruptedChildren: true },
+  });
+  await tick();
+  eq(parent.followups.length, 1, '⑩-f the root is still woken for the other child');
+  const text = textOf(parent.followups[0]);
+  notMatch(text, CHILD, '⑩-f the child with a blocked goal is not listed');
+  match(text, NESTED_MID, '⑩-f the child without a goal is listed');
+});
+
 // ---------- ⑪ one-shot children have no log to resume ----------
 
 test('⑪ a one-shot child that was already discarded is not observed', async (t) => {
@@ -446,6 +465,24 @@ test('⑫ child observations stay bounded to eight per scan round', async (t) =>
   const text = textOf(parent.followups[0]);
   match(text, 'quota-child-7', '⑫ the last observed child is listed');
   notMatch(text, 'quota-child-8', '⑫ the unobserved child is not listed');
+});
+
+// ---------- ⑬ the root's restored cap also gates the wake ----------
+
+test('⑬ a clean root whose log already reached the cap is not woken', async (t) => {
+  const ours = { type: 'user/message', data: { id: 'm', role: 'user', source: { kind: 'plugin:dsh-client-auto-continue' }, content: [{ type: 'text', text: 'Continue' }] } };
+  const rootEvents = [
+    ours, turnStart(1), turnEnd(1, 'interrupted'),
+    ours, turnStart(2), turnEnd(2, 'interrupted'),
+    ours, turnStart(3), turnEnd(3, 'completed'), // no visible output: not a success
+  ].map((event, index) => ({ ...event, seq: index + 1, time: Date.now() }));
+  const { tick, parent } = childSweep(t, {
+    rootEvents,
+    children: [{ id: CHILD, events: [turnStart(1)] }],
+    config: { resumeInterruptedChildren: true },
+  });
+  await tick();
+  eq(parent.followups.length, 0, '⑬ three continuations before the restart: the root is not woken');
 });
 
 after(() => {

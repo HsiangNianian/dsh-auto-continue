@@ -35,6 +35,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
         readonly continueTextSilent: "继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。";
         readonly continueTextLoop: "继续";
         readonly continueTextInterrupted: "继续。宿主在你上一轮运行期间重启了; 重启时未完成的工具调用已按「结果未知」收尾。从中断处继续, 重试可能有副作用的操作前先核实外部状态。";
+        readonly continueTextQuestion: "这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。";
         readonly guardPendingText: "(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)";
         readonly guardDoneText: "(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)";
         readonly loopText: "(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)";
@@ -45,6 +46,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
         readonly continueTextSilent: "Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.";
         readonly continueTextLoop: "Continue";
         readonly continueTextInterrupted: "Continue. The harness was restarted while your previous turn was still running; tool calls pending at the restart are recorded with unknown outcomes. Resume where you left off, verifying external state before retrying anything that may have side effects.";
+        readonly continueTextQuestion: "This message was sent automatically by the plugin after a harness restart; it is not the user's reply. The question you asked the user was cut off by the restart and has not been answered. Ask the same question again and wait for the answer; do not decide for the user.";
         readonly guardPendingText: "(The previous tool \"{tool}\" may not have completed. Check its state before continuing and do not run it again.)";
         readonly guardDoneText: "(The previous tool \"{tool}\" completed successfully. Result: {result}; do not run it again. Continue from there.)";
         readonly loopText: "(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)";
@@ -55,6 +57,7 @@ export declare const LOCALIZED_TEXT_DEFAULTS: {
         readonly continueTextSilent: "Продолжай. Предыдущий ход закончился только внутренним рассуждением: ни ответа, ни вызова инструмента, поэтому пользователь ничего не увидел. Каждый ход должен заканчиваться вызовом инструмента или видимым ответом.";
         readonly continueTextLoop: "Продолжай";
         readonly continueTextInterrupted: "Продолжай. Хост перезапустился, пока предыдущий ход ещё выполнялся; вызовы инструментов, незавершённые на момент перезапуска, записаны с неизвестным результатом. Продолжай с места остановки, проверяя внешнее состояние перед повтором действий с возможными побочными эффектами.";
+        readonly continueTextQuestion: "Это сообщение плагин отправил автоматически после перезапуска хоста, это не ответ пользователя. Вопрос, который ты задал пользователю, прервался из-за перезапуска, и ответа на него ещё нет. Задай тот же вопрос снова и дождись ответа, не принимай решение за пользователя.";
         readonly guardPendingText: "(Предыдущий инструмент «{tool}», возможно, не завершился. Проверь его состояние перед продолжением и не запускай его повторно.)";
         readonly guardDoneText: "(Предыдущий инструмент «{tool}» завершился успешно. Результат: {result}; не запускай его повторно, продолжай с этого места.)";
         readonly loopText: "(Похоже, ты застрял в цикле. Перестань повторять последнее действие и продолжай другим способом.)";
@@ -82,6 +85,8 @@ export interface AutoContinueSettings {
     continueTextLoop?: string;
     /** Text sent when a turn is recovered after a harness restart closed it as interrupted. */
     continueTextInterrupted?: string;
+    /** Text sent instead of a continue text (and its guard note) while the user has not answered the last `ask_user_question`. */
+    continueTextQuestion?: string;
     /** Idempotency guard: inspect the last tool call before resuming and steer the model. */
     guardTools?: boolean;
     /** Guard text appended when the last tool call has no confirmed result (it may have partially executed). */

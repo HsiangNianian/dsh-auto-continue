@@ -222,7 +222,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | --- | --- | --- | --- |
 | Grace period (ms) | `graceMs` | `3000` | Wait before sending; a new turn or your own message cancels it |
 | Cooldown (ms) | `cooldownMs` | `20000` | Minimum gap between recovery attempts in one session. A failure during cooldown waits for the rest of it |
-| Max consecutive | `maxConsecutive` | `3` | Attempts before giving up. Resets when you send a message or a turn ends with visible output. Loop continuations after normal completions do not count |
+| Max consecutive | `maxConsecutive` | `3` | Attempts before giving up. Resets when you send a message, press Stop, or a turn ends with visible output. Loop continuations after normal completions do not count. After a host restart, continuations already in the conversation count too |
 | Classify errors | `classify` | `true` | Retry transient errors only; skip permanent ones. Off = retry every error |
 | Custom retryable errors | `retryableErrorPatterns` | `''` | One literal per line, case-insensitive, matched against code, HTTP status and message. Overrides the built-in classifier |
 | Backoff factor | `backoffFactor` | `2` | Cooldown multiplier per consecutive failure (20 s → 40 s → 80 s) |
@@ -230,7 +230,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | Pause while offline | `pauseWhenOffline` | `true` | Hold network-error retries while the host is offline, without using up attempts |
 | Offline re-check interval (ms) | `offlineCheckMs` | `15000` | How often a held retry checks the network. Minimum 1000 |
 | Re-arm goals disarmed by a restart | `resumeGoals` | `false` | After a continue message, re-arm an `active` goal the restart disarmed. This acts on your behalf, hence off |
-| Resume paused goals | `resumePausedGoals` | `false` | Also resume goals you paused by hand. Needs `resumeGoals` |
+| Resume paused goals | `resumePausedGoals` | `false` | Also resume goals you paused by hand. Needs `resumeGoals`. Without it, a session whose goal is paused is not resumed after a restart or an error |
 
 ### Startup recovery
 
@@ -249,6 +249,7 @@ Times are in milliseconds. Text fields left empty use the built-in text in the c
 | Continue text (max tokens) | `continueTextMaxTokens` | The output token limit was reached |
 | Continue text (silent turn) | `continueTextSilent` | A turn ended with reasoning only |
 | Continue text (after harness restart) | `continueTextInterrupted` | The startup scan resumes a turn a restart cut off |
+| Continue text (unanswered question) | `continueTextQuestion` | The cut-off step was a question to you (`ask_user_question`) you have not answered. Sent instead of the continue text, without a guard note |
 | Continue text (autonomous loop) | `continueTextLoop` | Each autonomous-loop round |
 | Guard text (unconfirmed result) | `guardPendingText` | Appended when the last tool call may not have finished |
 | Guard text (tool succeeded) | `guardDoneText` | Appended when the last tool call succeeded |
@@ -266,6 +267,7 @@ Built-in texts exist in English, Chinese and Russian. They follow the DSH langua
 | `continueText`, `continueTextMaxTokens`, `continueTextLoop` | `Continue` |
 | `continueTextSilent` | `Continue. Your previous turn ended with internal reasoning only, with no message and no tool call, so nothing reached the user. Always finish a turn with a tool call or a visible answer.` |
 | `continueTextInterrupted` | `Continue. The harness was restarted while your previous turn was still running; tool calls pending at the restart are recorded with unknown outcomes. Resume where you left off, verifying external state before retrying anything that may have side effects.` |
+| `continueTextQuestion` | `This message was sent automatically by the plugin after a harness restart; it is not the user's reply. The question you asked the user was cut off by the restart and has not been answered. Ask the same question again and wait for the answer; do not decide for the user.` |
 | `guardPendingText` | `(The previous tool "{tool}" may not have completed. Check its state before continuing and do not run it again.)` |
 | `guardDoneText` | `(The previous tool "{tool}" completed successfully. Result: {result}; do not run it again. Continue from there.)` |
 | `loopText` | `(You may be stuck in a loop. Stop repeating the last action and continue with a different approach.)` |
@@ -312,9 +314,9 @@ Patterns are plain substrings, not regular expressions. Cooldown and **Max conse
 [![Auto-continue decision flow](docs/auto-continue-workflow.en.svg)](docs/auto-continue-workflow.en.html)
 
 1. **Triggers.** The engine listens to session events in the host. A `turn/end` with `error`, `max-tokens`, a silent ending, or `completed` (loop mode only) starts the flow. After a host restart, the startup scan checks open and stored sessions every 3 seconds until the scan window ends. The loop guard watches running turns and cancels one that repeats itself.
-2. **Session check.** Nothing is sent while auto-continue is paused globally, the session is Off or paused for an hour, or the session is a subagent and **Resume subagent sessions** is off. A subagent follows its main conversation's mode unless it has its own, and never runs the autonomous loop or the loop guard.
+2. **Session check.** Nothing is sent while auto-continue is paused globally, the session is Off or paused for an hour, or the session is a subagent and **Resume subagent sessions** is off. A turn cut off by a restart or a retryable error is not resumed while the session's goal is paused or blocked (a paused one is, with `resumeGoals` and `resumePausedGoals` on): resuming it would read as you lifting the pause. Finishing an answer cut off by `max-tokens` or a silent turn, and the autonomous loop, are not affected. A subagent follows its main conversation's mode unless it has its own, and never runs the autonomous loop or the loop guard.
 3. **End reason.** Manual Stop and policy blocks (`blocked`) are left alone, and so are permanent errors. Everything else recoverable goes to recovery. A normal completion only continues in Autonomous loop mode, which skips the cooldown and the consecutive limit but respects `loopMaxIterations`.
-4. **Retry budget.** Recovery stops at **Max consecutive**. Inside the cooldown, the send is deferred rather than dropped. The cooldown is multiplied by the backoff factor after each failure, up to the maximum.
+4. **Retry budget.** Recovery stops at **Max consecutive**. After a restart the count is rebuilt from the conversation: the continuations since your last message, your last Stop, or the last turn with visible output. With `usePluginSource` off, a continuation is recognized by matching the current continue texts, so a message you typed that is identical to one of them counts as well. Inside the cooldown, the send is deferred rather than dropped. The cooldown is multiplied by the backoff factor after each failure, up to the maximum.
 5. **Grace period.** The engine waits `graceMs`. A new turn or a message from you cancels the send.
 6. **Offline hold.** For network errors, the host checks for a non-loopback network interface and one resolvable public name. While offline it waits and re-checks every `offlineCheckMs`, then goes through grace and cooldown again. With `HTTP(S)_PROXY` or `ALL_PROXY` set, only interfaces are checked.
 7. **Send.** The engine picks the text for the reason, appends the idempotency-guard note, and sends it with `agent.followup` using the session's preset and model. If user turns are already queued, the continue message is moved ahead of them while their order is kept. With `resumeGoals` on, a goal the restart disarmed is re-armed.

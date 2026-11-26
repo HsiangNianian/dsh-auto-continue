@@ -123,6 +123,8 @@ const LOOP_GUARD_CANCEL_CAUSE = {
 const LOOP_COMPLETED_REASON = 'turn/end:completed';
 const LOOP_SILENT_REASON = 'turn/end:loop-silent';
 const MANUAL_NOTIFICATION_REASON = 'manual:notification';
+/** The host's question tool; a plain continue while it is unanswered reads as the user's reply. */
+const ASK_USER_QUESTION_TOOL = 'ask_user_question';
 
 /** Yield between storage batches without spending a live-scan polling interval. */
 const SWEEP_OBSERVE_BATCH = 16;
@@ -245,7 +247,9 @@ interface GoalServiceLike {
 interface StoredObservation {
   readonly events: readonly SessionEvent[];
   readonly header: { readonly id?: SessionId; readonly origin?: string; readonly agentPreset?: string };
-  readonly projections?: { readonly values: { readonly agentPreset?: string } };
+  readonly projections?: {
+    readonly values: { readonly agentPreset?: string; readonly goal?: { readonly goal?: { readonly phase?: string } } | null };
+  };
   [Symbol.dispose]?: () => void;
 }
 
@@ -442,6 +446,68 @@ function isLoopGuardCancelReason(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const cause = value as { kind?: unknown; reason?: unknown };
   return cause.kind === LOOP_GUARD_CANCEL_CAUSE.kind && cause.reason === LOOP_GUARD_CANCEL_CAUSE.reason;
+}
+
+const TEMPLATE_PLACEHOLDER = /\{(?:code|message|status|tool|turn|errorCount|sessionTitle|elapsed|result)\}/;
+
+/**
+ * The literal pieces of what `fillTemplate` can make of a template; each placeholder is a gap
+ * that may hold anything. `undefined` when there is no literal text: it would match every message.
+ */
+function templateParts(template: string): string[] | undefined {
+  const parts = template.split(TEMPLATE_PLACEHOLDER);
+  return parts.join('').trim() === '' ? undefined : parts;
+}
+
+/**
+ * Whole-message match of literal pieces with free gaps between them. Taking each middle piece
+ * at its leftmost position is enough for this shape, so it runs in linear time. A regex with
+ * one `[\s\S]*` per placeholder backtracks polynomially on a long near-miss: 4 KB took 1.6 s
+ * with four placeholders, and the boot scan tests every user message in the log.
+ */
+function matchesParts(text: string, parts: readonly string[]): boolean {
+  const first = parts[0] ?? '';
+  if (parts.length === 1) return text === first;
+  const last = parts[parts.length - 1] ?? '';
+  if (text.length < first.length + last.length || !text.startsWith(first) || !text.endsWith(last)) return false;
+  const end = text.length - last.length;
+  let at = first.length;
+  for (let i = 1; i < parts.length - 1; i += 1) {
+    const part = parts[i] ?? '';
+    const found = text.indexOf(part, at);
+    if (found < 0 || found + part.length > end) return false;
+    at = found + part.length;
+  }
+  return true;
+}
+
+/** `left` followed by `separator` and `right`, as one sequence of pieces. */
+function joinParts(left: readonly string[], separator: string, right: readonly string[]): string[] {
+  return [...left.slice(0, -1), `${left[left.length - 1] ?? ''}${separator}${right[0] ?? ''}`, ...right.slice(1)];
+}
+
+const definedParts = (templates: readonly string[]): string[][] =>
+  templates.map(templateParts).filter((parts): parts is string[] => parts !== undefined);
+
+/** Child hand-offs in any locale; the child id and code are gaps. */
+const HANDOFF_SHAPES = definedParts(Object.values(HANDOFF_COPY).map(copy => copy('{code}', '{code}')));
+const isHandoffText = (text: string): boolean => HANDOFF_SHAPES.some(parts => matchesParts(text, parts));
+
+/** Whole-message match for a continuation built from the current texts, guard note included. */
+function continueTextMatcher(config: AutoContinueConfig): (text: string) => boolean {
+  const texts = definedParts([
+    config.continueText, config.continueTextMaxTokens, config.continueTextSilent, config.continueTextLoop,
+    config.continueTextInterrupted, config.continueTextQuestion, config.loopText,
+  ]);
+  const guards = definedParts([config.guardPendingText, config.guardDoneText]);
+  const shapes = texts.flatMap(text => [text, ...guards.map(guard => joinParts(text, ' ', guard))]);
+  return text => shapes.some(parts => matchesParts(text, parts));
+}
+
+function messageText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content.map((block: { type?: unknown; text?: unknown } | null) =>
+    block?.type === 'text' && typeof block.text === 'string' ? block.text : '').join('');
 }
 
 /**
@@ -973,11 +1039,7 @@ export class AutoContinueRunner {
       const state = this.state(sessionId);
       if (this.tracksOutput(state, event)) {
         const chunk = event.data.chunk;
-        const visible = (chunk.type === 'text-delta' && visibleText(chunk.text) !== '') ||
-          chunk.type === 'tool-call-delta' ||
-          (chunk.type === 'block-end' && this.hasVisibleContent([chunk.block])) ||
-          (chunk.type === 'block-start' && chunk.blockType !== 'reasoning' && chunk.blockType !== 'text');
-        if (visible) state.turnOutput = 'visible';
+        if (this.chunkVisible(chunk)) state.turnOutput = 'visible';
         else if (state.turnOutput === 'empty' && chunk.type !== 'usage' && chunk.type !== 'finish') state.turnOutput = 'silent';
       }
       this.onAssistantChunk(sessionId, state, event);
@@ -995,6 +1057,13 @@ export class AutoContinueRunner {
   private tracksOutput(state: SessionState, event: SessionEvent): boolean {
     return state.running === true && state.outputTurn === (event.data as { turn?: number }).turn &&
       event.seq > state.outputStartSeq;
+  }
+
+  private chunkVisible(chunk: SessionEvent<'assistant/chunk'>['data']['chunk']): boolean {
+    return (chunk.type === 'text-delta' && visibleText(chunk.text) !== '') ||
+      chunk.type === 'tool-call-delta' ||
+      (chunk.type === 'block-end' && this.hasVisibleContent([chunk.block])) ||
+      (chunk.type === 'block-start' && chunk.blockType !== 'reasoning' && chunk.blockType !== 'text');
   }
 
   /** Treat unknown block kinds conservatively: only reasoning and blank text are silent. */
@@ -1728,7 +1797,9 @@ export class AutoContinueRunner {
    * The child's own recovery mode decides; the parent only has to be alive to
    * authorize the call.
    */
-  private async reviveChild(sessionId: SessionId, reason: string, text: string, force: boolean): Promise<void> {
+  private async reviveChild(
+    sessionId: SessionId, reason: string, text: string, force: boolean, checkGoal: boolean,
+  ): Promise<void> {
     if (this.disposed || this.getConfig().paused) return;
     if (!this.subagentRecoveryEnabled(sessionId)) return;
     const state = this.state(sessionId);
@@ -1747,6 +1818,22 @@ export class AutoContinueRunner {
       }
       if (state.consecutive >= config.maxConsecutive) {
         this.log(`冷恢复跳过 ${sessionId}: 已连续自动继续 ${state.consecutive} 次`);
+        return;
+      }
+    }
+    if (checkGoal) {
+      // The disposed child has no agent for `goals.get`; its stored goal projection holds the phase.
+      state.reviveInFlight = true;
+      let held: string | undefined;
+      try {
+        held = await this.storedGoalHold(sessionId, config);
+      } finally {
+        state.reviveInFlight = false;
+      }
+      if (this.disposed) return;
+      if (held !== undefined) {
+        state.recovering = false;
+        this.log(`冷恢复跳过 ${sessionId}: goal 处于 ${held}, 不替用户续跑`);
         return;
       }
     }
@@ -1953,6 +2040,10 @@ export class AutoContinueRunner {
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
     const template = this.templateFor(config, reason);
     const text = this.buildContinueText(config, state, template);
+    // Resuming an interrupted turn (restart, retryable error) speaks for the user; finishing a
+    // cut-off answer (max-tokens, silent), loop rounds and the manual button do not.
+    const resumesInterruption = !manualResume && !isLoopReason(reason) && !reason.startsWith('loop:') &&
+      !reason.endsWith(':silent') && !reason.includes('max-tokens');
     // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) {
@@ -1962,9 +2053,15 @@ export class AutoContinueRunner {
       // failure to its main conversation instead. A manual "Resume now" must
       // revive a disposed child too: its force flag only relaxes the cooldown.
       if (this.isSubagentSession(sessionId) && this.subagentRecoveryEnabled(sessionId)) {
-        void this.reviveChild(sessionId, reason, text, manualResume);
+        void this.reviveChild(sessionId, reason, text, manualResume, resumesInterruption);
       }
       this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
+      return;
+    }
+    const heldGoal = resumesInterruption ? this.heldGoalPhase(agent, config) : undefined;
+    if (heldGoal !== undefined) {
+      state.recovering = false;
+      this.log(`跳过 ${sessionId}(${reason}): goal 处于 ${heldGoal}, 不替用户续跑`);
       return;
     }
     state.lastAttemptAt = Date.now(); // 先记账: 无论成败, 本次尝试都进入冷却
@@ -2135,15 +2232,17 @@ export class AutoContinueRunner {
     state: SessionState,
     template: string,
   ): string {
-    let text = fillTemplate(template, {
+    const guard = this.currentGuard(state);
+    // An unanswered question gets its own text, without the guard note: "continue" would answer it.
+    const unanswered = (guard.kind === 'pending' || guard.kind === 'failed') && guard.tool === ASK_USER_QUESTION_TOOL;
+    let text = fillTemplate(unanswered ? config.continueTextQuestion : template, {
       facts: state.lastFailure,
       tool: state.tools.lastTool(),
       turn: state.lastTurn,
       errorCount: state.consecutive + 1,
       elapsedMs: state.lastFailureAt > 0 ? Date.now() - state.lastFailureAt : undefined,
     });
-    if (!config.guardTools) return text;
-    const guard = this.currentGuard(state);
+    if (unanswered || !config.guardTools) return text;
     if (guard.kind === 'pending') {
       text += ` ${fillTemplate(config.guardPendingText, { tool: guard.tool, result: guard.result })}`;
     } else if (guard.kind === 'done') {
@@ -2269,6 +2368,14 @@ export class AutoContinueRunner {
             this.onTurnFailure(sessionId, 'scan:turn/end:error', failure);
             continue;
           }
+        }
+        // The in-memory count died with the old host; a continue -> crash -> restart cycle must
+        // still run into the cap.
+        state.consecutive = Math.max(state.consecutive, this.continuationsInLog(events, config));
+        if (state.consecutive >= config.maxConsecutive) {
+          this.bootScannedSessions.add(session);
+          this.log(`跳过 ${sessionId}(启动扫描): 重启前已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`);
+          continue;
         }
         candidates.push({
           session, sessionId, events, lastEnd, reasonKind, failure,
@@ -2607,6 +2714,11 @@ export class AutoContinueRunner {
       if (events.length === 0) return;
       const cause = classifyChildInterruption(events, config);
       if (cause === undefined) return;
+      const held = this.goalHold(stored.projections?.values.goal?.goal?.phase, config);
+      if (held !== undefined) {
+        this.log(`子会话 ${sessionId} 的 goal 处于 ${held}, 不列入 root ${rootId} 的唤醒`);
+        return;
+      }
       const tail = events[events.length - 1];
       const list = this.childInterrupts.get(rootId) ?? [];
       list.push({
@@ -2676,9 +2788,14 @@ export class AutoContinueRunner {
     if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return false;
     const batch = children.map(child => `${child.id}:${child.cause}`).sort().join(',');
     if (this.childWoken.get(rootId) === batch) return true;
-    if (!(await this.rootAcceptsWake(rootId, deadline))) return true; // 明确裁决: 不该唤醒
+    if (!(await this.rootAcceptsWake(rootId, config, deadline))) return true; // 明确裁决: 不该唤醒
     const agent = await this.ensureLiveAgent(rootId, deadline);
     if (agent === undefined || this.disposed) return false;
+    const heldGoal = this.heldGoalPhase(agent, config);
+    if (heldGoal !== undefined) {
+      this.log(`跳过唤醒 ${rootId}: goal 处于 ${heldGoal}, 不替用户续跑`);
+      return true;
+    }
     const text = this.buildChildResumeText(config, children);
     const message = createUserMessage({
       content: [{ type: 'text', text }],
@@ -2695,7 +2812,7 @@ export class AutoContinueRunner {
   }
 
   /** 父会话只在"干净结束"或"被宿主关闭"时接受唤醒; 用户手动停止的绝不复活。 */
-  private async rootAcceptsWake(sessionId: SessionId, deadline: number): Promise<boolean> {
+  private async rootAcceptsWake(sessionId: SessionId, config: AutoContinueConfig, deadline: number): Promise<boolean> {
     const query = this.ctx.get('sessionQuery');
     if (query === undefined) return false;
     let events: readonly SessionEvent[];
@@ -2724,9 +2841,15 @@ export class AutoContinueRunner {
     if (lastStart !== undefined && (end === undefined || lastStart.seq > end.seq)) return false;
     if (end === undefined) return false;
     const kind = readReasonKind(end.data.reason);
-    if (kind === 'completed') return true;
-    if (kind === 'aborted') return isHostCancel(end.data.reason);
-    return false;
+    if (kind !== 'completed' && !(kind === 'aborted' && isHostCancel(end.data.reason))) return false;
+    // A clean root is no scan candidate, so its count is rebuilt here or the cap above reads 0.
+    const state = this.state(sessionId);
+    state.consecutive = Math.max(state.consecutive, this.continuationsInLog(events, config));
+    if (state.consecutive >= config.maxConsecutive) {
+      this.log(`跳过唤醒 ${sessionId}: 重启前已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`);
+      return false;
+    }
+    return true;
   }
 
   /** 发送需要 live agent; 存储会话沿既有物化路径拉起, 复用 preset 与模型回装。 */
@@ -2784,9 +2907,7 @@ export class AutoContinueRunner {
    */
   private rearmGoal(sessionId: SessionId, config: AutoContinueConfig): void {
     if (!config.resumeGoals) return;
-    const goals = (this.ctx as unknown as { get(key: string): unknown }).get(GOALS_SERVICE_KEY) as
-      | GoalServiceLike
-      | undefined;
+    const goals = this.goals();
     if (goals === undefined) return;
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) return;
@@ -2816,6 +2937,104 @@ export class AutoContinueRunner {
         `goal 恢复失败 ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  private goals(): GoalServiceLike | undefined {
+    return (this.ctx as unknown as { get(key: string): unknown }).get(GOALS_SERVICE_KEY) as GoalServiceLike | undefined;
+  }
+
+  /**
+   * A paused or blocked goal is a decision to stop and wait; a continue sent anyway reads as the
+   * user resuming it. `resumePausedGoals` is the user's standing permission to resume paused
+   * goals, so it lets those through.
+   */
+  private heldGoalPhase(agent: Agent, config: AutoContinueConfig): string | undefined {
+    let phase: string | undefined;
+    try {
+      const goals = this.goals();
+      if (goals === undefined) return undefined; // a host without goals
+      phase = goals.get(agent)?.phase;
+    } catch {
+      return 'unreadable'; // the goal may be paused or blocked: do not speak for the user
+    }
+    return this.goalHold(phase, config);
+  }
+
+  private goalHold(phase: string | undefined, config: AutoContinueConfig): string | undefined {
+    if (phase === 'blocked') return phase;
+    if (phase === 'paused' && !(config.resumeGoals && config.resumePausedGoals)) return phase;
+    return undefined;
+  }
+
+  /** `heldGoalPhase` for a session without a live agent, read from its stored goal projection. */
+  private async storedGoalHold(sessionId: SessionId, config: AutoContinueConfig): Promise<string | undefined> {
+    if (this.goals() === undefined) return undefined; // a host without goals
+    const query = this.ctx.get('sessionQuery');
+    if (query === undefined) return 'unreadable';
+    let stored: StoredObservation | undefined;
+    try {
+      const observation: StoredObservation = await this.readStored(
+        signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
+        Date.now() + STORED_READ_TIMEOUT_MS,
+      );
+      stored = observation;
+      return this.goalHold(observation.projections?.values.goal?.goal?.phase, config);
+    } catch (error) {
+      // Nothing stored (a discarded one-shot child, no persistence) holds no goal: keep the old fallback.
+      if ((error as { code?: unknown } | null)?.code === 'SESSION_QUERY_SESSION_NOT_FOUND') return undefined;
+      return 'unreadable';
+    } finally {
+      stored?.[Symbol.dispose]?.();
+    }
+  }
+
+  /**
+   * Continuations this plugin sent since the last message from the user, manual stop or turn
+   * with visible output, read from the log so the consecutive cap survives a host restart.
+   * Mirrors the in-memory count: a continuation right after a visible completion is a loop
+   * round and does not count. With `usePluginSource` off a continuation is a `user` message
+   * matching one of the configured continue texts, so a user message identical to one of them
+   * is counted too; that can only stop recovery earlier, never later.
+   */
+  private continuationsInLog(events: readonly SessionEvent[], config: AutoContinueConfig): number {
+    const ours = continueTextMatcher(config);
+    let count = 0;
+    let visible = false;
+    let maintenance = false;
+    let afterSuccess = false;
+    for (const event of events) {
+      if (event.type === 'turn/start') {
+        visible = false;
+        maintenance = isMaintenanceTurnStart(event);
+      } else if (event.type === 'tool/call') {
+        visible = true;
+      } else if (event.type === 'assistant/chunk') {
+        if (this.chunkVisible(event.data.chunk)) visible = true;
+      } else if (event.type === 'assistant/message') {
+        if (this.hasVisibleContent(event.data.message?.content)) visible = true;
+      } else if (event.type === 'turn/end') {
+        if (maintenance) continue;
+        const reason = event.data.reason;
+        const kind = readReasonKind(reason);
+        afterSuccess = kind === 'completed' && visible;
+        const userStop = kind === 'aborted' && !isHostCancel(reason) &&
+          !isLoopGuardCancelReason((reason as { reason?: unknown }).reason);
+        if (afterSuccess || userStop) count = 0;
+      } else if (event.type === 'user/message') {
+        const source = event.data.source?.kind;
+        const text = messageText(event.data.content);
+        // A child hand-off is a registered echo: in memory it neither counts nor resets.
+        if (isHandoffText(text)) continue;
+        if (source === AUTO_CONTINUE_SOURCE_KIND || (source === 'user' && ours(text))) {
+          if (!afterSuccess) count += 1;
+        } else if (source === 'user') {
+          count = 0;
+        }
+        // Only the one continuation right after a visible completion is a loop round.
+        if (source === AUTO_CONTINUE_SOURCE_KIND || source === 'user') afterSuccess = false;
+      }
+    }
+    return count;
   }
 
   /**

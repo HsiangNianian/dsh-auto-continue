@@ -222,7 +222,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | --- | --- | --- | --- |
 | 宽限期 (ms) | `graceMs` | `3000` | 发送前的等待；期间有新回合或你发了消息就取消 |
 | 冷却时间 (ms) | `cooldownMs` | `20000` | 同一会话两次恢复尝试的最小间隔；冷却期内的失败会等冷却结束 |
-| 最大连续次数 | `maxConsecutive` | `3` | 达到后放弃。你发消息或回合有可见输出后清零；正常完成后的循环续跑不计入 |
+| 最大连续次数 | `maxConsecutive` | `3` | 达到后放弃。你发消息、点停止或回合有可见输出后清零；正常完成后的循环续跑不计入。宿主重启后，会话里已有的继续消息也计入 |
 | 错误分类 | `classify` | `true` | 只重试临时性错误，跳过永久性错误；关闭则所有错误都重试 |
 | 自定义可恢复错误 | `retryableErrorPatterns` | `''` | 每行一个文本片段，忽略大小写，匹配错误码、HTTP 状态和消息；优先于内置分类 |
 | 退避系数 | `backoffFactor` | `2` | 每次连续失败后冷却时间的倍数(20 秒 → 40 秒 → 80 秒) |
@@ -230,7 +230,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | 断网时暂停续跑 | `pauseWhenOffline` | `true` | 宿主断网时挂起网络类错误的重试，不消耗次数 |
 | 断网复检间隔 (ms) | `offlineCheckMs` | `15000` | 挂起期间多久检测一次网络，最小 1000 |
 | 重新武装被重启失活的 goal | `resumeGoals` | `false` | 发出继续消息后，把重启时被 disarm 的 `active` goal 重新 arm。这相当于替你授权，所以默认关闭 |
-| 恢复被暂停的 goal | `resumePausedGoals` | `false` | 连你手动暂停的 goal 也恢复；需同时开启 `resumeGoals` |
+| 恢复被暂停的 goal | `resumePausedGoals` | `false` | 连你手动暂停的 goal 也恢复；需同时开启 `resumeGoals`。不开时，goal 已暂停的会话在重启或出错后不续跑 |
 
 ### 启动恢复
 
@@ -249,6 +249,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | 超限时的继续文本 | `continueTextMaxTokens` | 触到输出 token 上限 |
 | 无输出回合的继续文本 | `continueTextSilent` | 回合只输出了推理 |
 | 宿主重启后恢复的继续文本 | `continueTextInterrupted` | 启动扫描恢复被重启打断的回合 |
+| 提问未获回答时的继续文本 | `continueTextQuestion` | 被打断的那一步是向你提问(`ask_user_question`)且你还没回答。替代继续文本发送，不附护栏提示 |
 | 自主循环的继续文本 | `continueTextLoop` | 自主循环的每一轮 |
 | 结果未确认时的护栏文本 | `guardPendingText` | 上一步工具调用可能没完成时附加 |
 | 工具已成功时的护栏文本 | `guardDoneText` | 上一步工具调用已成功时附加 |
@@ -266,6 +267,7 @@ dsh plugin --profile web remove dsh-client-auto-continue
 | `continueText`、`continueTextMaxTokens`、`continueTextLoop` | `继续` |
 | `continueTextSilent` | `继续。你上一轮只输出了内部推理, 既没有回复也没有调用工具, 用户什么都没看到。每一轮都要以工具调用或可见回复结束。` |
 | `continueTextInterrupted` | `继续。宿主在你上一轮运行期间重启了; 重启时未完成的工具调用已按「结果未知」收尾。从中断处继续, 重试可能有副作用的操作前先核实外部状态。` |
+| `continueTextQuestion` | `这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。` |
 | `guardPendingText` | `(上一步工具「{tool}」可能未完成, 先确认状态再继续, 不要重复执行)` |
 | `guardDoneText` | `(上一步工具「{tool}」已完成, 结果: {result}; 不要重复执行, 直接继续)` |
 | `loopText` | `(检测到你可能陷入循环, 请停止重复刚才的动作, 换一种方式继续)` |
@@ -312,9 +314,9 @@ dsh plugin --profile web remove dsh-client-auto-continue
 [![自动继续的决策流程](docs/auto-continue-workflow.svg)](docs/auto-continue-workflow.html)
 
 1. **触发。** 引擎在宿主中监听会话事件。`turn/end` 的原因是 `error`、`max-tokens`、无可见输出，或 `completed`(仅自主循环)时进入流程。宿主重启后，启动扫描每 3 秒检查一次已打开和已存储的会话，直到扫描时间窗结束。循环守卫监视正在运行的回合，发现原地打转就打断。
-2. **会话检查。** 全局暂停、会话设为“关闭”或暂停了 1 小时、会话是子代理且 **续跑子代理会话** 关闭时，不发送任何内容。子代理沿用主会话的模式(除非它有自己的模式)，从不进入自主循环，也不受循环守卫影响。
+2. **会话检查。** 全局暂停、会话设为“关闭”或暂停了 1 小时、会话是子代理且 **续跑子代理会话** 关闭时，不发送任何内容。会话的 goal 处于暂停(paused)或受阻(blocked)时，不续跑被重启或可重试错误打断的回合(同时开启 `resumeGoals` 和 `resumePausedGoals` 时，暂停的 goal 照常续跑)：这时续跑会被当成你解除了暂停。`max-tokens` 截断和无输出回合的续写、自主循环不受影响。子代理沿用主会话的模式(除非它有自己的模式)，从不进入自主循环，也不受循环守卫影响。
 3. **结束原因。** 手动停止和策略拦截(`blocked`)不处理，永久性错误也不处理。其余可恢复的情况进入恢复流程。正常完成只在自主循环模式下继续：不受冷却和连续上限约束，但受 `loopMaxIterations` 限制。
-4. **重试预算。** 达到 **最大连续次数** 就停止。冷却期内的发送会延后，而不是丢弃；每次失败后冷却时间乘以退避系数，直到上限。
+4. **重试预算。** 达到 **最大连续次数** 就停止。宿主重启后，计数从会话记录重建：从你最后一条消息、最后一次停止或最后一个有可见输出的回合算起，插件发过几条继续消息。`usePluginSource` 关闭时，按当前的继续文本识别插件的消息，所以你手打的、与某条继续文本完全相同的消息也会计入。冷却期内的发送会延后，而不是丢弃；每次失败后冷却时间乘以退避系数，直到上限。
 5. **宽限期。** 等待 `graceMs`。期间有新回合或你发了消息，就取消这次发送。
 6. **断网挂起。** 对网络类错误，宿主会检查是否有非回环网卡，以及能否解析任一公共域名。断网时等待，每隔 `offlineCheckMs` 复检，恢复后重新经过宽限期和冷却。设置了 `HTTP(S)_PROXY` 或 `ALL_PROXY` 时只检查网卡。
 7. **发送。** 按原因选择继续文本，附上幂等护栏提示，用会话原有的 preset 和模型通过 `agent.followup` 发出。如果已有排队的用户回合，继续消息会排到它们前面，用户回合之间的顺序不变。开启 `resumeGoals` 时，会重新 arm 被重启 disarm 的 goal。

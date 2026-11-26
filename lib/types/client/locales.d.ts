@@ -75,6 +75,9 @@ export declare const zh: {
     'field.continueTextInterrupted': string;
     'field.continueTextInterruptedHint': string;
     'default.continueTextInterrupted': "继续。宿主在你上一轮运行期间重启了; 重启时未完成的工具调用已按「结果未知」收尾。从中断处继续, 重试可能有副作用的操作前先核实外部状态。";
+    'field.continueTextQuestion': string;
+    'field.continueTextQuestionHint': string;
+    'default.continueTextQuestion': "这是宿主重启后插件自动发送的消息, 不是用户的回复。你上一步向用户提出的问题因重启中断, 用户还没有回答。请重新提出同一个问题并等待回答, 不要替用户做决定。";
     'field.guardTools': string;
     'field.guardToolsHint': string;
     'field.guardPendingText': string;
