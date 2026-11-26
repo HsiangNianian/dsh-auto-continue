@@ -155,6 +155,7 @@ export declare class AutoContinueRunner {
      */
     private onHostEvent;
     private tracksOutput;
+    private chunkVisible;
     /** Treat unknown block kinds conservatively: only reasoning and blank text are silent. */
     private hasVisibleContent;
     /** 从 assistant/message 事件提取纯文本。 */
@@ -312,6 +313,9 @@ export declare class AutoContinueRunner {
      * goals, so it lets those through.
      */
     private heldGoalPhase;
+    private goalHold;
+    /** `heldGoalPhase` for a session without a live agent, read from its stored goal projection. */
+    private storedGoalHold;
     /**
      * Continuations this plugin sent since the last message from the user, manual stop or turn
      * with visible output, read from the log so the consecutive cap survives a host restart.

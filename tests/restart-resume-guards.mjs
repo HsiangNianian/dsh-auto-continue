@@ -92,6 +92,39 @@ test('resumePausedGoals keeps permitting paused goals, but never blocked ones', 
   assert.equal(blocked.followups.length, 0);
 });
 
+test('a goal that cannot be read holds recovery as well', async (t) => {
+  const { host, settle, logs } = scenario(t);
+  host.provide('goals', { get() { throw new Error('goal replay failed'); }, resume() {} });
+  const agent = host.agent('unreadable', log(start(1), end(1, 'interrupted')));
+  host.start();
+  await settle();
+  assert.equal(agent.followups.length, 0);
+  assert(logs.some((line) => line.includes('goal 处于 unreadable')));
+});
+
+test('a disposed child is not cold-resumed while its stored goal is held', async (t) => {
+  const { host, settle } = scenario(t, { scanOnBoot: false, resumeSubagentSessions: true });
+  host.agent('main');
+  const revived = [];
+  host.provide('subagents', { prompt: async (request) => { revived.push(request.childSessionId); return {}; } });
+  host.provide('goals', goals('active'));
+  host.provide('sessionQuery', {
+    observeSession: async (id) => {
+      if (id === 'gone-child') throw Object.assign(new Error('not found'), { code: 'SESSION_QUERY_SESSION_NOT_FOUND' });
+      if (id === 'broken-child') throw new Error('read failed');
+      return { events: [], header: { id }, projections: { values: { goal: id === 'held-child' ? { goal: { phase: 'paused' } } : null } } };
+    },
+  });
+  host.start();
+  for (const id of ['held-child', 'broken-child', 'free-child', 'gone-child']) {
+    const child = host.agent(id, [], { origin: 'subagent', parentSession: 'main' });
+    host.agents.delete(id);
+    host.emit(child, { ...end(1, 'error', { error: { code: 'TRANSPORT', message: 'network down' } }), seq: 1, time: Date.now() });
+  }
+  await settle();
+  assert.deepEqual(revived, ['free-child', 'gone-child'], 'a session storage does not hold has no goal to keep');
+});
+
 test('a held goal also stops retryable-error retries, but not finishing a cut-off answer', async (t) => {
   const { host, settle } = scenario(t);
   host.provide('goals', goals('paused'));
@@ -211,6 +244,39 @@ test('a real user message, a user stop or a visible completion resets the count'
   assert.equal(stopped.followups.length, 1);
   assert.equal(succeeded.followups.length, 1);
   assert.equal(silent.followups.length, 0, 'a completion without visible output is not a success');
+});
+
+test('a continuation after a user message counts even when a visible completion came before', async (t) => {
+  const { host, settle } = scenario(t);
+  const agent = host.agent('after-user', log(
+    said('Build the thing'), start(1), reply(1, 'Done.'), end(1, 'completed'), said('Now the docs'),
+    ...another(2), ...another(3), ...another(4),
+  ));
+  host.start();
+  await settle();
+  assert.equal(agent.followups.length, 0, 'three continuations since the user spoke');
+});
+
+const HANDOFF = 'Child session child-1 was interrupted by TRANSPORT and can no longer be resumed directly. Check its state, then continue it or wrap it up.';
+
+test('a child hand-off in the parent log neither counts nor resets', async (t) => {
+  const { host, settle } = scenario(t);
+  const plugin = host.agent('plugin', log(...crashLoop(1), said(HANDOFF, 'plugin:dsh-client-auto-continue'), ...another(3)));
+  const legacy = host.agent('legacy', log(...crashLoop(2), said(HANDOFF), ...another(4)));
+  host.start();
+  await settle();
+  assert.equal(plugin.followups.length, 1, 'two continuations: the hand-off is not a third');
+  assert.equal(legacy.followups.length, 0, 'three continuations: the hand-off is not the user stepping in');
+});
+
+test('a streamed visible answer resets the count like a visible message', async (t) => {
+  const { host, settle } = scenario(t);
+  const chunk = { type: 'assistant/chunk', data: { turn: 9, chunk: { type: 'text-delta', text: 'Done.' } } };
+  const thought = { type: 'assistant/message', data: { turn: 9, message: { role: 'assistant', content: [{ type: 'reasoning', text: 'ok' }] } } };
+  const agent = host.agent('streamed', log(...crashLoop(3), start(9), chunk, thought, end(9, 'completed'), ...another(10)));
+  host.start();
+  await settle();
+  assert.equal(agent.followups.length, 1);
 });
 
 test('loop rounds after a visible completion do not count, as in memory', async (t) => {

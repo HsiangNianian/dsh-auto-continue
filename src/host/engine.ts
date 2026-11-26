@@ -247,7 +247,9 @@ interface GoalServiceLike {
 interface StoredObservation {
   readonly events: readonly SessionEvent[];
   readonly header: { readonly id?: SessionId; readonly origin?: string; readonly agentPreset?: string };
-  readonly projections?: { readonly values: { readonly agentPreset?: string } };
+  readonly projections?: {
+    readonly values: { readonly agentPreset?: string; readonly goal?: { readonly goal?: { readonly phase?: string } } | null };
+  };
   [Symbol.dispose]?: () => void;
 }
 
@@ -454,6 +456,11 @@ function templateSource(template: string): string | undefined {
   if (parts.join('').trim() === '') return undefined; // would match every message
   return parts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s\\S]*');
 }
+
+/** Whole-message match for a child hand-off in any locale; the child id and code are wildcards. */
+const HANDOFF_PATTERN = new RegExp(
+  `^(?:${Object.values(HANDOFF_COPY).map(copy => templateSource(copy('{code}', '{code}'))).join('|')})$`,
+);
 
 /** Whole-message match for a continuation built from the current texts, guard note included. */
 function continueTextPattern(config: AutoContinueConfig): RegExp {
@@ -1002,11 +1009,7 @@ export class AutoContinueRunner {
       const state = this.state(sessionId);
       if (this.tracksOutput(state, event)) {
         const chunk = event.data.chunk;
-        const visible = (chunk.type === 'text-delta' && visibleText(chunk.text) !== '') ||
-          chunk.type === 'tool-call-delta' ||
-          (chunk.type === 'block-end' && this.hasVisibleContent([chunk.block])) ||
-          (chunk.type === 'block-start' && chunk.blockType !== 'reasoning' && chunk.blockType !== 'text');
-        if (visible) state.turnOutput = 'visible';
+        if (this.chunkVisible(chunk)) state.turnOutput = 'visible';
         else if (state.turnOutput === 'empty' && chunk.type !== 'usage' && chunk.type !== 'finish') state.turnOutput = 'silent';
       }
       this.onAssistantChunk(sessionId, state, event);
@@ -1024,6 +1027,13 @@ export class AutoContinueRunner {
   private tracksOutput(state: SessionState, event: SessionEvent): boolean {
     return state.running === true && state.outputTurn === (event.data as { turn?: number }).turn &&
       event.seq > state.outputStartSeq;
+  }
+
+  private chunkVisible(chunk: SessionEvent<'assistant/chunk'>['data']['chunk']): boolean {
+    return (chunk.type === 'text-delta' && visibleText(chunk.text) !== '') ||
+      chunk.type === 'tool-call-delta' ||
+      (chunk.type === 'block-end' && this.hasVisibleContent([chunk.block])) ||
+      (chunk.type === 'block-start' && chunk.blockType !== 'reasoning' && chunk.blockType !== 'text');
   }
 
   /** Treat unknown block kinds conservatively: only reasoning and blank text are silent. */
@@ -1757,7 +1767,9 @@ export class AutoContinueRunner {
    * The child's own recovery mode decides; the parent only has to be alive to
    * authorize the call.
    */
-  private async reviveChild(sessionId: SessionId, reason: string, text: string, force: boolean): Promise<void> {
+  private async reviveChild(
+    sessionId: SessionId, reason: string, text: string, force: boolean, checkGoal: boolean,
+  ): Promise<void> {
     if (this.disposed || this.getConfig().paused) return;
     if (!this.subagentRecoveryEnabled(sessionId)) return;
     const state = this.state(sessionId);
@@ -1776,6 +1788,22 @@ export class AutoContinueRunner {
       }
       if (state.consecutive >= config.maxConsecutive) {
         this.log(`冷恢复跳过 ${sessionId}: 已连续自动继续 ${state.consecutive} 次`);
+        return;
+      }
+    }
+    if (checkGoal) {
+      // The disposed child has no agent for `goals.get`; its stored goal projection holds the phase.
+      state.reviveInFlight = true;
+      let held: string | undefined;
+      try {
+        held = await this.storedGoalHold(sessionId, config);
+      } finally {
+        state.reviveInFlight = false;
+      }
+      if (this.disposed) return;
+      if (held !== undefined) {
+        state.recovering = false;
+        this.log(`冷恢复跳过 ${sessionId}: goal 处于 ${held}, 不替用户续跑`);
         return;
       }
     }
@@ -1982,6 +2010,10 @@ export class AutoContinueRunner {
     // 模板填充: continueText 可含 {code}/{message}/{status}/{tool}/{turn}/{errorCount}/{sessionTitle}/{elapsed} 占位符
     const template = this.templateFor(config, reason);
     const text = this.buildContinueText(config, state, template);
+    // Resuming an interrupted turn (restart, retryable error) speaks for the user; finishing a
+    // cut-off answer (max-tokens, silent), loop rounds and the manual button do not.
+    const resumesInterruption = !manualResume && !isLoopReason(reason) && !reason.startsWith('loop:') &&
+      !reason.endsWith(':silent') && !reason.includes('max-tokens');
     // 发送: followup 负责唤醒; 同步 inbox 插入事件会在唤醒前把本消息移到已有队列之前。
     const agent = this.ctx.agents.get(sessionId);
     if (agent === undefined) {
@@ -1991,15 +2023,11 @@ export class AutoContinueRunner {
       // failure to its main conversation instead. A manual "Resume now" must
       // revive a disposed child too: its force flag only relaxes the cooldown.
       if (this.isSubagentSession(sessionId) && this.subagentRecoveryEnabled(sessionId)) {
-        void this.reviveChild(sessionId, reason, text, manualResume);
+        void this.reviveChild(sessionId, reason, text, manualResume, resumesInterruption);
       }
       this.log(`跳过 ${sessionId}(${reason}): 无 live agent`);
       return;
     }
-    // Resuming an interrupted turn (restart, retryable error) speaks for the user; finishing a
-    // cut-off answer (max-tokens, silent), loop rounds and the manual button do not.
-    const resumesInterruption = !manualResume && !isLoopReason(reason) && !reason.startsWith('loop:') &&
-      !reason.endsWith(':silent') && !reason.includes('max-tokens');
     const heldGoal = resumesInterruption ? this.heldGoalPhase(agent, config) : undefined;
     if (heldGoal !== undefined) {
       state.recovering = false;
@@ -2656,6 +2684,11 @@ export class AutoContinueRunner {
       if (events.length === 0) return;
       const cause = classifyChildInterruption(events, config);
       if (cause === undefined) return;
+      const held = this.goalHold(stored.projections?.values.goal?.goal?.phase, config);
+      if (held !== undefined) {
+        this.log(`子会话 ${sessionId} 的 goal 处于 ${held}, 不列入 root ${rootId} 的唤醒`);
+        return;
+      }
       const tail = events[events.length - 1];
       const list = this.childInterrupts.get(rootId) ?? [];
       list.push({
@@ -2725,7 +2758,7 @@ export class AutoContinueRunner {
     if (Date.now() - state.lastAttemptAt < this.cooldownFor(state)) return false;
     const batch = children.map(child => `${child.id}:${child.cause}`).sort().join(',');
     if (this.childWoken.get(rootId) === batch) return true;
-    if (!(await this.rootAcceptsWake(rootId, deadline))) return true; // 明确裁决: 不该唤醒
+    if (!(await this.rootAcceptsWake(rootId, config, deadline))) return true; // 明确裁决: 不该唤醒
     const agent = await this.ensureLiveAgent(rootId, deadline);
     if (agent === undefined || this.disposed) return false;
     const heldGoal = this.heldGoalPhase(agent, config);
@@ -2749,7 +2782,7 @@ export class AutoContinueRunner {
   }
 
   /** 父会话只在"干净结束"或"被宿主关闭"时接受唤醒; 用户手动停止的绝不复活。 */
-  private async rootAcceptsWake(sessionId: SessionId, deadline: number): Promise<boolean> {
+  private async rootAcceptsWake(sessionId: SessionId, config: AutoContinueConfig, deadline: number): Promise<boolean> {
     const query = this.ctx.get('sessionQuery');
     if (query === undefined) return false;
     let events: readonly SessionEvent[];
@@ -2778,9 +2811,15 @@ export class AutoContinueRunner {
     if (lastStart !== undefined && (end === undefined || lastStart.seq > end.seq)) return false;
     if (end === undefined) return false;
     const kind = readReasonKind(end.data.reason);
-    if (kind === 'completed') return true;
-    if (kind === 'aborted') return isHostCancel(end.data.reason);
-    return false;
+    if (kind !== 'completed' && !(kind === 'aborted' && isHostCancel(end.data.reason))) return false;
+    // A clean root is no scan candidate, so its count is rebuilt here or the cap above reads 0.
+    const state = this.state(sessionId);
+    state.consecutive = Math.max(state.consecutive, this.continuationsInLog(events, config));
+    if (state.consecutive >= config.maxConsecutive) {
+      this.log(`跳过唤醒 ${sessionId}: 重启前已连续自动继续 ${state.consecutive} 次, 等待用户介入或成功回合`);
+      return false;
+    }
+    return true;
   }
 
   /** 发送需要 live agent; 存储会话沿既有物化路径拉起, 复用 preset 与模型回装。 */
@@ -2882,13 +2921,41 @@ export class AutoContinueRunner {
   private heldGoalPhase(agent: Agent, config: AutoContinueConfig): string | undefined {
     let phase: string | undefined;
     try {
-      phase = this.goals()?.get(agent)?.phase;
+      const goals = this.goals();
+      if (goals === undefined) return undefined; // a host without goals
+      phase = goals.get(agent)?.phase;
     } catch {
-      return undefined; // no readable goal: same as a host without goals
+      return 'unreadable'; // the goal may be paused or blocked: do not speak for the user
     }
+    return this.goalHold(phase, config);
+  }
+
+  private goalHold(phase: string | undefined, config: AutoContinueConfig): string | undefined {
     if (phase === 'blocked') return phase;
     if (phase === 'paused' && !(config.resumeGoals && config.resumePausedGoals)) return phase;
     return undefined;
+  }
+
+  /** `heldGoalPhase` for a session without a live agent, read from its stored goal projection. */
+  private async storedGoalHold(sessionId: SessionId, config: AutoContinueConfig): Promise<string | undefined> {
+    if (this.goals() === undefined) return undefined; // a host without goals
+    const query = this.ctx.get('sessionQuery');
+    if (query === undefined) return 'unreadable';
+    let stored: StoredObservation | undefined;
+    try {
+      const observation: StoredObservation = await this.readStored(
+        signal => query.observeSession(sessionId, { projectionMode: 'all', signal }),
+        Date.now() + STORED_READ_TIMEOUT_MS,
+      );
+      stored = observation;
+      return this.goalHold(observation.projections?.values.goal?.goal?.phase, config);
+    } catch (error) {
+      // Nothing stored (a discarded one-shot child, no persistence) holds no goal: keep the old fallback.
+      if ((error as { code?: unknown } | null)?.code === 'SESSION_QUERY_SESSION_NOT_FOUND') return undefined;
+      return 'unreadable';
+    } finally {
+      stored?.[Symbol.dispose]?.();
+    }
   }
 
   /**
@@ -2911,6 +2978,8 @@ export class AutoContinueRunner {
         maintenance = isMaintenanceTurnStart(event);
       } else if (event.type === 'tool/call') {
         visible = true;
+      } else if (event.type === 'assistant/chunk') {
+        if (this.chunkVisible(event.data.chunk)) visible = true;
       } else if (event.type === 'assistant/message') {
         if (this.hasVisibleContent(event.data.message?.content)) visible = true;
       } else if (event.type === 'turn/end') {
@@ -2923,11 +2992,16 @@ export class AutoContinueRunner {
         if (afterSuccess || userStop) count = 0;
       } else if (event.type === 'user/message') {
         const source = event.data.source?.kind;
-        if (source === AUTO_CONTINUE_SOURCE_KIND || (source === 'user' && ours.test(messageText(event.data.content)))) {
+        const text = messageText(event.data.content);
+        // A child hand-off is a registered echo: in memory it neither counts nor resets.
+        if (HANDOFF_PATTERN.test(text)) continue;
+        if (source === AUTO_CONTINUE_SOURCE_KIND || (source === 'user' && ours.test(text))) {
           if (!afterSuccess) count += 1;
         } else if (source === 'user') {
           count = 0;
         }
+        // Only the one continuation right after a visible completion is a loop round.
+        if (source === AUTO_CONTINUE_SOURCE_KIND || source === 'user') afterSuccess = false;
       }
     }
     return count;
