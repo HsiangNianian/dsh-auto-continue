@@ -450,28 +450,58 @@ function isLoopGuardCancelReason(value: unknown): boolean {
 
 const TEMPLATE_PLACEHOLDER = /\{(?:code|message|status|tool|turn|errorCount|sessionTitle|elapsed|result)\}/;
 
-/** Regex source matching what `fillTemplate` can make of a template; `undefined` when it has no literal text. */
-function templateSource(template: string): string | undefined {
+/**
+ * The literal pieces of what `fillTemplate` can make of a template; each placeholder is a gap
+ * that may hold anything. `undefined` when there is no literal text: it would match every message.
+ */
+function templateParts(template: string): string[] | undefined {
   const parts = template.split(TEMPLATE_PLACEHOLDER);
-  if (parts.join('').trim() === '') return undefined; // would match every message
-  return parts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s\\S]*');
+  return parts.join('').trim() === '' ? undefined : parts;
 }
 
-/** Whole-message match for a child hand-off in any locale; the child id and code are wildcards. */
-const HANDOFF_PATTERN = new RegExp(
-  `^(?:${Object.values(HANDOFF_COPY).map(copy => templateSource(copy('{code}', '{code}'))).join('|')})$`,
-);
+/**
+ * Whole-message match of literal pieces with free gaps between them. Taking each middle piece
+ * at its leftmost position is enough for this shape, so it runs in linear time. A regex with
+ * one `[\s\S]*` per placeholder backtracks polynomially on a long near-miss: 4 KB took 1.6 s
+ * with four placeholders, and the boot scan tests every user message in the log.
+ */
+function matchesParts(text: string, parts: readonly string[]): boolean {
+  const first = parts[0] ?? '';
+  if (parts.length === 1) return text === first;
+  const last = parts[parts.length - 1] ?? '';
+  if (text.length < first.length + last.length || !text.startsWith(first) || !text.endsWith(last)) return false;
+  const end = text.length - last.length;
+  let at = first.length;
+  for (let i = 1; i < parts.length - 1; i += 1) {
+    const part = parts[i] ?? '';
+    const found = text.indexOf(part, at);
+    if (found < 0 || found + part.length > end) return false;
+    at = found + part.length;
+  }
+  return true;
+}
+
+/** `left` followed by `separator` and `right`, as one sequence of pieces. */
+function joinParts(left: readonly string[], separator: string, right: readonly string[]): string[] {
+  return [...left.slice(0, -1), `${left[left.length - 1] ?? ''}${separator}${right[0] ?? ''}`, ...right.slice(1)];
+}
+
+const definedParts = (templates: readonly string[]): string[][] =>
+  templates.map(templateParts).filter((parts): parts is string[] => parts !== undefined);
+
+/** Child hand-offs in any locale; the child id and code are gaps. */
+const HANDOFF_SHAPES = definedParts(Object.values(HANDOFF_COPY).map(copy => copy('{code}', '{code}')));
+const isHandoffText = (text: string): boolean => HANDOFF_SHAPES.some(parts => matchesParts(text, parts));
 
 /** Whole-message match for a continuation built from the current texts, guard note included. */
-function continueTextPattern(config: AutoContinueConfig): RegExp {
-  const alternatives = (templates: string[]) =>
-    templates.map(templateSource).filter(source => source !== undefined).join('|');
-  const texts = alternatives([
+function continueTextMatcher(config: AutoContinueConfig): (text: string) => boolean {
+  const texts = definedParts([
     config.continueText, config.continueTextMaxTokens, config.continueTextSilent, config.continueTextLoop,
     config.continueTextInterrupted, config.continueTextQuestion, config.loopText,
   ]);
-  const guards = alternatives([config.guardPendingText, config.guardDoneText]);
-  return new RegExp(`^(?:${texts})${guards === '' ? '' : `(?: (?:${guards}))?`}$`);
+  const guards = definedParts([config.guardPendingText, config.guardDoneText]);
+  const shapes = texts.flatMap(text => [text, ...guards.map(guard => joinParts(text, ' ', guard))]);
+  return text => shapes.some(parts => matchesParts(text, parts));
 }
 
 function messageText(content: unknown): string {
@@ -2967,7 +2997,7 @@ export class AutoContinueRunner {
    * is counted too; that can only stop recovery earlier, never later.
    */
   private continuationsInLog(events: readonly SessionEvent[], config: AutoContinueConfig): number {
-    const ours = continueTextPattern(config);
+    const ours = continueTextMatcher(config);
     let count = 0;
     let visible = false;
     let maintenance = false;
@@ -2994,8 +3024,8 @@ export class AutoContinueRunner {
         const source = event.data.source?.kind;
         const text = messageText(event.data.content);
         // A child hand-off is a registered echo: in memory it neither counts nor resets.
-        if (HANDOFF_PATTERN.test(text)) continue;
-        if (source === AUTO_CONTINUE_SOURCE_KIND || (source === 'user' && ours.test(text))) {
+        if (isHandoffText(text)) continue;
+        if (source === AUTO_CONTINUE_SOURCE_KIND || (source === 'user' && ours(text))) {
           if (!afterSuccess) count += 1;
         } else if (source === 'user') {
           count = 0;

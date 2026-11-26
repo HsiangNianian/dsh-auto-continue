@@ -232,6 +232,22 @@ test('a guard note or filled placeholders still identify our continuation', asyn
   assert.equal(agent.followups.length, 0);
 });
 
+test('a long user message that almost matches a many-placeholder template is checked quickly', async (t) => {
+  // With one regex wildcard per placeholder this near-miss backtracked for seconds and blocked the boot scan.
+  const { host, settle } = scenario(t, { continueTextInterrupted: 'Error {code}: {message} ({status}) at {tool}, done.' });
+  const nearMiss = `Error ${': ('.repeat(2000)}) at ${', done'.repeat(5)} nope`;
+  const agent = host.agent('pasted', log(
+    said(nearMiss), start(1), end(1, 'interrupted'),
+    ...[1, 2, 3].flatMap((turn) => [said(`Error E${turn}: boom (500) at bash, done.`), start(turn + 1), end(turn + 1, 'interrupted')]),
+  ));
+  const began = performance.now();
+  host.start();
+  await settle();
+  const elapsed = performance.now() - began;
+  assert.equal(agent.followups.length, 0, 'the near-miss resets the count and the three continuations still reach the cap');
+  assert(elapsed < 500, `boot scan took ${elapsed.toFixed(0)} ms`);
+});
+
 test('a real user message, a user stop or a visible completion resets the count', async (t) => {
   const { host, settle } = scenario(t);
   const human = host.agent('human', log(...crashLoop(3), said('Continue, but skip the tests'), start(9), end(9, 'interrupted')));
